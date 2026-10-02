@@ -1,5 +1,5 @@
-import { BulbOutlined, CodeOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
-import { Button, Layout, Menu, Space, Switch, Typography } from "antd";
+import { CodeOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
+import { Button, Grid, Menu, Switch } from "antd";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { useThemeStore } from "@/store/useThemeStore";
@@ -11,27 +11,57 @@ const menuItems = [
 ];
 
 export function AppLayout() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+  const screens = Grid.useBreakpoint();
+  const isCompact = screens.md === false;
+  const menuCollapsed = isCompact || collapsed;
   const location = useLocation();
   const appTheme = useThemeStore((state) => state.theme);
-  const toggleTheme = useThemeStore((state) => state.toggleTheme);
+  const setTheme = useThemeStore((state) => state.setTheme);
+  const selectedPath = location.pathname.replace(/\/+$/, "") || "/";
 
   return (
-    <Layout className={styles.shell}>
-      <Layout.Sider className={styles.sider} trigger={null} collapsible collapsed={collapsed} width={236}>
-        <div className={styles.brand}><span className={styles.mark}>D</span>{!collapsed && <Typography.Text strong>DualVite</Typography.Text>}</div>
-        <Menu theme={appTheme === "dark" ? "dark" : "light"} mode="inline" selectedKeys={[location.pathname]} items={menuItems} className={styles.menu} />
-      </Layout.Sider>
-      <Layout>
-        <Layout.Header className={styles.header}>
-          <Button type="text" aria-label="切换菜单" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed((value) => !value)} />
-          <Space>
-            <BulbOutlined />
-            <Switch checked={appTheme === "dark"} onChange={toggleTheme} checkedChildren="暗" unCheckedChildren="亮" aria-label="切换主题" />
-          </Space>
-        </Layout.Header>
-        <Layout.Content className={styles.content}><Outlet /></Layout.Content>
-      </Layout>
-    </Layout>
+    <div className={styles.appShell} data-collapsed={menuCollapsed}>
+      <header className={styles.header}>
+        <div className={styles.brand}>
+          <span className={styles.brandMark}>M</span>
+          <span className={styles.brandName}>Mozi Agent</span>
+        </div>
+        <Switch
+          checked={appTheme === "dark"}
+          onChange={(checked) => setTheme(checked ? "dark" : "light")}
+          checkedChildren={<MoonOutlined />}
+          unCheckedChildren={<SunOutlined />}
+          aria-label="切换主题"
+        />
+      </header>
+      <div className={styles.mainLayout}>
+        <aside className={styles.sideBar} aria-label="主导航">
+          <div className={styles.sideBarTop}>
+            <Button
+              type="text"
+              icon={menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={() => setCollapsed((value) => !value)}
+              className={styles.collapseButton}
+              aria-label={menuCollapsed ? "展开菜单" : "收起菜单"}
+              aria-expanded={!menuCollapsed}
+              aria-controls="app-menu"
+              disabled={isCompact}
+            />
+          </div>
+          <Menu
+            id="app-menu"
+            mode="inline"
+            inlineCollapsed={menuCollapsed}
+            selectedKeys={[selectedPath]}
+            items={menuItems}
+            className={styles.menu}
+          />
+        </aside>
+        <main className={styles.content}>
+          <div className={styles.contentInner}><Outlet /></div>
+        </main>
+      </div>
+    </div>
   );
 }
