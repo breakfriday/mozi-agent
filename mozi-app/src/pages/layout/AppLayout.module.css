@@ -1,0 +1,8 @@
+.shell { min-height: 100vh; }
+.sider { border-right: 1px solid var(--border-color); }
+.brand { height: 64px; display: flex; align-items: center; gap: 10px; padding: 0 20px; font-size: 18px; overflow: hidden; white-space: nowrap; }
+.mark { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; background: #1677ff; color: #fff; font-weight: 800; }
+.menu { border-inline-end: 0 !important; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border-color); background: var(--panel-color) !important; }
+.content { padding: 28px; }
+@media (max-width: 680px) { .sider { display: none; } .content { padding: 18px; } }
