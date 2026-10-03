@@ -1,0 +1,46 @@
+{
+  "name": "mozi-electron",
+  "productName": "mozi-electron",
+  "version": "0.1.0",
+  "description": "DualElectron desktop shell",
+  "main": ".vite/build/main.js",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=20.19.0" },
+  "scripts": {
+    "start": "electron-forge start",
+    "start:filelocal": "cross-env ELECTRON_RENDERER_MODE=filelocal electron-forge start",
+    "build:renderer": "node scripts/build-renderer.cjs",
+    "copy:renderer": "node scripts/copy-renderer.cjs",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "lint": "eslint .",
+    "check": "tsc --noEmit",
+    "test": "node --test tests/**/*.test.cjs"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-deb": "^7.11.2",
+    "@electron-forge/maker-rpm": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron-forge/shared-types": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
+    "@types/electron-squirrel-startup": "^1.0.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.14.0",
+    "cross-env": "^10.1.0",
+    "electron": "43.1.0",
+    "eslint": "^10.0.1",
+    "globals": "^17.7.0",
+    "typescript-eslint": "^8.62.1",
+    "typescript": "~5.8.2",
+    "vite": "^5.4.21"
+  }
+}
