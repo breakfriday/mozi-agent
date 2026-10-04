@@ -16,7 +16,7 @@ export function Homepage() {
   return (
     <div className={styles.page}>
       <section className={styles.hero}>
-        <Tag color="blue">DualVite Application Starter</Tag>
+        <Tag>DualVite Application Starter</Tag>
         <Typography.Title level={1}>开箱即用的双目标 React 应用</Typography.Title>
         <Typography.Paragraph>这里是无业务绑定的默认首页。页面通过 <code>src/api/services</code> 调用统一请求层。</Typography.Paragraph>
         <Space wrap><Tag color="green">运行模式：{runtime}</Tag><Tag>API：{API_BASE_URL}</Tag></Space>
