@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useMemo, type PropsWithChildren } from "react";
 import { useThemeStore } from "@/store/useThemeStore";
 import { createAntdTheme } from "./theme";
+import { AssistantUiProvider } from "./AssistantUiProvider";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -19,7 +20,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         locale={zhCN}
         theme={antdTheme}
       >
-        {children}
+        <AssistantUiProvider>{children}</AssistantUiProvider>
       </ConfigProvider>
     </QueryClientProvider>
   );

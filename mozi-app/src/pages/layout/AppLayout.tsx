@@ -1,4 +1,4 @@
-import { CodeOutlined, HomeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MessageOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
+import { MenuFoldOutlined, MenuUnfoldOutlined, MessageOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
 import { Button, Grid, Menu, Switch } from "antd";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -6,9 +6,7 @@ import { useThemeStore } from "@/store/useThemeStore";
 import styles from "./AppLayout.module.css";
 
 const menuItems = [
-  { key: "/", icon: <HomeOutlined />, label: <Link to="/">首页</Link> },
   { key: "/chat", icon: <MessageOutlined />, label: <Link to="/chat">智能对话</Link> },
-  { key: "/about", icon: <CodeOutlined />, label: <Link to="/about">关于模板</Link> },
 ];
 
 export function AppLayout() {

@@ -8,14 +8,11 @@ import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
-  ClearOutlined,
-  RobotOutlined,
   StopOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Button, Tag } from "antd";
-import { ChatRuntimeProvider } from "./ChatRuntimeProvider";
-import { chatActions, useChatStore } from "./chatStore";
+import { Tag } from "antd";
+import { MoziIcon } from "@/components/MoziIcon";
 import styles from "./chat.module.css";
 
 const suggestions = [
@@ -40,12 +37,7 @@ function UserMessage() {
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className={styles.assistantMessage}>
-      <span
-        className={`${styles.avatar} ${styles.assistantAvatar}`}
-        aria-label="Mozi"
-      >
-        <RobotOutlined />
-      </span>
+      <MoziIcon />
       <div className={styles.assistantBody}>
         <span className={styles.messageAuthor}>Mozi</span>
         <div className={styles.markdown}>
@@ -79,11 +71,8 @@ function ChatThread() {
       <ThreadPrimitive.Viewport className={styles.viewport}>
         <AuiIf condition={(s) => s.thread.isEmpty}>
           <div className={styles.welcome}>
-            <span className={styles.welcomeIcon}>
-              <RobotOutlined />
-            </span>
-            <h2>有什么可以帮你？</h2>
-            <p>描述你的问题，或从下面的示例开始体验。</p>
+            <MoziIcon animated />
+            <h2 lang="en">Hello, I’m Mozi.</h2>
             <div className={styles.suggestions}>
               {suggestions.map((prompt) => (
                 <ThreadPrimitive.Suggestion
@@ -153,28 +142,9 @@ function ChatThread() {
 }
 
 export function ChatPage() {
-  const version = useChatStore((state) => state.conversationVersion);
-  const hasMessages = useChatStore((state) => state.messages.length > 0);
-  const isRunning = useChatStore((state) => state.activeMessageId !== null);
-
   return (
     <section className={styles.page} aria-label="智能对话">
-      <header className={styles.header}>
-        <div className={styles.heading}>
-          <h1>智能对话</h1>
-          <Tag>演示模式</Tag>
-        </div>
-        <Button
-          icon={<ClearOutlined />}
-          onClick={chatActions.clear}
-          disabled={!hasMessages || isRunning}
-        >
-          清空对话
-        </Button>
-      </header>
-      <ChatRuntimeProvider key={version}>
-        <ChatThread />
-      </ChatRuntimeProvider>
+      <ChatThread />
     </section>
   );
 }

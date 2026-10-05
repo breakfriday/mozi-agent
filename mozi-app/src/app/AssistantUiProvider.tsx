@@ -5,9 +5,11 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import type { PropsWithChildren } from "react";
-import { chatActions, useChatStore, type ChatMessage } from "./chatStore";
+import { agentActions } from "@/agent/agentActions";
+import { useAgentStore } from "@/agent/agentStore";
+import type { AgentMessage } from "@/agent/types";
 
-function convertMessage(message: ChatMessage): ThreadMessageLike {
+function convertMessage(message: AgentMessage): ThreadMessageLike {
   const content = [{ type: "text" as const, text: message.text }];
   if (message.role === "user") return { id: message.id, role: "user", content };
 
@@ -29,19 +31,21 @@ async function onNew(message: AppendMessage) {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
-  await chatActions.submit(text);
+  await agentActions.submit(text);
 }
 
-export function ChatRuntimeProvider({ children }: PropsWithChildren) {
-  const messages = useChatStore((state) => state.messages);
-  const isRunning = useChatStore((state) => state.activeMessageId !== null);
+// The assistant-ui adapter lives for the entire app, across route changes.
+// Other Agent views may use the domain store/actions directly.
+export function AssistantUiProvider({ children }: PropsWithChildren) {
+  const messages = useAgentStore((state) => state.messages);
+  const isRunning = useAgentStore((state) => state.activeMessageId !== null);
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
     isRunning,
     isSendDisabled: isRunning,
     onNew,
-    onCancel: chatActions.cancel,
+    onCancel: agentActions.cancel,
   });
 
   return (
