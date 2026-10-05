@@ -2,7 +2,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentConfig } from "./config";
-import type { AgentRuntime, RuntimeHistoryMessage, RuntimeSession, RuntimeSessionDescriptor } from "./runtime";
+import type { AgentRuntime, RuntimeHistoryMessage, RuntimeSession, RuntimeSessionDescriptor, RuntimeSessionInfo } from "./runtime";
 import { failure } from "./errors";
 const parts = (content: unknown): { index: number; text: string }[] => {
   if (typeof content === "string") return [{ index: 0, text: content }];
@@ -25,25 +25,46 @@ export class PiAdapter implements AgentRuntime {
     const fd = openSync(filePath, "wx", 0o600);
     try { writeFileSync(fd, JSON.stringify(manager.getHeader()) + "\n"); fsyncSync(fd); }
     finally { closeSync(fd); }
-    return { sessionId: manager.getSessionId(), filePath, cwd: this.config.cwd };
+    return { sessionId: manager.getSessionId(), engine: "pi", locator: filePath, cwd: this.config.cwd };
   }
   private manager(descriptor: RuntimeSessionDescriptor): SessionManager {
-    if (!existsSync(descriptor.filePath)) throw failure("INTERNAL_ERROR", "Pi 会话文件丢失，无法安全恢复历史。");
-    const manager = SessionManager.open(descriptor.filePath, this.sessionDir, descriptor.cwd);
+    if (descriptor.engine !== "pi") throw failure("UNSUPPORTED_CAPABILITY", "当前适配器不支持此会话引擎。");
+    if (!existsSync(descriptor.locator)) throw failure("INTERNAL_ERROR", "Pi 会话文件丢失，无法安全恢复历史。");
+    const manager = SessionManager.open(descriptor.locator, this.sessionDir, descriptor.cwd);
     if (manager.getSessionId() !== descriptor.sessionId) throw failure("INTERNAL_ERROR", "Pi 会话身份与应用记录不一致。");
     return manager;
   }
-  readHistory(descriptor: RuntimeSessionDescriptor): RuntimeHistoryMessage[] {
+  async listSessions(): Promise<RuntimeSessionInfo[]> {
+    // Search the application's native directory across working directories.
+    const sessions = await SessionManager.listAll(this.sessionDir);
+    return sessions.map(session => ({
+      descriptor: { sessionId: session.id, engine: "pi", locator: session.path, cwd: session.cwd || this.config.cwd },
+      title: session.name || session.firstMessage.slice(0, 80) || "新会话",
+      createdAt: session.created.toISOString(), updatedAt: session.modified.toISOString(),
+    }));
+  }
+  async readHistory(descriptor: RuntimeSessionDescriptor): Promise<RuntimeHistoryMessage[]> {
     const messages: RuntimeHistoryMessage[] = [];
     let runId: string | undefined;
-    let ordinal = 0;
+    let ordinal = 0, seenUser = false;
     for (const entry of this.manager(descriptor).getBranch()) {
       if (entry.type === "custom" && entry.customType === "mozi.run") {
         const data = entry.data as { runId?: unknown } | undefined;
-        runId = typeof data?.runId === "string" ? data.runId : undefined; ordinal = 0;
-      } else if (runId && entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) {
-        messages.push({ runId, role: entry.message.role, ordinal: entry.message.role === "assistant" ? ordinal++ : 0,
-          nativeEntryId: entry.id, parts: parts(entry.message.content) });
+        runId = typeof data?.runId === "string" ? data.runId : undefined;
+        ordinal = 0; seenUser = false;
+      } else if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) {
+        // Native/imported messages need no Mozi marker. An external continuation
+        // must not inherit the previous Mozi Run's IDs or ordinal mappings.
+        if (entry.message.role === "user") {
+          if (seenUser) { runId = undefined; ordinal = 0; }
+          seenUser = true;
+        }
+        const stop = entry.message.role === "assistant" ? entry.message.stopReason : undefined;
+        messages.push({ ...(runId ? { runId } : {}), role: entry.message.role,
+          ordinal: entry.message.role === "assistant" ? ordinal++ : 0,
+          nativeEntryId: entry.id, createdAt: entry.timestamp,
+          status: stop === "error" ? "failed" : stop === "aborted" ? "cancelled" : "completed",
+          parts: parts(entry.message.content) });
       }
     }
     return messages;

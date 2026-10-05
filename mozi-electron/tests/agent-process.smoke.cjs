@@ -13,6 +13,10 @@ const server = createServer(async (req, res) => {
   const request = JSON.parse(body); modelRequests++;
   assert.equal(req.url, '/v1/chat/completions');
   assert.ok(!request.tools?.length);
+  if (modelRequests > 1) {
+    assert.ok(request.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('hello')), 'Pi restores the original user context: ' + JSON.stringify(request.messages));
+    assert.ok(request.messages.some(message => message.role === 'assistant' && JSON.stringify(message.content).includes('真实 SDK')), 'Pi restores assistant context');
+  }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (delta, finish_reason = null) => res.write('data: ' + JSON.stringify({ id: 'completion', object: 'chat.completion.chunk', created: 1, model: 'smoke', choices: [{ index: 0, delta, finish_reason }] }) + '\n\n');
   send({ role: 'assistant', content: '真实 SDK ' });
@@ -90,8 +94,30 @@ app.whenReady().then(async () => {
   assert.equal(restored.lastSeq, 0);
   assert.equal((await call('run.start', crashInput)).disposition, 'duplicate');
   assert.equal(modelRequests, 3);
+  await stop();
+  // The isolated test metadata can be discarded: native histories must still be discoverable.
+  for (const suffix of ['', '-wal', '-shm']) rmSync(path.join(directory, 'mozi.sqlite' + suffix), { force: true });
+  const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+  const native = SessionManager.create(directory, path.join(directory, 'pi-sessions'));
+  native.appendMessage({ role: 'user', content: 'native without Mozi marker', timestamp: Date.now() });
+  ({ call, events } = await spawn());
+  const listed = await call('session.list', {});
+  assert.ok(listed.items.some(item => item.sessionId === sessionId));
+  assert.ok(listed.items.some(item => item.sessionId === native.getSessionId()));
+  const nativeSnapshot = await call('session.snapshot', { sessionId: native.getSessionId() });
+  assert.equal(nativeSnapshot.messages[0].content[0].text, 'native without Mozi marker');
+  assert.equal(nativeSnapshot.messages[0].runId, undefined);
+  assert.equal(nativeSnapshot.runs.length, 0);
+  const rebuilt = await call('session.snapshot', { sessionId });
+  assert.ok(rebuilt.messages.some(message => message.content.some(part => part.text === '真实 SDK 流式回复')));
+  assert.equal(rebuilt.runs.length, 0, 'resetting metadata does not invent recovered Mozi Runs');
+  assert.equal(modelRequests, 3, 'native discovery never calls the model');
+  await stop();
+  ({ call } = await spawn());
+  const rebuiltAgain = await call('session.snapshot', { sessionId });
+  assert.deepEqual(rebuiltAgain.messages.map(message => message.id), rebuilt.messages.map(message => message.id));
   await stop(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   rmSync(directory, { recursive: true, force: true });
-  console.log('PASS: real utilityProcess + Pi 1.0.3 + local HTTP fixture; streaming, durable session/IDs, dedupe after restart, cancellation, crash recovery without replay.');
+  console.log('PASS: real utilityProcess + Pi 1.0.3; streaming, native context/history recovery, stable IDs, dedupe, cancellation, crash without replay, empty-SQLite discovery and unmarked native history.');
   app.exit(0);
 }).catch(error => { console.error(error); child?.kill(); server.closeAllConnections(); server.close(); app.exit(1); });

@@ -21,17 +21,18 @@ const fatal = (error: unknown) => {
 };
 process.on("uncaughtException", fatal);
 process.on("unhandledRejection", fatal);
-try {
+async function start(): Promise<void> {
   const config = readAgentConfig(process.env);
   const repository = new AgentRepository(path.join(config.dataDir, "mozi.sqlite"));
   const runtime = new PiAdapter(config);
   const service = new AgentService(repository, runtime, (event) => server.event(event), fatal);
   const server = new AgentServer(service, send);
-  service.initialize();
+  const initialized = service.initialize();
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
     send({ protocolVersion: AGENT_PROTOCOL_VERSION, kind: "runtime", state: "unavailable", reason: "Agent 正在关闭。" });
+    await initialized;
     await service.close();
     log.info("service.stopped");
     process.exit(0);
@@ -41,6 +42,9 @@ try {
     if (!stopping) void server.receive(data).catch(fatal);
   });
   process.on("SIGTERM", () => { void shutdown().catch(fatal); });
+  await initialized;
+  if (stopping) return;
   send({ protocolVersion: AGENT_PROTOCOL_VERSION, kind: "runtime", state: "ready" });
   log.info("service.ready");
-} catch (error) { fatal(error); }
+}
+void start().catch(fatal);

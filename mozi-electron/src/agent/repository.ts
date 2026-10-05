@@ -1,77 +1,132 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { SessionSnapshot, StartRunInput } from "../../../shared/agent";
-import { isApiResultFor } from "../../../shared/agent";
-import type { RuntimeSessionDescriptor } from "./runtime";
+import type { RunView } from "../../../shared/agent";
+import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "./storage-models";
+import { AGENT_SCHEMA_V3 } from "./storage-schema";
+import type { AgentStore } from "./agent-store";
 
-export interface SessionRecord {
-  descriptor: RuntimeSessionDescriptor;
-  snapshot: SessionSnapshot;
-  messageLinks: { messageId: string; runId: string; role: "user" | "assistant"; ordinal: number; nativeEntryId?: string }[];
-}
-export interface SubmissionRecord {
-  input: StartRunInput;
-  runId: string;
-  messageId: string;
-}
+type Row = Record<string, string | number | bigint | Uint8Array | null>;
+const parse = <T>(value: Row[string]): T => JSON.parse(String(value)) as T;
+const runView = (row: Row): RunView => ({
+  id: String(row.id), sessionId: String(row.session_id), userMessageId: String(row.user_message_id),
+  status: row.status as RunView["status"], createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+  ...(row.error !== null ? { error: parse<NonNullable<RunView["error"]>>(row.error) } : {}),
+  ...(row.interruption_reason !== null ? { interruptionReason: String(row.interruption_reason) } : {}),
+});
 
-/** A single writer in the utility process; acceptance and IDs share one transaction. */
-export class AgentRepository {
+/** Single writer for Mozi metadata. Message bodies belong to the native runtime. */
+export class AgentRepository implements AgentStore {
   private readonly db: DatabaseSync;
+  private readonly statements = new Map<string, StatementSync>();
   constructor(filename: string) {
     mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
-    const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-    if (version !== 0 && version !== 1) {
-      this.db.close();
-      throw new Error("Unsupported Agent database version.");
-    }
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, record TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS creations (operation_id TEXT PRIMARY KEY, title TEXT NOT NULL, session_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS submissions (session_id TEXT NOT NULL, client_id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(session_id, client_id));
-      PRAGMA user_version=1;`);
+    try {
+      this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
+      const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
+      if (version !== 3) {
+        if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
+        this.db.exec("PRAGMA foreign_keys=OFF;");
+        // Authorized development reset; native session files are never deleted.
+        // FKs stay off during the transaction to remove v2's cyclic message/Run graph.
+        this.transaction(() => {
+          if (version !== 0) this.db.exec(`DROP TABLE IF EXISTS approvals; DROP TABLE IF EXISTS tools;
+            DROP TABLE IF EXISTS message_links; DROP TABLE IF EXISTS submissions; DROP TABLE IF EXISTS creations;
+            DROP TABLE IF EXISTS messages; DROP TABLE IF EXISTS runs; DROP TABLE IF EXISTS sessions;`);
+          this.db.exec(AGENT_SCHEMA_V3);
+          this.db.exec("PRAGMA user_version=3;");
+        });
+      }
+      this.db.exec("PRAGMA foreign_keys=ON;");
+    } catch (error) { this.db.close(); throw error; }
+  }
+  private statement(sql: string): StatementSync {
+    let statement = this.statements.get(sql);
+    if (!statement) { statement = this.db.prepare(sql); this.statements.set(sql, statement); }
+    return statement;
   }
   private transaction<T>(work: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try { const result = work(); this.db.exec("COMMIT"); return result; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
-  load(): SessionRecord[] {
-    return this.db.prepare("SELECT record FROM sessions").all().map((row) => {
-      const record = JSON.parse(String(row.record)) as SessionRecord;
-      if (!isApiResultFor("session.snapshot", { ok: true, result: record.snapshot })
-        || record.descriptor.sessionId !== record.snapshot.session.sessionId || !Array.isArray(record.messageLinks)) {
-        throw new Error("Invalid persisted Agent session; refusing to discard history.");
-      }
-      return record;
-    });
+  listSessions(): SessionMetadata[] {
+    return this.statement("SELECT * FROM sessions ORDER BY created_at, id").all().map(row => ({
+      descriptor: { sessionId: String(row.id), engine: String(row.engine), locator: String(row.locator), cwd: String(row.cwd) },
+      session: { sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
+    }));
+  }
+  saveSession({ descriptor, session }: SessionMetadata): void {
+    this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET engine=excluded.engine, locator=excluded.locator, cwd=excluded.cwd,
+      title=excluded.title, updated_at=excluded.updated_at`)
+      .run(session.sessionId, descriptor.engine, descriptor.locator, descriptor.cwd, session.title, session.createdAt, session.updatedAt);
+  }
+  readSession(sessionId: string): SessionMetadataDetails {
+    return {
+      runs: this.statement("SELECT * FROM runs WHERE session_id=? ORDER BY created_at, rowid").all(sessionId).map(row => ({
+        run: runView(row), clientMessageId: String(row.client_id), contentHash: String(row.content_hash),
+        ...(row.pending_content !== null ? { pendingContent: parse<NonNullable<RunMetadata["pendingContent"]>>(row.pending_content) } : {}),
+      })),
+      links: this.statement("SELECT * FROM message_links WHERE session_id=? ORDER BY rowid").all(sessionId).map(row => ({
+        messageId: String(row.message_id), runId: String(row.run_id), role: row.role as MessageLink["role"], ordinal: Number(row.ordinal),
+        ...(row.native_entry_id !== null ? { nativeEntryId: String(row.native_entry_id) } : {}),
+      })),
+    };
+  }
+  unfinishedRuns(): RunView[] {
+    return this.statement("SELECT * FROM runs WHERE status IN ('accepted', 'running', 'waiting_approval', 'cancelling')").all().map(runView);
+  }
+  findRun(sessionId: string, runId: string): RunView | undefined {
+    const row = this.statement("SELECT * FROM runs WHERE session_id=? AND id=?").get(sessionId, runId);
+    return row ? runView(row) : undefined;
   }
   findCreation(operationId: string): { title: string; sessionId: string } | undefined {
-    const row = this.db.prepare("SELECT title, session_id FROM creations WHERE operation_id=?").get(operationId);
+    const row = this.statement("SELECT title, session_id FROM creations WHERE operation_id=?").get(operationId);
     return row ? { title: String(row.title), sessionId: String(row.session_id) } : undefined;
   }
-  create(operationId: string, title: string, record: SessionRecord): void {
+  create(operationId: string, metadata: SessionMetadata): void {
     this.transaction(() => {
-      this.save(record);
-      this.db.prepare("INSERT INTO creations VALUES (?, ?, ?)").run(operationId, title, record.descriptor.sessionId);
+      this.saveSession(metadata);
+      this.statement("INSERT INTO creations VALUES (?, ?, ?)").run(operationId, metadata.session.title, metadata.descriptor.sessionId);
     });
   }
   findSubmission(sessionId: string, clientMessageId: string): SubmissionRecord | undefined {
-    const row = this.db.prepare("SELECT record FROM submissions WHERE session_id=? AND client_id=?").get(sessionId, clientMessageId);
-    return row ? JSON.parse(String(row.record)) as SubmissionRecord : undefined;
+    const row = this.statement("SELECT id, content_hash, user_message_id FROM runs WHERE session_id=? AND client_id=?").get(sessionId, clientMessageId);
+    return row ? { sessionId, clientMessageId, contentHash: String(row.content_hash), runId: String(row.id), messageId: String(row.user_message_id) } : undefined;
   }
-  accept(record: SessionRecord, submission: SubmissionRecord): void {
+  accept({ run, clientMessageId, contentHash, pendingContent }: RunMetadata, link: MessageLink): void {
     this.transaction(() => {
-      this.save(record);
-      this.db.prepare("INSERT INTO submissions VALUES (?, ?, ?)")
-        .run(record.descriptor.sessionId, submission.input.clientMessageId, JSON.stringify(submission));
+      this.statement(`INSERT INTO runs (id, session_id, user_message_id, client_id, content_hash, pending_content,
+        status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(run.id, run.sessionId, run.userMessageId, clientMessageId, contentHash, JSON.stringify(pendingContent), run.status, run.createdAt, run.updatedAt);
+      this.writeLinks(run.sessionId, [link]);
+      this.touch(run);
     });
   }
-  save(record: SessionRecord): void {
-    this.db.prepare("INSERT INTO sessions VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record=excluded.record")
-      .run(record.descriptor.sessionId, JSON.stringify(record));
+  private touch(run: RunView): void {
+    this.statement("UPDATE sessions SET updated_at=? WHERE id=?").run(run.updatedAt, run.sessionId);
   }
-  close(): void { this.db.close(); }
+  updateRun(run: RunView): void {
+    this.transaction(() => {
+      this.statement("UPDATE runs SET status=?, updated_at=?, error=?, interruption_reason=? WHERE id=?")
+        .run(run.status, run.updatedAt, run.error ? JSON.stringify(run.error) : null, run.interruptionReason ?? null, run.id);
+      this.touch(run);
+    });
+  }
+  private writeLinks(sessionId: string, links: MessageLink[]): void {
+    for (const link of links) {
+      this.statement(`INSERT INTO message_links (message_id, session_id, run_id, role, ordinal, native_entry_id)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET native_entry_id=excluded.native_entry_id`)
+        .run(link.messageId, sessionId, link.runId, link.role, link.ordinal, link.nativeEntryId ?? null);
+      if (link.role === "user" && link.nativeEntryId) {
+        this.statement("UPDATE runs SET pending_content=NULL WHERE id=? AND session_id=? AND pending_content IS NOT NULL").run(link.runId, sessionId);
+      }
+    }
+  }
+  saveLinks(sessionId: string, links: MessageLink[]): void {
+    if (links.length) this.transaction(() => this.writeLinks(sessionId, links));
+  }
+  close(): void { this.statements.clear(); this.db.close(); }
 }
