@@ -55,6 +55,7 @@ export class TrayService {
       ]),
     );
     tray.on("click", () => this.showApplication());
+    tray.on("double-click", () => this.showApplication());
     app.on("before-quit", () => {
       this.isQuitting = true;
     });
@@ -63,6 +64,7 @@ export class TrayService {
   }
 
   showApplication(): void {
+    if (this.isQuitting) return;
     const mainWindow =
       this.windowService.getWindow(MAIN_WINDOW_CHANNEL_ID) ??
       this.windowService.createMainWindow(this.mainWindowEntry);
@@ -77,28 +79,21 @@ export class TrayService {
   }
 
   quitApplication(): void {
+    if (this.isQuitting) return;
     this.isQuitting = true;
     app.quit();
   }
 
   private bindMainWindow(mainWindow: BrowserWindow): void {
-    if (this.mainWindow === mainWindow) {
-      return;
-    }
-
+    if (this.mainWindow === mainWindow) return;
     this.mainWindow = mainWindow;
     mainWindow.on("close", (event) => {
-      if (this.isQuitting || process.platform === "darwin") {
-        return;
-      }
-
+      if (this.isQuitting || process.platform === "darwin") return;
       event.preventDefault();
       mainWindow.hide();
     });
     mainWindow.once("closed", () => {
-      if (this.mainWindow === mainWindow) {
-        this.mainWindow = undefined;
-      }
+      if (this.mainWindow === mainWindow) this.mainWindow = undefined;
     });
   }
 }

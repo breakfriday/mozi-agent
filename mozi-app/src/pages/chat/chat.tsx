@@ -11,7 +11,6 @@ import {
   StopOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Tag } from "antd";
 import { MoziIcon } from "@/components/MoziIcon";
 import styles from "./chat.module.css";
 

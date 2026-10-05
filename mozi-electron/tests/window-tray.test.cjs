@@ -12,12 +12,18 @@ const entry = { type: "url", url: "http://localhost:5173/mozi_app/" };
 function setup(platform = "linux", packaged = false) {
   const windows = [];
   const trays = [];
+  const handlers = new Map();
+  const ipcMain = new EventEmitter();
+  ipcMain.handle = (channel, handler) => handlers.set(channel, handler);
+  const ipcRenderer = new EventEmitter();
+  const exposed = {};
   const app = new EventEmitter();
   Object.assign(app, {
     isPackaged: packaged,
     getAppPath: () => projectDir,
     getName: () => "mozi-electron",
     quitCalls: 0,
+    whenReady: () => ({ then: (callback) => callback() }),
     quit() {
       this.quitCalls++;
       this.emit("before-quit");
@@ -32,10 +38,15 @@ function setup(platform = "linux", packaged = false) {
       this.destroyed = false;
       this.visible = true;
       this.minimized = false;
-      this.webContents = {
+      this.fullScreen = false;
+      this.sent = [];
+      this.webContents = Object.assign(new EventEmitter(), {
+        mainFrame: {},
+        isDestroyed: () => this.destroyed,
+        send: (channel, state) => this.sent.push({ channel, state }),
         setWindowOpenHandler: (handler) => { this.openHandler = handler; },
         openDevTools: () => { this.devToolsOpen = true; },
-      };
+      });
       windows.push(this);
     }
     setMenu() {}
@@ -43,14 +54,26 @@ function setup(platform = "linux", packaged = false) {
     loadFile(filePath, options) { this.loaded = { filePath, hash: options.hash }; return Promise.resolve(); }
     isDestroyed() { return this.destroyed; }
     isMinimized() { return this.minimized; }
+    minimize() { this.minimized = true; }
+    isFullScreen() { return this.fullScreen; }
+    setFullScreen(value) {
+      if (this.fullScreen === value) return;
+      this.fullScreen = value;
+      this.emit(value ? "enter-full-screen" : "leave-full-screen");
+    }
     restore() { this.minimized = false; }
     show() { this.visible = true; }
     hide() { this.visible = false; }
     focus() { this.focused = true; }
     close() {
+      if (this.destroyed) return;
       let prevented = false;
       this.emit("close", { preventDefault() { prevented = true; } });
-      if (!prevented) { this.destroyed = true; this.emit("closed"); }
+      if (!prevented) {
+        this.destroyed = true;
+        this.emit("closed");
+        if (windows.every((win) => win.destroyed)) app.emit("window-all-closed");
+      }
     }
   }
 
@@ -61,7 +84,8 @@ function setup(platform = "linux", packaged = false) {
   }
 
   const electron = {
-    app, BrowserWindow, Tray,
+    app, BrowserWindow, Tray, ipcMain, ipcRenderer,
+    contextBridge: { exposeInMainWorld: (key, value) => { exposed[key] = value; } },
     Menu: { buildFromTemplate: (items) => items },
     nativeImage: {
       createFromPath: (filePath) => ({
@@ -79,9 +103,9 @@ function setup(platform = "linux", packaged = false) {
     });
     const module = { exports: {} };
     vm.runInNewContext(outputText, {
-      module, exports: module.exports, console,
+      module, exports: module.exports, console, URL,
       __dirname: path.join(projectDir, ".vite/build"),
-      process: { platform, resourcesPath: "/packaged/resources" },
+      process: { platform, resourcesPath: "/packaged/resources", env: {} },
       require: (name) => {
         if (name === "electron") return electron;
         if (Object.hasOwn(dependencies, name)) return dependencies[name];
@@ -93,10 +117,24 @@ function setup(platform = "linux", packaged = false) {
   }
 
   const windowModule = load("src/main/services/window.service.ts");
-  const { TrayService } = load("src/main/services/tray.service.ts", { "./window.service": windowModule });
+  const trayModule = load("src/main/services/tray.service.ts", { "./window.service": windowModule });
+  const { TrayService } = trayModule;
+  const ipcModule = load("src/main/window-ipc.ts");
   const windowService = new windowModule.WindowService();
   const trayService = new TrayService(windowService, entry);
-  return { app, windows, trays, windowService, trayService };
+  const startMain = () => load("src/main.ts", {
+    "electron-squirrel-startup": false,
+    "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
+    "./main/services/window.service": windowModule,
+    "./main/services/tray.service": trayModule,
+    "./main/window-ipc": ipcModule,
+  });
+  return {
+    app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers,
+    startMain,
+    registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication()),
+    loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
+  };
 }
 
 test("window service loads URL/file entries and retains mozi window settings", () => {
@@ -107,6 +145,7 @@ test("window service loads URL/file entries and retains mozi window settings", (
   assert.equal(main.options.height, 860);
   assert.equal(main.options.minWidth, 960);
   assert.equal(main.options.minHeight, 640);
+  assert.equal(main.options.frame, false);
   const prefs = main.options.webPreferences;
   assert.equal(prefs.webSecurity, false);
   assert.equal(prefs.sandbox, true);
@@ -114,9 +153,10 @@ test("window service loads URL/file entries and retains mozi window settings", (
   assert.equal(prefs.nodeIntegration, false);
   assert.equal(prefs.preload, path.join(projectDir, ".vite/build/preload.js"));
   assert.equal(main.openHandler().action, "deny");
-  const local = windowService.createWindow("local", { type: "file", filePath: "/renderer/index.html", hash: "/about" });
+  const local = windowService.createWindow("local", { type: "file", filePath: "/renderer/index.html", hash: "/chat" });
   assert.equal(local.loaded.filePath, "/renderer/index.html");
-  assert.equal(local.loaded.hash, "/about");
+  assert.equal(local.loaded.hash, "/chat");
+  assert.equal(local.options.frame, false);
 });
 
 test("window service reuses, restores, and cleans up windows by channel", () => {
@@ -137,7 +177,7 @@ test("window service reuses, restores, and cleans up windows by channel", () => 
 });
 
 for (const platform of ["linux", "win32"]) {
-  test(`${platform}: closing hides to tray; click restores; quit closes`, () => {
+  test(`${platform}: close hides to tray; click and double-click restore; quit closes`, () => {
     const { app, windows, trays, trayService } = setup(platform);
     trayService.start();
     trayService.start();
@@ -155,9 +195,18 @@ for (const platform of ["linux", "win32"]) {
     assert.equal(win.visible, true);
     assert.equal(win.minimized, false);
     assert.equal(win.focused, true);
+    win.close();
+    win.minimized = true;
+    trays[0].emit("double-click");
+    assert.equal(windows.length, 1);
+    assert.equal(win.visible, true);
+    assert.equal(win.minimized, false);
+    assert.equal(win.focused, true);
     trays[0].menu.find((item) => item.label === "退出应用").click();
     assert.equal(app.quitCalls, 1);
     assert.equal(win.destroyed, true);
+    trays[0].emit("click");
+    assert.equal(windows.length, 1);
   });
 }
 
@@ -175,7 +224,7 @@ test("macOS closes the window and tray recreates it", () => {
   trayService.showApplication();
   windows[0].close();
   assert.equal(windows[0].destroyed, true);
-  trays[0].menu.find((item) => item.label === "唤起应用").click();
+  trays[0].emit("double-click");
   assert.equal(windows.length, 2);
   assert.equal(windows[1].visible, true);
   assert.equal(trays[0].icon.template, true);
@@ -190,4 +239,88 @@ test("tray icons resolve for development and packaged apps on each platform", ()
       assert.equal(trays[0].toolTip, "mozi-electron");
     }
   }
+});
+
+for (const platform of ["linux", "win32", "darwin"]) {
+  test(`${platform}: main stays alive in the tray until explicit quit`, () => {
+    const { app, windows, trays, windowService, startMain } = setup(platform);
+    startMain();
+    assert.equal(app.listenerCount("window-all-closed"), 1);
+    const secondary = windowService.createWindow("secondary", entry);
+    windows[0].close();
+    assert.equal(app.quitCalls, 0);
+    assert.equal(secondary.destroyed, false);
+    secondary.close();
+    assert.equal(app.quitCalls, 0);
+    app.emit("window-all-closed");
+    assert.equal(app.quitCalls, 0);
+    trays[0].emit("double-click");
+    const main = platform === "darwin" ? windows[2] : windows[0];
+    assert.equal(main.visible, true);
+    assert.equal(main.focused, true);
+    trays[0].menu.find((item) => item.label === "退出应用").click();
+    assert.equal(app.quitCalls, 1);
+    assert.equal(main.destroyed, true);
+  });
+}
+
+test("window IPC targets the owning main frame and validates fullscreen requests", () => {
+  const { app, windowService, registerIpc, ipcMain, handlers } = setup();
+  registerIpc();
+  const main = windowService.createMainWindow(entry);
+  const secondary = windowService.createWindow("secondary", entry);
+  const event = { sender: secondary.webContents, senderFrame: secondary.webContents.mainFrame };
+  const setFullScreen = handlers.get("window:set-full-screen");
+  const getState = handlers.get("window:get-state");
+  assert.equal(getState(event).isFullScreen, false);
+  assert.equal(setFullScreen(event, "true"), false);
+  assert.equal(setFullScreen({ ...event, senderFrame: {} }, true), false);
+  assert.equal(setFullScreen(event, true), true);
+  assert.equal(main.isFullScreen(), false);
+  assert.equal(getState(event).isFullScreen, true);
+  assert.equal(secondary.sent.at(-1).channel, "window:state-changed");
+  assert.equal(secondary.sent.at(-1).state.isFullScreen, true);
+  let prevented = false;
+  secondary.webContents.emit("before-input-event", { preventDefault: () => { prevented = true; } }, { type: "keyDown", key: "Escape" });
+  assert.equal(prevented, true);
+  assert.equal(getState(event).isFullScreen, false);
+  assert.equal(secondary.sent.at(-1).state.isFullScreen, false);
+  ipcMain.emit("window:minimize", event);
+  assert.equal(secondary.minimized, true);
+  ipcMain.emit("app:quit", { ...event, senderFrame: {} });
+  assert.equal(app.quitCalls, 0);
+  ipcMain.emit("window:close", { ...event, senderFrame: {} });
+  assert.equal(secondary.destroyed, false);
+  ipcMain.emit("window:close", event);
+  assert.equal(secondary.destroyed, true);
+  assert.equal(main.destroyed, false);
+  assert.equal(getState(event), null);
+  assert.equal(setFullScreen(event, true), false);
+  const unknown = { mainFrame: {} };
+  assert.equal(getState({ sender: unknown, senderFrame: unknown.mainFrame }), null);
+});
+
+test("preload wraps window notifications, filters payloads, and removes listeners", async () => {
+  const { ipcRenderer, loadPreload } = setup();
+  const calls = [];
+  ipcRenderer.invoke = async (...args) => { calls.push(args); return true; };
+  ipcRenderer.send = (...args) => calls.push(args);
+  const api = loadPreload();
+  const states = [];
+  const off = api.window.onStateChanged((state) => states.push(state));
+  ipcRenderer.emit("window:state-changed", { privileged: true }, { isFullScreen: true });
+  ipcRenderer.emit("window:state-changed", {}, { isFullScreen: "yes" });
+  assert.equal(states.length, 1);
+  assert.deepEqual(Object.keys(states[0]), ["isFullScreen"]);
+  assert.equal(states[0].isFullScreen, true);
+  off();
+  assert.equal(ipcRenderer.listenerCount("window:state-changed"), 0);
+  await api.window.setFullScreen(false);
+  await api.window.getState();
+  api.window.minimize();
+  api.window.close();
+  assert.deepEqual(calls, [
+    ["window:set-full-screen", false], ["window:get-state"],
+    ["window:minimize"], ["window:close"],
+  ]);
 });

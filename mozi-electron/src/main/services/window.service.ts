@@ -1,7 +1,8 @@
 import { BrowserWindow } from "electron";
 import path from "node:path";
 
-import type { BrowserWindowConstructorOptions } from "electron";
+import type { BrowserWindowConstructorOptions, WebContents } from "electron";
+import type { WindowState } from "../../../../shared/electron-api";
 import type { RendererEntry } from "../../env_config.types";
 
 export const MAIN_WINDOW_CHANNEL_ID = "main_window";
@@ -24,7 +25,7 @@ export class WindowService {
 
   createMainWindow(entry: RendererEntry): BrowserWindow {
     return this.createWindow(MAIN_WINDOW_CHANNEL_ID, entry, {
-      frame: true,
+      frame: false,
       width: 1280,
       height: 860,
       minWidth: 960,
@@ -48,7 +49,7 @@ export class WindowService {
     options: WindowCreateOptions = {},
   ): BrowserWindow {
     const {
-      frame = true,
+      frame = false,
       transparent = false,
       bgColor = transparent ? "#00000000" : "#2e2c29",
       width = 1200,
@@ -87,6 +88,21 @@ export class WindowService {
     win.setMenu(null);
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
+    const publishState = () => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+      win.webContents.send("window:state-changed", {
+        isFullScreen: win.isFullScreen(),
+      } satisfies WindowState);
+    };
+    win.on("enter-full-screen", publishState);
+    win.on("leave-full-screen", publishState);
+    win.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.key === "Escape" && win.isFullScreen()) {
+        win.setFullScreen(false);
+        event.preventDefault();
+      }
+    });
+
     this.windowMap.set(channelId, win);
     win.once("closed", () => {
       this.windowMap.delete(channelId);
@@ -122,5 +138,12 @@ export class WindowService {
 
   closeWindow(channelId: string): void {
     this.getWindow(channelId)?.close();
+  }
+
+  getWindowForWebContents(webContents: WebContents): BrowserWindow | undefined {
+    for (const win of this.windowMap.values()) {
+      if (!win.isDestroyed() && win.webContents === webContents) return win;
+    }
+    return undefined;
   }
 }

@@ -1,6 +1,4 @@
-export interface ElectronApi {
-  app: { quit(): void };
-  window: { minimize(): void; close(): void; openDevTools(): Promise<boolean> };
-}
+import type { ElectronApi } from "../../shared/electron-api";
+export type { ElectronApi } from "../../shared/electron-api";
 
 declare global { interface Window { electronAPI?: ElectronApi } }
