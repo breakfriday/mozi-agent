@@ -6,6 +6,7 @@ const path = require("node:path");
  */
 module.exports = {
   rendererDir: path.resolve(__dirname, "../mozi-app"),
-  rendererDevUrl: "http://127.0.0.1:5173/",
+  // Match mozi-app/.env.web VITE_APP_BASE; IPC validates the loaded document path.
+  rendererDevUrl: "http://127.0.0.1:5173/mozi_app/",
   rendererHash: "/",
 };
