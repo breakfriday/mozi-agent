@@ -1,5 +1,11 @@
 :root {
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   color-scheme: light;
   --app-page-background: #f5f5f5;
   --app-header-background: #fafafa;
@@ -28,13 +34,13 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --app-page-background: #1a1a1a;
-  --app-header-background: #161616;
+  --app-page-background: #1c1c1c;
+  --app-header-background: #1c1c1c;
   --app-surface-background: #222222;
   --app-elevated-background: #262626;
-  --app-input-background: #303030;
-  --app-hover-background: #252525;
-  --app-selected-background: #2d2d2d;
+  --app-input-background: #262626;
+  --app-hover-background: #242424;
+  --app-selected-background: #2a2a2a;
   --app-border-color: #343434;
   --app-border-hover-color: #555555;
   --app-heading-color: #eeeeee;
@@ -49,9 +55,19 @@
   --app-shadow-color: rgba(0, 0, 0, 0.32);
 }
 
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body { margin: 0; min-width: 320px; background: inherit; }
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  background: inherit;
+}
 code {
   padding: 2px 5px;
   border-radius: 4px;
