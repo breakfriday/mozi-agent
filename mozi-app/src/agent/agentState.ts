@@ -1,13 +1,14 @@
 import type { AgentEvent, SessionSnapshot } from "../../../shared/agent";
 import type { AgentState } from "./types";
+import { reconcileMessages } from "./submissionState";
 
 export const isTerminalRun = (status: string) => ["completed", "cancelled", "failed", "interrupted"].includes(status);
 
 export function initialAgentState(sessionId: string | null = null): AgentState {
   return {
-    sessionId, messages: [], runs: [], tools: [], approvals: [], activeRunId: null,
+    localSessionId: crypto.randomUUID(), sessionId, messages: [], messageOrder: [], runs: [], tools: [], approvals: [], activeRunId: null,
     lastSeq: 0, syncStatus: "idle", runtime: { state: "unavailable" },
-    isSubmitting: false, pendingSubmission: null, error: null,
+    inFlightSubmissionId: null, pendingSubmissions: {}, error: null,
   };
 }
 
@@ -18,14 +19,11 @@ function upsert<T>(items: T[], item: T, id: (item: T) => string): T[] {
 }
 
 export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapshot): AgentState {
-  const pending = state.pendingSubmission;
-  return {
+  return reconcileMessages({
     ...state, sessionId: snapshot.session.sessionId, messages: snapshot.messages,
     runs: snapshot.runs, tools: snapshot.tools, approvals: snapshot.approvals, lastSeq: snapshot.lastSeq,
     activeRunId: snapshot.runs.find((run) => !isTerminalRun(run.status))?.id ?? null,
-    pendingSubmission: pending && snapshot.messages.some((message) => message.clientMessageId === pending.clientMessageId)
-      ? null : pending,
-  };
+  }, true);
 }
 
 /** Caller enforces session routing and consecutive seq before applying an event. */
@@ -42,7 +40,6 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
       break;
     case "message.accepted":
       next.messages = upsert(state.messages, event.data.message, (message) => message.id);
-      if (state.pendingSubmission?.clientMessageId === event.data.message.clientMessageId) next.pendingSubmission = null;
       break;
     case "message.started":
       if (!state.messages.some((message) => message.id === event.data.messageId)) {
@@ -103,5 +100,5 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
       break;
     }
   }
-  return next;
+  return event.type === "message.accepted" || event.type === "message.started" ? reconcileMessages(next) : next;
 }

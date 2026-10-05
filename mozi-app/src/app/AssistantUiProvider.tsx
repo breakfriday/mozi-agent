@@ -8,6 +8,7 @@ import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { agentActions } from "@/agent/agentActions";
 import { useAgentStore } from "@/agent/agentStore";
 import type { AgentMessage } from "@/agent/types";
+import { selectChatMessages } from "@/agent/submissionState";
 
 function convertMessage(message: AgentMessage): ThreadMessageLike {
   const content = message.content.map((part) => ({ type: "text" as const, text: part.text }));
@@ -41,23 +42,19 @@ async function onNew(message: AppendMessage) {
 export function AssistantUiProvider({ children }: PropsWithChildren) {
   useEffect(() => agentActions.initialize(), []);
   const authoritativeMessages = useAgentStore((state) => state.messages);
-  const pending = useAgentStore((state) => state.pendingSubmission);
+  const pendingSubmissions = useAgentStore((state) => state.pendingSubmissions);
+  const messageOrder = useAgentStore((state) => state.messageOrder);
   const isRunning = useAgentStore((state) => state.activeRunId !== null);
-  const isSubmitting = useAgentStore((state) => state.isSubmitting);
+  const isSubmitting = useAgentStore((state) => state.inFlightSubmissionId !== null);
   const syncing = useAgentStore((state) => state.syncStatus === "syncing");
-  const messages = useMemo<AgentMessage[]>(() => {
-    if (!pending || authoritativeMessages.some((message) => message.clientMessageId === pending.clientMessageId)) return authoritativeMessages;
-    // Local presentation only; these IDs never enter the wire contract or backend mapping.
-    return [...authoritativeMessages, {
-      id: pending.clientMessageId, role: "user", status: "accepted",
-      content: pending.content.map((part, index) => ({ ...part, id: `optimistic-${pending.clientMessageId}-${index}` })),
-    }];
-  }, [authoritativeMessages, pending]);
+  const messages = useMemo(() => selectChatMessages({ messages: authoritativeMessages, pendingSubmissions, messageOrder }),
+    [authoritativeMessages, pendingSubmissions, messageOrder]);
+  const hasUnknownSubmission = Object.values(pendingSubmissions).some((submission) => submission.status === "unknown");
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
     isRunning,
-    isSendDisabled: isRunning || isSubmitting || syncing || pending?.status === "unknown",
+    isSendDisabled: isRunning || isSubmitting || syncing || hasUnknownSubmission,
     onNew,
     onCancel: agentActions.cancel,
   });

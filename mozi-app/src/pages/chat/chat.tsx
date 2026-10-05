@@ -22,11 +22,28 @@ const suggestions = [
   "整理问题排查步骤",
 ];
 
-function UserMessage() {
+function UserMessage({ messageKey }: { messageKey: string }) {
+  const clientMessageId = messageKey.startsWith("client:") ? messageKey.slice("client:".length) : undefined;
+  const submission = useAgentStore((state) => clientMessageId ? state.pendingSubmissions[clientMessageId] : undefined);
+  const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing"
+    || (state.activeRunId !== null && submission?.status !== "unknown")
+    || Object.values(state.pendingSubmissions).some((item) => item.status === "unknown" && item.clientMessageId !== clientMessageId));
+  const canRetry = submission?.status === "rejected" || submission?.status === "unknown";
+  const statusText = submission?.status === "unknown" ? "提交结果尚未确认，请重试原提交。"
+    : submission?.status === "rejected" ? submission.error?.code === "RUNTIME_UNAVAILABLE"
+      ? "Agent 后台尚未连接，消息已保留。" : submission.error?.message || "发送失败，消息已保留。"
+      : submission?.status === "sending" ? "正在发送…"
+        : submission?.status === "accepted" ? "后台已接受，正在同步…" : undefined;
   return (
     <MessagePrimitive.Root className={styles.userMessage}>
-      <div className={styles.userBubble}>
-        <MessagePrimitive.Parts />
+      <div className={styles.userBody}>
+        <div className={styles.userBubble}>
+          <MessagePrimitive.Parts />
+        </div>
+        {statusText && <div className={styles.submissionStatus} role={canRetry ? "alert" : "status"}>
+          <span>{statusText}</span>
+          {canRetry && <button type="button" disabled={busy} onClick={() => void agentActions.retry(submission.clientMessageId)}>重试原提交</button>}
+        </div>}
       </div>
       <span className={styles.avatar} aria-label="你">
         <UserOutlined />
@@ -72,14 +89,8 @@ function AssistantMessage() {
 function ChatThread() {
   const runtime = useAgentStore((state) => state.runtime);
   const error = useAgentStore((state) => state.error);
-  const pending = useAgentStore((state) => state.pendingSubmission);
-  const busy = useAgentStore((state) => state.isSubmitting || state.syncStatus === "syncing");
-  const canRetry = pending?.status === "rejected" || pending?.status === "unknown";
-  const errorText = pending?.status === "unknown"
-    ? "提交结果尚未确认，请重试原提交以核实状态。"
-    : error?.code === "RUNTIME_UNAVAILABLE"
-      ? "Agent 后台尚未连接，输入已保留，可以稍后重试。"
-      : error?.message;
+  const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing");
+  const errorText = error?.code === "RUNTIME_UNAVAILABLE" ? "Agent 后台尚未连接，请稍后检查连接。" : error?.message;
   return (
     <ThreadPrimitive.Root className={styles.thread}>
       <ThreadPrimitive.Viewport className={styles.viewport}>
@@ -106,16 +117,15 @@ function ChatThread() {
         <div className={styles.messages}>
           <ThreadPrimitive.Messages>
             {({ message }) =>
-              message.role === "user" ? <UserMessage /> : <AssistantMessage />
+              message.role === "user" ? <UserMessage messageKey={message.id} /> : <AssistantMessage />
             }
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
       <div className={styles.composerArea}>
-        {(errorText || canRetry) && (
+        {errorText && (
           <div className={styles.connectionError} role="alert">
-            <span>{errorText || "输入尚未提交，请重试。"}</span>
-            {canRetry && <button type="button" disabled={busy} onClick={() => void agentActions.retry()}>重试原提交</button>}
+            <span>{errorText}</span>
           </div>
         )}
         <ThreadPrimitive.ScrollToBottom

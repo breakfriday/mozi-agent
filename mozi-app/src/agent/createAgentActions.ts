@@ -2,6 +2,7 @@ import { isAppError } from "../../../shared/agent";
 import type { AgentApi, AgentEvent, AppError, RuntimeNotice } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
 import { applyAgentEvent, installAgentSnapshot, isTerminalRun } from "./agentState";
+import { interruptSubmissions, putSubmission } from "./submissionState";
 import type { AgentState, PendingSubmission } from "./types";
 
 interface AgentStore {
@@ -115,11 +116,8 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       buffered = [];
       finishedRuns.clear();
       store.setState((state) => ({
-        runtime: notice, lastSeq: 0, syncStatus: "idle", activeRunId: null, isSubmitting: false,
-        pendingSubmission: state.pendingSubmission ? {
-          ...state.pendingSubmission,
-          status: startInFlight || state.pendingSubmission.status === "accepted" ? "unknown" : state.pendingSubmission.status === "sending" ? "rejected" : state.pendingSubmission.status,
-        } : null,
+        ...interruptSubmissions(state, startInFlight),
+        runtime: notice, lastSeq: 0, syncStatus: "idle", activeRunId: null,
       }));
       startInFlight = false;
     } else {
@@ -150,8 +148,8 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     subscription = undefined;
     syncJob = undefined;
     buffered = [];
+    store.setState((state) => ({ ...interruptSubmissions(state, startInFlight), syncStatus: "idle" }));
     startInFlight = false;
-    store.setState({ isSubmitting: false, syncStatus: "idle" });
     log.info("chat.disposed");
   }
 
@@ -167,10 +165,13 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
   }
 
   async function send(pending: PendingSubmission) {
-    if (store.getState().isSubmitting) return;
+    if (store.getState().inFlightSubmissionId) return;
     const token = generation;
     let submitted = false;
-    store.setState({ pendingSubmission: { ...pending, status: "sending" }, isSubmitting: true, error: null });
+    store.setState((state) => ({
+      ...putSubmission(state, { ...pending, status: "sending", error: undefined }),
+      inFlightSubmissionId: pending.clientMessageId, error: null,
+    }));
     log.info("chat.submit", { clientMessageId: pending.clientMessageId, content: pending.content });
     try {
       let sessionId = store.getState().sessionId;
@@ -180,7 +181,14 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
         if (token !== generation) return;
         sessionId = created.sessionId;
         createInput = undefined;
-        store.setState({ sessionId });
+        const boundSessionId = sessionId;
+        store.setState((state) => ({
+          sessionId: boundSessionId,
+          pendingSubmissions: Object.fromEntries(Object.entries(state.pendingSubmissions).map(([id, submission]) => [id,
+            submission.localSessionId === state.localSessionId && submission.sessionId === null
+              ? { ...submission, sessionId: boundSessionId } : submission,
+          ])),
+        }));
         rememberSession(sessionId);
       }
       if (store.getState().syncStatus !== "ready" && !await synchronize()) return;
@@ -192,8 +200,13 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       store.setState((state) => ({
         activeRunId: finishedRuns.has(accepted.runId) || state.runs.some((run) => run.id === accepted.runId && isTerminalRun(run.status))
           ? state.activeRunId : accepted.runId,
-        pendingSubmission: state.messages.some((message) => message.clientMessageId === pending.clientMessageId)
-          ? null : { ...pending, status: "accepted" },
+        pendingSubmissions: state.pendingSubmissions[pending.clientMessageId] ? {
+          ...state.pendingSubmissions,
+          [pending.clientMessageId]: {
+            ...state.pendingSubmissions[pending.clientMessageId], status: "accepted",
+            messageId: accepted.messageId, runId: accepted.runId, error: undefined,
+          },
+        } : state.pendingSubmissions,
       }));
       if (accepted.disposition === "duplicate") await synchronize();
     } catch (error) {
@@ -201,15 +214,18 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       const failure = appError(error);
       const uncertain = submitted && !["INVALID_ARGUMENT", "SESSION_NOT_FOUND", "SESSION_BUSY", "CAPACITY_EXCEEDED", "SUBMISSION_CONFLICT", "PERMISSION_DENIED"].includes(failure.code);
       store.setState((state) => ({
-        error: failure,
-        pendingSubmission: state.messages.some((message) => message.clientMessageId === pending.clientMessageId)
-          ? null : { ...pending, status: uncertain ? "unknown" : "rejected" },
+        pendingSubmissions: state.pendingSubmissions[pending.clientMessageId] ? {
+          ...state.pendingSubmissions,
+          [pending.clientMessageId]: {
+            ...state.pendingSubmissions[pending.clientMessageId], status: uncertain ? "unknown" : "rejected", error: failure,
+          },
+        } : state.pendingSubmissions,
       }));
       log.warn("chat.submit.failed", { clientMessageId: pending.clientMessageId, code: failure.code });
     } finally {
       if (token === generation) {
         startInFlight = false;
-        store.setState({ isSubmitting: false });
+        store.setState({ inFlightSubmissionId: null });
       }
     }
   }
@@ -219,17 +235,25 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     async submit(text: string) {
       const content = text.trim();
       const state = store.getState();
-      if (!content || state.isSubmitting || state.activeRunId) return;
-      if (state.pendingSubmission?.status === "unknown") {
+      if (!content || state.inFlightSubmissionId || state.activeRunId || state.syncStatus === "syncing") return;
+      if (Object.values(state.pendingSubmissions).some((submission) => submission.status === "unknown")) {
         store.setState({ error: { code: "REQUEST_TIMEOUT", message: "上一条提交结果尚未确认，请先重试原提交。" } });
         return;
       }
       // Querying/creating through the real API also makes an offline backend visible.
-      await send({ clientMessageId: crypto.randomUUID(), content: [{ type: "text", text: content }], status: "sending" });
+      await send({
+        localSessionId: state.localSessionId, sessionId: state.sessionId,
+        clientMessageId: crypto.randomUUID(), content: [{ type: "text", text: content }], status: "sending",
+      });
     },
-    async retry() {
-      const pending = store.getState().pendingSubmission;
-      if (pending && (pending.status === "unknown" || pending.status === "rejected")) await send(pending);
+    async retry(clientMessageId: string) {
+      const state = store.getState();
+      const pending = state.pendingSubmissions[clientMessageId];
+      if (!pending || state.inFlightSubmissionId || state.syncStatus === "syncing"
+        || pending.localSessionId !== state.localSessionId || pending.sessionId !== state.sessionId) return;
+      if (state.activeRunId && pending.status !== "unknown") return;
+      if (Object.values(state.pendingSubmissions).some((item) => item.status === "unknown" && item.clientMessageId !== clientMessageId)) return;
+      if (pending.status === "unknown" || pending.status === "rejected") await send(pending);
     },
     async cancel() {
       const { sessionId, activeRunId: runId } = store.getState();
