@@ -8,6 +8,11 @@ import { TrayService } from "./main/services/tray.service";
 import { WindowService } from "./main/services/window.service";
 import { registerWindowIpc } from "./main/window-ipc";
 import { registerAgentIpc } from "./main/agent-ipc";
+import { AgentProcessManager } from "./main/agent/process-manager";
+import { registerAgentShutdown } from "./main/agent/app-lifecycle";
+import { createAgentLogger } from "../../shared/agent/logging";
+
+const log = createAgentLogger("main");
 
 function resolveRendererEntry(): RendererEntry {
   const mode = app.isPackaged ? "filelocal" : process.env.ELECTRON_RENDERER_MODE?.trim() || "dev";
@@ -26,7 +31,14 @@ function resolveRendererEntry(): RendererEntry {
 
 if (started) {
   app.quit();
+} else if (!app.requestSingleInstanceLock()) {
+  log.info("app.instance.forwarded", { stage: "single-instance" }, {
+    message: "Mozi 已有实例运行，已请求旧实例显示窗口；当前实例退出。",
+  });
+  app.quit();
 } else {
+  let stopAgent: (() => Promise<void>) | undefined;
+  let disposeAgentIpc: (() => void) | undefined;
   app.whenReady().then(() => {
     const windowService = new WindowService();
     const rendererEntry = resolveRendererEntry();
@@ -34,13 +46,36 @@ if (started) {
 
     registerWindowIpc(windowService, () => trayService.quitApplication());
     const agentIpc = registerAgentIpc(windowService, rendererEntry);
-    app.once("before-quit", () => agentIpc.dispose());
+    const agentProcess = new AgentProcessManager(agentIpc.transport, {
+      entry: path.join(__dirname, "agent.mjs"), dataDir: path.join(app.getPath("userData"), "agent"),
+    });
+    stopAgent = () => agentProcess.stop();
+    disposeAgentIpc = () => agentIpc.dispose();
+    registerAgentShutdown(agentProcess, () => agentIpc.dispose());
+    agentProcess.start();
 
     trayService.start();
     trayService.showApplication();
     app.on("activate", () => trayService.showApplication());
+    app.on("second-instance", () => {
+      log.info("app.instance.received");
+      trayService.showApplication();
+    });
     app.on("window-all-closed", () => {
       // Subscribing prevents Electron's default quit; the tray owns explicit exit.
     });
+    log.info("app.started");
+  }).catch(async (error: unknown) => {
+    log.error("app.startup.failed", { stage: "startup" }, {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    // A failed startup must not leave an invisible process holding the instance lock.
+    try {
+      await stopAgent?.();
+    } finally {
+      try { disposeAgentIpc?.(); }
+      finally { app.exit(1); }
+    }
   });
 }

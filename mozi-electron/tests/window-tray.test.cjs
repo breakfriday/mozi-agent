@@ -19,15 +19,23 @@ function setup(platform = "linux", packaged = false) {
   const ipcRenderer = new EventEmitter();
   const exposed = {};
   const app = new EventEmitter();
+  const mainProcess = Object.assign(new EventEmitter(), { platform, resourcesPath: "/packaged/resources", env: {} });
+  const agentLifecycle = { stops: 0, forced: 0 };
   Object.assign(app, {
     isPackaged: packaged,
     getAppPath: () => projectDir,
     getName: () => "mozi-electron",
+    getPath: () => "/tmp/mozi-test-user-data",
+    requestSingleInstanceLock: () => true,
     quitCalls: 0,
-    whenReady: () => ({ then: (callback) => callback() }),
+    whenReady: () => Promise.resolve(),
+    exitCodes: [],
+    exit(code) { this.exitCodes.push(code); },
     quit() {
       this.quitCalls++;
-      this.emit("before-quit");
+      let prevented = false;
+      this.emit("before-quit", { preventDefault() { prevented = true; } });
+      if (prevented) return;
       for (const window of windows) if (!window.isDestroyed()) window.close();
     },
   });
@@ -116,7 +124,7 @@ function setup(platform = "linux", packaged = false) {
       module, exports: module.exports, console, URL, TextEncoder, setTimeout, clearTimeout,
       crypto: require("node:crypto").webcrypto,
       __dirname: path.join(projectDir, ".vite/build"),
-      process: { platform, resourcesPath: "/packaged/resources", env: {} },
+      process: mainProcess,
       require: (name) => {
         if (name === "electron") return electron;
         if (Object.hasOwn(dependencies, name)) return dependencies[name];
@@ -145,9 +153,14 @@ function setup(platform = "linux", packaged = false) {
     "./main/services/window.service": windowModule,
     "./main/services/tray.service": trayModule,
     "./main/window-ipc": ipcModule,
+    "./main/agent/process-manager": { AgentProcessManager: class {
+      start() {}
+      stop() { agentLifecycle.stops++; return Promise.resolve(); }
+      forceStop() { agentLifecycle.forced++; }
+    } },
   });
   return {
-    app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers,
+    app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers, mainProcess, agentLifecycle,
     startMain,
     registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication()),
     loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
@@ -285,9 +298,10 @@ test("tray icons resolve for development and packaged apps on each platform", ()
 });
 
 for (const platform of ["linux", "win32", "darwin"]) {
-  test(`${platform}: main stays alive in the tray until explicit quit`, () => {
+  test(`${platform}: main stays alive in the tray until explicit quit`, async () => {
     const { app, windows, trays, windowService, startMain } = setup(platform);
     startMain();
+    await new Promise(setImmediate);
     assert.equal(app.listenerCount("window-all-closed"), 1);
     const secondary = windowService.createWindow("secondary", entry);
     windows[0].close();
@@ -303,9 +317,60 @@ for (const platform of ["linux", "win32", "darwin"]) {
     assert.equal(main.focused, true);
     trays[0].menu.find((item) => item.label === "退出应用").click();
     assert.equal(app.quitCalls, 1);
+    assert.equal(main.destroyed, false);
+    await new Promise(setImmediate);
+    assert.equal(app.quitCalls, 2);
     assert.equal(main.destroyed, true);
   });
 }
+
+test("main exits the new instance when the instance lock is already held", () => {
+  const { app, windows, startMain } = setup();
+  app.requestSingleInstanceLock = () => false;
+  startMain();
+  assert.equal(app.quitCalls, 1);
+  assert.equal(windows.length, 0);
+});
+
+test("second instance restores the existing hidden window", async () => {
+  const { app, windows, startMain } = setup();
+  startMain();
+  await new Promise(setImmediate);
+  windows[0].close();
+  windows[0].minimized = true;
+  app.emit("second-instance");
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].visible, true);
+  assert.equal(windows[0].minimized, false);
+  assert.equal(windows[0].focused, true);
+});
+
+test("startup failure exits instead of leaving an invisible locked instance", async () => {
+  const { app, windows, startMain } = setup();
+  app.getAppPath = () => "/missing-mozi-app";
+  startMain();
+  await new Promise(setImmediate);
+  assert.deepEqual(app.exitCodes, [1]);
+  assert.equal(windows.length, 0);
+});
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  test(`${signal} waits for Agent shutdown before quitting`, async () => {
+    const { app, startMain, mainProcess, agentLifecycle } = setup();
+    startMain(); await new Promise(setImmediate);
+    mainProcess.emit(signal);
+    assert.equal(agentLifecycle.stops, 1);
+    assert.equal(app.quitCalls, 1);
+    await new Promise(setImmediate);
+    assert.equal(app.quitCalls, 2);
+  });
+}
+test("direct process exit and will-quit have synchronous Agent cleanup", async () => {
+  const { app, startMain, mainProcess, agentLifecycle } = setup();
+  startMain(); await new Promise(setImmediate);
+  app.emit("will-quit"); mainProcess.emit("exit", 0);
+  assert.equal(agentLifecycle.forced, 2);
+});
 
 test("window IPC targets the owning main frame and validates fullscreen requests", () => {
   const { app, windowService, registerIpc, ipcMain, handlers } = setup();

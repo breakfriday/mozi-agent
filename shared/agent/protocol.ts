@@ -168,3 +168,6 @@ export type RuntimeControl = {
 } & RuntimeNotice;
 
 export type RuntimePacket = RuntimeResponse | AgentEvent | RuntimeControl;
+
+/** Main → utility process lifecycle command; never exposed through window.mozi. */
+export type RuntimeShutdown = { protocolVersion: 1; kind: "control"; action: "shutdown" };

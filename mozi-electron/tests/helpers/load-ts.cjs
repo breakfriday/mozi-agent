@@ -6,8 +6,9 @@ const ts = require("typescript");
 module.exports = function createLoader(overrides = {}) {
   const cache = new Map();
   const context = vm.createContext({
-    console, URL, TextEncoder, setTimeout, clearTimeout, structuredClone,
+    console, URL, TextEncoder, Buffer, setTimeout, clearTimeout, setImmediate, structuredClone,
     crypto: require("node:crypto").webcrypto,
+    process: { env: {} },
   });
   function load(filename) {
     const resolved = [filename, `${filename}.ts`, path.join(filename, "index.ts")]

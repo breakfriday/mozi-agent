@@ -7,7 +7,7 @@ import type {
 } from "./models";
 import type {
   AgentEvent, AgentRequest, EventPayload, Method, ResponseFor, RuntimeControl,
-  RuntimeNotice,
+  RuntimeNotice, RuntimeShutdown,
 } from "./protocol";
 
 type Guard<T> = (value: unknown) => value is T;
@@ -117,6 +117,9 @@ export const isRuntimeNotice = object<RuntimeNotice>({ state: oneOf("unavailable
 export const isRuntimeControl = object<RuntimeControl>({
   protocolVersion: oneOf(AGENT_PROTOCOL_VERSION), kind: oneOf("runtime"),
   state: oneOf("unavailable", "ready"), reason: optional(string),
+});
+export const isRuntimeShutdown = object<RuntimeShutdown>({
+  protocolVersion: oneOf(AGENT_PROTOCOL_VERSION), kind: oneOf("control"), action: oneOf("shutdown"),
 });
 
 const outcomeValidators = {
