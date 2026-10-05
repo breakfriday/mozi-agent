@@ -1,0 +1,316 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 112px);
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--app-border-color);
+  border-radius: 16px;
+  background: var(--app-surface-background);
+}
+
+.header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--app-border-color);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.heading h1 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--app-heading-color);
+}
+.thread {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.viewport {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+.messages,
+.welcome,
+.composerArea {
+  width: 100%;
+  max-width: 800px;
+  margin-inline: auto;
+}
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.welcome {
+  padding: clamp(24px, 8vh, 80px) 0 32px;
+  text-align: center;
+}
+.welcomeIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: var(--app-input-background);
+  color: var(--app-primary-color);
+  font-size: 30px;
+}
+.welcome h2 {
+  margin: 24px 0 12px;
+  font-size: clamp(24px, 3vw, 32px);
+  color: var(--app-heading-color);
+}
+.welcome p {
+  margin: 0;
+  color: var(--app-muted-color);
+  line-height: 1.7;
+}
+.suggestions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 32px;
+}
+.suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 16px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--app-text-color);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.suggestion:hover {
+  background: var(--app-hover-background);
+  border-color: var(--app-border-hover-color);
+}
+.suggestion > span {
+  color: var(--app-muted-color);
+}
+
+.userMessage,
+.assistantMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.userMessage {
+  justify-content: flex-end;
+}
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--app-input-background);
+  color: var(--app-muted-color);
+}
+.assistantAvatar {
+  color: var(--app-primary-color);
+}
+.userBubble {
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: 16px 4px 16px 16px;
+  background: var(--app-selected-background);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.assistantBody {
+  min-width: 0;
+  flex: 1;
+  padding-top: 4px;
+}
+.messageAuthor {
+  color: var(--app-heading-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+.messageStatus {
+  display: block;
+  margin-top: 10px;
+  color: var(--app-muted-color);
+  font-size: 12px;
+}
+.markdown {
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  font-size: 14px;
+}
+.markdown p {
+  margin: 10px 0;
+}
+.markdown pre {
+  overflow-x: auto;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--app-input-background);
+}
+.markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+.markdown a {
+  color: var(--app-link-color);
+}
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.markdown th,
+.markdown td {
+  padding: 8px 12px;
+  border: 1px solid var(--app-border-color);
+}
+.markdown blockquote {
+  margin-inline: 0;
+  padding-left: 16px;
+  border-left: 3px solid var(--app-border-color);
+  color: var(--app-muted-color);
+}
+
+.composerArea {
+  position: relative;
+  flex-shrink: 0;
+  padding: 12px 24px 16px;
+}
+.composer {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 16px;
+  background: var(--app-input-background);
+}
+.composer:focus-within {
+  border-color: var(--app-focus-color);
+  box-shadow: 0 0 0 3px var(--app-focus-ring-color);
+}
+.input {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--app-text-color);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.input::placeholder {
+  color: var(--app-muted-color);
+}
+.composerToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.inputHint,
+.disclaimer {
+  color: var(--app-muted-color);
+  font-size: 12px;
+}
+.sendButton {
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--app-primary-color);
+  color: var(--app-primary-contrast-color);
+  font-size: 18px;
+  cursor: pointer;
+}
+.sendButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.disclaimer {
+  margin: 10px 0 0;
+  text-align: center;
+  line-height: 1.6;
+}
+.scrollToBottom {
+  position: absolute;
+  top: -30px;
+  left: calc(50% - 16px);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 50%;
+  background: var(--app-elevated-background);
+  color: var(--app-text-color);
+  box-shadow: 0 2px 8px var(--app-shadow-color);
+  cursor: pointer;
+}
+.scrollToBottom:disabled {
+  visibility: hidden;
+}
+.suggestion:focus-visible,
+.sendButton:focus-visible,
+.scrollToBottom:focus-visible {
+  outline: 2px solid var(--app-focus-color);
+  outline-offset: 3px;
+}
+
+@media (max-width: 767px) {
+  .page {
+    height: calc(100dvh - 88px);
+    border-radius: 12px;
+  }
+  .header {
+    padding: 14px 12px;
+    flex-wrap: wrap;
+  }
+  .heading {
+    gap: 8px;
+  }
+  .viewport {
+    padding: 16px 12px;
+  }
+  .suggestions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 24px;
+  }
+  .suggestion {
+    padding: 12px;
+  }
+  .composerArea {
+    padding: 12px;
+  }
+  .inputHint {
+    font-size: 10px;
+  }
+  .disclaimer {
+    font-size: 10px;
+  }
+}

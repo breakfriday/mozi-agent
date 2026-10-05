@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": "^20.19.0 || >=22.12.0" },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite --mode web",
     "build": "vite build --mode web",
@@ -17,6 +19,8 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
+    "@assistant-ui/react": "^0.15.23",
+    "@assistant-ui/react-markdown": "^0.14.18",
     "@tanstack/react-query": "^5.90.20",
     "@tanstack/react-router": "^1.139.15",
     "antd": "^6.3.1",
