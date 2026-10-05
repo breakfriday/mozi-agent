@@ -12,6 +12,8 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { MoziIcon } from "@/components/MoziIcon";
+import { useAgentStore } from "@/agent/agentStore";
+import { agentActions } from "@/agent/agentActions";
 import styles from "./chat.module.css";
 
 const suggestions = [
@@ -48,8 +50,11 @@ function AssistantMessage() {
         </div>
         <AuiIf condition={(s) => s.message.status?.type === "running"}>
           <span className={styles.messageStatus} role="status">
-            正在输出演示回复…
+            正在生成回复…
           </span>
+        </AuiIf>
+        <AuiIf condition={(s) => s.message.status?.type === "incomplete" && s.message.status.reason === "error"}>
+          <span className={styles.messageStatus}>任务未完成</span>
         </AuiIf>
         <AuiIf
           condition={(s) =>
@@ -65,6 +70,16 @@ function AssistantMessage() {
 }
 
 function ChatThread() {
+  const runtime = useAgentStore((state) => state.runtime);
+  const error = useAgentStore((state) => state.error);
+  const pending = useAgentStore((state) => state.pendingSubmission);
+  const busy = useAgentStore((state) => state.isSubmitting || state.syncStatus === "syncing");
+  const canRetry = pending?.status === "rejected" || pending?.status === "unknown";
+  const errorText = pending?.status === "unknown"
+    ? "提交结果尚未确认，请重试原提交以核实状态。"
+    : error?.code === "RUNTIME_UNAVAILABLE"
+      ? "Agent 后台尚未连接，输入已保留，可以稍后重试。"
+      : error?.message;
   return (
     <ThreadPrimitive.Root className={styles.thread}>
       <ThreadPrimitive.Viewport className={styles.viewport}>
@@ -97,6 +112,12 @@ function ChatThread() {
         </div>
       </ThreadPrimitive.Viewport>
       <div className={styles.composerArea}>
+        {(errorText || canRetry) && (
+          <div className={styles.connectionError} role="alert">
+            <span>{errorText || "输入尚未提交，请重试。"}</span>
+            {canRetry && <button type="button" disabled={busy} onClick={() => void agentActions.retry()}>重试原提交</button>}
+          </div>
+        )}
         <ThreadPrimitive.ScrollToBottom
           className={styles.scrollToBottom}
           aria-label="滚动到底部"
@@ -133,7 +154,8 @@ function ChatThread() {
           </div>
         </ComposerPrimitive.Root>
         <p className={styles.disclaimer}>
-          本地演示 · 尚未连接 Agent · 刷新页面后记录清空
+          {busy ? "正在连接或同步会话…" : runtime.state === "ready" ? "已连接 Agent" : "Agent 尚未连接"}
+          {runtime.state !== "ready" && <button type="button" onClick={() => void agentActions.refresh()}>检查连接</button>}
         </p>
       </div>
     </ThreadPrimitive.Root>

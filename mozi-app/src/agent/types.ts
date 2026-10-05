@@ -1,12 +1,26 @@
-// Application-owned state, shared by chat and other Agent views.
-export type AgentMessage = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  status: "streaming" | "completed" | "cancelled";
+import type {
+  AppError, ApprovalView, InputPart, MessageView, RunView, RuntimeNotice, ToolView,
+} from "../../../shared/agent";
+
+export type AgentMessage = Pick<MessageView, "id" | "role" | "content" | "status">;
+
+export type PendingSubmission = {
+  clientMessageId: string;
+  content: InputPart[];
+  status: "sending" | "accepted" | "unknown" | "rejected";
 };
 
 export type AgentState = {
-  messages: AgentMessage[];
-  activeMessageId: string | null;
+  sessionId: string | null;
+  messages: MessageView[];
+  runs: RunView[];
+  tools: ToolView[];
+  approvals: ApprovalView[];
+  activeRunId: string | null;
+  lastSeq: number;
+  syncStatus: "idle" | "syncing" | "ready" | "error";
+  runtime: RuntimeNotice;
+  isSubmitting: boolean;
+  pendingSubmission: PendingSubmission | null;
+  error: AppError | null;
 };

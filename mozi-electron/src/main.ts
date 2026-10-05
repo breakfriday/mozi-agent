@@ -7,6 +7,7 @@ import type { RendererEntry } from "./env_config.types";
 import { TrayService } from "./main/services/tray.service";
 import { WindowService } from "./main/services/window.service";
 import { registerWindowIpc } from "./main/window-ipc";
+import { registerAgentIpc } from "./main/agent-ipc";
 
 function resolveRendererEntry(): RendererEntry {
   const mode = app.isPackaged ? "filelocal" : process.env.ELECTRON_RENDERER_MODE?.trim() || "dev";
@@ -28,9 +29,12 @@ if (started) {
 } else {
   app.whenReady().then(() => {
     const windowService = new WindowService();
-    const trayService = new TrayService(windowService, resolveRendererEntry());
+    const rendererEntry = resolveRendererEntry();
+    const trayService = new TrayService(windowService, rendererEntry);
 
     registerWindowIpc(windowService, () => trayService.quitApplication());
+    const agentIpc = registerAgentIpc(windowService, rendererEntry);
+    app.once("before-quit", () => agentIpc.dispose());
 
     trayService.start();
     trayService.showApplication();

@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { ElectronApi, WindowState } from "../../shared/electron-api";
+import type { MoziApi } from "../../shared/mozi-api";
+import { createAgentPreloadApi } from "./preload/agent";
+import { createAgentLogger } from "../../shared/agent/logging";
 
 const electronApi = {
   app: { quit: () => ipcRenderer.send("app:quit") },
@@ -20,3 +23,7 @@ const electronApi = {
 } as const satisfies ElectronApi;
 
 contextBridge.exposeInMainWorld("electronAPI", electronApi);
+
+const agentBridge = createAgentPreloadApi(ipcRenderer);
+contextBridge.exposeInMainWorld("mozi", { agent: agentBridge.api } satisfies MoziApi);
+createAgentLogger("preload").info("bridge.exposed");

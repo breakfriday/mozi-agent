@@ -1,4 +1,5 @@
 import type { ElectronApi, WindowState } from "../../../shared/electron-api";
+import { agentApi } from "./agent";
 
 function getElectronApi(): ElectronApi | undefined {
   return (window as Window & { electronAPI?: ElectronApi }).electronAPI;
@@ -6,6 +7,7 @@ function getElectronApi(): ElectronApi | undefined {
 
 /** The only renderer entry point to preload. Safe to call in a regular browser. */
 export const bridgeApi = {
+  agent: agentApi,
   get available() {
     return Boolean(getElectronApi());
   },

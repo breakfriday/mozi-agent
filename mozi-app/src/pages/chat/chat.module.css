@@ -197,6 +197,32 @@
   color: var(--app-muted-color);
   font-size: 12px;
 }
+.connectionError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 10px;
+  color: var(--app-text-color);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.connectionError button,
+.disclaimer button {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-link-color);
+  font: inherit;
+  cursor: pointer;
+}
+.connectionError button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .sendButton {
   display: grid;
   place-items: center;

@@ -15,6 +15,7 @@ function setup(platform = "linux", packaged = false) {
   const handlers = new Map();
   const ipcMain = new EventEmitter();
   ipcMain.handle = (channel, handler) => handlers.set(channel, handler);
+  ipcMain.removeHandler = (channel) => handlers.delete(channel);
   const ipcRenderer = new EventEmitter();
   const exposed = {};
   const app = new EventEmitter();
@@ -112,16 +113,23 @@ function setup(platform = "linux", packaged = false) {
     });
     const module = { exports: {} };
     vm.runInNewContext(outputText, {
-      module, exports: module.exports, console, URL,
+      module, exports: module.exports, console, URL, TextEncoder, setTimeout, clearTimeout,
+      crypto: require("node:crypto").webcrypto,
       __dirname: path.join(projectDir, ".vite/build"),
       process: { platform, resourcesPath: "/packaged/resources", env: {} },
       require: (name) => {
         if (name === "electron") return electron;
         if (Object.hasOwn(dependencies, name)) return dependencies[name];
         if (name.startsWith("node:")) return require(name);
+        if (name.startsWith(".")) {
+          const absolute = path.resolve(projectDir, path.dirname(file), name);
+          const resolved = [`${absolute}.ts`, path.join(absolute, "index.ts")].find(existsSync);
+          if (resolved) return load(path.relative(projectDir, resolved), dependencies);
+        }
         throw new Error(`Unexpected dependency: ${name}`);
       },
     }, { filename: file });
+    if (file.endsWith("shared/agent/logging.ts")) module.exports.configureAgentLogging({ enabled: false });
     return module.exports;
   }
 
