@@ -5,7 +5,7 @@ import {
   MoonOutlined,
   SunOutlined,
 } from "@ant-design/icons";
-import { Button, Grid, Menu, Switch } from "antd";
+import { Button, Grid, Tooltip } from "antd";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { useThemeStore } from "@/store/useThemeStore";
@@ -15,9 +15,9 @@ import styles from "./AppLayout.module.css";
 
 const menuItems = [
   {
-    key: "/chat",
+    key: "/chat" as const,
     icon: <MessageOutlined />,
-    label: <Link to="/chat">智能对话</Link>,
+    label: "智能对话",
   },
 ];
 
@@ -39,44 +39,56 @@ export function AppLayout() {
     >
       <header className={styles.header}>
         <div className={styles.brand}>
-          <span className={styles.brandMark}>M</span>
-          <span className={styles.brandName}>Mozi Agent</span>
+          <Button
+            type="text"
+            icon={menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed((value) => !value)}
+            className={styles.collapseButton}
+            aria-label={menuCollapsed ? "展开菜单" : "收起菜单"}
+            title={menuCollapsed ? "展开菜单" : "收起菜单"}
+            aria-expanded={!menuCollapsed}
+            aria-controls="app-menu"
+            disabled={isCompact}
+          />
+          <span className={styles.brandName}>Mozi</span>
         </div>
         <div className={styles.headerActions}>
-          <Switch
-            checked={appTheme === "dark"}
-            onChange={(checked) => setTheme(checked ? "dark" : "light")}
-            checkedChildren={<MoonOutlined />}
-            unCheckedChildren={<SunOutlined />}
+          <Button
+            type="text"
+            className={styles.themeButton}
+            icon={appTheme === "dark" ? <MoonOutlined /> : <SunOutlined />}
+            onClick={() => setTheme(appTheme === "dark" ? "light" : "dark")}
+            role="switch"
+            aria-checked={appTheme === "dark"}
             aria-label="切换主题"
+            title={appTheme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
           />
           <WindowControls />
         </div>
       </header>
       <div className={styles.mainLayout}>
-        <aside className={styles.sideBar} aria-label="主导航">
-          <div className={styles.sideBarTop}>
-            <Button
-              type="text"
-              icon={
-                menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
-              }
-              onClick={() => setCollapsed((value) => !value)}
-              className={styles.collapseButton}
-              aria-label={menuCollapsed ? "展开菜单" : "收起菜单"}
-              aria-expanded={!menuCollapsed}
-              aria-controls="app-menu"
-              disabled={isCompact}
-            />
-          </div>
-          <Menu
-            id="app-menu"
-            mode="inline"
-            inlineCollapsed={menuCollapsed}
-            selectedKeys={[selectedPath]}
-            items={menuItems}
-            className={styles.menu}
-          />
+        <aside className={styles.sideBar}>
+          <nav id="app-menu" className={styles.menu} aria-label="主导航">
+            {menuItems.map((item) => (
+              <Tooltip
+                key={item.key}
+                title={menuCollapsed ? item.label : undefined}
+                placement="right"
+              >
+                <Link
+                  to={item.key}
+                  className={styles.menuItem}
+                  aria-label={item.label}
+                  aria-current={selectedPath === item.key ? "page" : undefined}
+                >
+                  <span className={styles.menuIcon} aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className={styles.menuLabel}>{item.label}</span>
+                </Link>
+              </Tooltip>
+            ))}
+          </nav>
         </aside>
         <main className={styles.content}>
           <div className={styles.contentInner}>
