@@ -45,7 +45,12 @@ function setup(platform = "linux", packaged = false) {
         isDestroyed: () => this.destroyed,
         send: (channel, state) => this.sent.push({ channel, state }),
         setWindowOpenHandler: (handler) => { this.openHandler = handler; },
-        openDevTools: () => { this.devToolsOpen = true; },
+        isDevToolsOpened: () => Boolean(this.devToolsOpen),
+        devToolsWebContents: { focus: () => { this.devToolsFocused = true; } },
+        openDevTools: () => {
+          this.devToolsOpenCalls = (this.devToolsOpenCalls ?? 0) + 1;
+          this.devToolsOpen = true;
+        },
       });
       windows.push(this);
     }
@@ -64,7 +69,11 @@ function setup(platform = "linux", packaged = false) {
     restore() { this.minimized = false; }
     show() { this.visible = true; }
     hide() { this.visible = false; }
-    focus() { this.focused = true; }
+    isFocused() { return Boolean(this.focused); }
+    focus() {
+      for (const window of windows) window.focused = false;
+      this.focused = true;
+    }
     close() {
       if (this.destroyed) return;
       let prevented = false;
@@ -174,6 +183,32 @@ test("window service reuses, restores, and cleans up windows by channel", () => 
   assert.equal(windowService.openDebugTool(win), false);
   assert.equal(windowService.openDebugTool(undefined), false);
   assert.notEqual(windowService.createMainWindow(entry), win);
+});
+
+test("DevTools requests reuse the sender window panel and reopen after closing", () => {
+  const { windowService, registerIpc, handlers } = setup();
+  registerIpc();
+  const main = windowService.createMainWindow(entry);
+  const secondary = windowService.createWindow("secondary", entry);
+  const openDevTools = handlers.get("window:open-devtools");
+  const event = { sender: secondary.webContents, senderFrame: secondary.webContents.mainFrame };
+
+  main.focus();
+  assert.equal(openDevTools(event), false);
+  assert.equal(secondary.devToolsOpenCalls, undefined);
+  secondary.focus();
+  assert.equal(openDevTools(event), true);
+  assert.equal(openDevTools(event), true);
+  assert.equal(secondary.devToolsOpenCalls, 1);
+  assert.equal(secondary.devToolsFocused, true);
+  assert.equal(main.devToolsOpenCalls, undefined);
+
+  secondary.devToolsOpen = false;
+  assert.equal(openDevTools(event), true);
+  assert.equal(secondary.devToolsOpenCalls, 2);
+  assert.equal(openDevTools({ ...event, senderFrame: {} }), false);
+  secondary.close();
+  assert.equal(openDevTools(event), false);
 });
 
 for (const platform of ["linux", "win32"]) {

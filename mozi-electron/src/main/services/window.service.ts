@@ -39,7 +39,11 @@ export class WindowService {
       return false;
     }
 
-    win.webContents.openDevTools();
+    if (win.webContents.isDevToolsOpened()) {
+      win.webContents.devToolsWebContents?.focus();
+    } else {
+      win.webContents.openDevTools();
+    }
     return true;
   }
 
