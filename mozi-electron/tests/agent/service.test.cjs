@@ -413,3 +413,53 @@ test('failed initialization can be closed once and requests remain unavailable',
   await Promise.all([service.close(), service.close()]);
   assert.equal(closed, 1); assert.equal(disposed, 1);
 });
+
+test('rename updates snapshots and survives native discovery; deleted sessions never reappear', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'managed', title: 'Original' });
+  const result = await f.call('session.rename', { sessionId, title: '  Renamed  ' });
+  assert.equal(result.session.title, 'Renamed');
+  assert.equal((await f.call('session.snapshot', { sessionId })).session.title, 'Renamed');
+  await f.service.close();
+  let recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, () => {});
+  await recovered.initialize();
+  assert.equal(recovered.sessions.list({}).items[0].title, 'Renamed');
+  assert.equal(recovered.sessions.delete({ sessionId }).sessionId, sessionId);
+  assert.equal(recovered.sessions.delete({ sessionId }).sessionId, sessionId, 'delete retry is idempotent');
+  await assert.rejects(recovered.sessions.snapshot({ sessionId }), e => e.code === 'SESSION_NOT_FOUND');
+  await assert.rejects(recovered.sessions.create({ clientOperationId: 'managed', title: 'Original' }), e => e.code === 'SESSION_NOT_FOUND');
+  await recovered.close();
+  recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, () => {});
+  await recovered.initialize();
+  assert.equal(recovered.sessions.list({}).items.length, 0);
+  assert.equal(f.nativeSessions.length, 1, 'native history remains owned by the runtime');
+  await recovered.close();
+});
+
+test('delete refuses active runs, then succeeds after cancellation reaches a terminal state', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'busy-delete' });
+  const { runId } = await f.call('run.start', input(sessionId));
+  await assert.rejects(f.call('session.delete', { sessionId }), e => e.code === 'SESSION_BUSY');
+  await f.call('run.cancel', { sessionId, runId });
+  await tick(); await tick();
+  await f.call('session.delete', { sessionId });
+  assert.equal(f.service.sessions.list({}).items.length, 0);
+  await assert.rejects(f.call('run.start', input(sessionId, 'another')), e => e.code === 'SESSION_NOT_FOUND');
+});
+
+test('deleting during history loading cannot resurrect a cached session or accept a run', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'loading-delete' });
+  await f.service.close();
+  let release;
+  f.runtime.readHistory = () => new Promise(resolve => { release = resolve; });
+  const recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, () => {});
+  await recovered.initialize();
+  const pending = recovered.application.runs.start(input(sessionId));
+  recovered.sessions.delete({ sessionId });
+  release([]);
+  await assert.rejects(pending, e => e.code === 'SESSION_NOT_FOUND');
+  assert.equal(recovered.sessions.peek(sessionId), undefined);
+  await recovered.close();
+});

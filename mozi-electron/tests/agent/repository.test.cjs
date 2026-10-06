@@ -30,13 +30,13 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
   assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name),
     ['creations', 'message_links', 'runs', 'sessions']);
   assert.equal(db.prepare('PRAGMA table_info(sessions)').all().some(column => ['record', 'last_seq', 'file_path'].includes(column.name)), false);
   db.close();
 });
-test('v3 reopens without resetting metadata; unknown versions are never discarded', t => {
+test('v4 reopens without resetting metadata; unknown versions are never discarded', t => {
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
   const reopened = new SqliteMetadataRepository(filename);
@@ -64,4 +64,24 @@ test('submission digest preserves content order but ignores object property orde
   assert.equal(contentHash([{ type: 'text', text: 'a' }]), contentHash([{ text: 'a', type: 'text' }]));
   assert.notEqual(contentHash([{ type: 'text', text: 'a' }]), contentHash([{ type: 'text', text: 'b' }]));
   assert.notEqual(contentHash([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]), contentHash([{ type: 'text', text: 'ab' }]));
+});
+
+test('v3 migration preserves sessions and creation deduplication; deletions survive reopening', t => {
+  const filename = file(t);
+  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/schema.ts'));
+  const old = new DatabaseSync(filename);
+  old.exec(AGENT_SCHEMA_V3);
+  old.exec("INSERT INTO sessions VALUES ('s', 'pi', '/native', '/tmp', 'original', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); INSERT INTO creations VALUES ('operation', 'original', 's'); PRAGMA user_version=3;");
+  old.close();
+  const repository = new SqliteMetadataRepository(filename);
+  assert.equal(repository.listSessions()[0].session.title, 'original');
+  assert.equal(repository.findCreation('operation').sessionId, 's');
+  repository.saveSession({ ...metadata(), session: { ...metadata().session, title: 'renamed' } });
+  repository.deleteSession('s', new Date().toISOString());
+  repository.close();
+  const reopened = new SqliteMetadataRepository(filename);
+  assert.equal(reopened.listSessions().length, 0);
+  assert.deepEqual(Array.from(reopened.deletedSessionIds()), ['s']);
+  assert.equal(reopened.findCreation('operation').sessionId, 's');
+  reopened.close();
 });

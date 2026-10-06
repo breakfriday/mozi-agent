@@ -20,9 +20,11 @@ export class SessionService {
     private readonly events: AgentEventPublisher, private readonly control: ApplicationControl) {}
   async initialize(): Promise<void> {
     const nativeSessions = await this.runtime.listSessions();
+    const deleted = new Set(this.repository.deletedSessionIds());
     const saved = new Map(this.repository.listSessions().map(metadata => [metadata.descriptor.sessionId, metadata]));
     // Native discovery works even with an empty/reset metadata database.
     for (const native of nativeSessions) {
+      if (deleted.has(native.descriptor.sessionId)) continue;
       const id = native.descriptor.sessionId, existing = saved.get(id);
       const metadata: SessionMetadata = { descriptor: native.descriptor,
         session: existing ? { ...existing.session, updatedAt: existing.session.updatedAt > native.updatedAt ? existing.session.updatedAt : native.updatedAt }
@@ -46,6 +48,8 @@ export class SessionService {
     if (!metadata) throw failure("SESSION_NOT_FOUND", "会话不存在。");
     const job = (async () => {
       const history = await this.runtime.readHistory(metadata.descriptor);
+      this.control.assertAvailable();
+      this.assertExists(sessionId);
       const { record, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
       record.snapshot.lastSeq = this.events.sequence(sessionId);
       this.assertSnapshot(record.snapshot);
@@ -64,6 +68,7 @@ export class SessionService {
       this.control.assertAvailable();
       const existing = this.repository.findCreation(input.clientOperationId);
       if (existing) {
+        this.assertExists(existing.sessionId);
         if (existing.title !== title) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
         return { sessionId: existing.sessionId };
       }
@@ -83,6 +88,36 @@ export class SessionService {
     });
     this.createQueue = job.catch(() => {});
     return job;
+  }
+
+  rename(input: ParamsOf<"session.rename">): ResultOf<"session.rename"> {
+    this.control.assertAvailable();
+    this.assertExists(input.sessionId);
+    const title = input.title.trim();
+    if (!title || input.title.length > 200) throw failure("INVALID_ARGUMENT", "会话名称需要 1–200 个字符。");
+    const metadata = this.catalog.get(input.sessionId)!;
+    const session = { ...metadata.session, title, updatedAt: now() };
+    this.control.write(() => this.repository.saveSession({ ...metadata, session }));
+    metadata.session = session;
+    const cached = this.sessions.get(input.sessionId);
+    if (cached) cached.record.snapshot.session = session;
+    return structuredClone({ session });
+  }
+
+  delete(input: ParamsOf<"session.delete">): ResultOf<"session.delete"> {
+    this.control.assertAvailable();
+    if (!this.catalog.has(input.sessionId)) {
+      if (this.repository.deletedSessionIds().includes(input.sessionId)) return { sessionId: input.sessionId };
+      this.assertExists(input.sessionId);
+    }
+    if (this.repository.readSession(input.sessionId).runs.some(({ run }) =>
+      ["accepted", "running", "waiting_approval", "cancelling"].includes(run.status))) {
+      throw failure("SESSION_BUSY", "会话仍有任务运行，请先停止任务再删除。");
+    }
+    this.control.write(() => this.repository.deleteSession(input.sessionId, now()));
+    this.catalog.delete(input.sessionId);
+    this.sessions.delete(input.sessionId);
+    return { sessionId: input.sessionId };
   }
 
   private assertSnapshot(snapshot: SessionSnapshot): void {
@@ -114,6 +149,7 @@ export class SessionService {
   async snapshot(input: ParamsOf<"session.snapshot">): Promise<SessionSnapshot> {
     const state = await this.load(input.sessionId);
     this.control.assertAvailable();
+    this.assertExists(input.sessionId);
     this.assertSnapshot(state.record.snapshot);
     return structuredClone(state.record.snapshot);
   }

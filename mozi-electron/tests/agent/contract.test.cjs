@@ -13,6 +13,10 @@ test("every public method has matching parameter and result validation", () => {
     "runtime.getState": [{}, { state: "unavailable" }],
     "session.create": [{ clientOperationId: "operation" }, { sessionId: "session" }],
     "session.list": [{}, { items: [] }],
+    "session.rename": [{ sessionId: "session", title: "Renamed" }, {
+      session: { sessionId: "session", title: "Renamed", createdAt: timestamp, updatedAt: timestamp },
+    }],
+    "session.delete": [{ sessionId: "session" }, { sessionId: "session" }],
     "session.snapshot": [{ sessionId: "session" }, {
       session: { sessionId: "session", title: "Chat", createdAt: timestamp, updatedAt: timestamp },
       lastSeq: 0, messages: [], tools: [], runs: [], approvals: [],
@@ -43,6 +47,10 @@ test("requests reject unsupported content, extra keys, invalid decisions, and in
   for (const input of [
     request("session.create", {}),
     request("session.snapshot", { sessionId: "" }),
+    request("session.rename", { sessionId: "s", title: "  " }),
+    request("session.rename", { sessionId: "s", title: "x".repeat(201) }),
+    request("session.delete", { sessionId: "" }),
+    request("session.delete", { sessionId: "s", locator: "/tmp/forged" }),
     request("session.list", { limit: 0 }),
     request("session.list", { limit: 101 }),
     request("toString", {}),
@@ -73,4 +81,13 @@ test("wire validation rejects cycles, classes, accessors, and excessive payloads
     assert.equal(contract.isWirePayload(value), false);
   }
   assert.equal(contract.isWirePayload({ optional: undefined, text: "中文", content: [] }), true);
+});
+
+test("session mutations reject responses belonging to another session", () => {
+  for (const [method, params, result] of [
+    ["session.delete", { sessionId: "s" }, { sessionId: "other" }],
+    ["session.rename", { sessionId: "s", title: "name" }, { session: { sessionId: "other", title: "name", createdAt: timestamp, updatedAt: timestamp } }],
+  ]) assert.equal(contract.responseMatchesRequest(request(method, params), {
+    protocolVersion: 1, kind: "response", requestId: "req", ok: true, result,
+  }), false);
 });

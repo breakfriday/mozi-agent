@@ -137,6 +137,10 @@ const paramsValidators = {
   "session.list": object<ParamsOf<"session.list">>({
     cursor: optional(id), limit: optional((value): value is number => sequence(value) && value > 0 && value <= 100),
   }),
+  "session.rename": object<ParamsOf<"session.rename">>({ sessionId: id,
+    title: (value): value is string => string(value) && value.trim().length > 0 && value.length <= 200,
+  }),
+  "session.delete": object<ParamsOf<"session.delete">>({ sessionId: id }),
   "session.snapshot": object<ParamsOf<"session.snapshot">>({ sessionId: id }),
   "session.subscribe": object<ParamsOf<"session.subscribe">>({ sessionId: id }),
   "session.unsubscribe": object<ParamsOf<"session.unsubscribe">>({ subscriptionId: id }),
@@ -162,6 +166,8 @@ const resultValidators = {
   "runtime.getState": isRuntimeNotice,
   "session.create": object<ResultOf<"session.create">>({ sessionId: id }),
   "session.list": object<ResultOf<"session.list">>({ items: array(sessionSummary), nextCursor: optional(id) }),
+  "session.rename": object<ResultOf<"session.rename">>({ session: sessionSummary }),
+  "session.delete": object<ResultOf<"session.delete">>({ sessionId: id }),
   "session.snapshot": snapshot,
   "session.subscribe": object<ResultOf<"session.subscribe">>({ subscriptionId: id, sessionId: id }),
   "session.unsubscribe": object<ResultOf<"session.unsubscribe">>({ removed: boolean }),
@@ -213,8 +219,10 @@ export function responseMatchesRequest(request: AgentRequest, value: unknown): b
       && result.clientMessageId === request.params.clientMessageId;
     case "run.cancel": return result.sessionId === request.params.sessionId && result.runId === request.params.runId;
     case "run.get": return result.sessionId === request.params.sessionId && result.id === request.params.runId;
-    case "session.subscribe": return result.sessionId === request.params.sessionId;
+    case "session.delete": return result.sessionId === request.params.sessionId;
+    case "session.rename":
     case "session.snapshot": return isRecord(result.session) && result.session.sessionId === request.params.sessionId;
+    case "session.subscribe": return result.sessionId === request.params.sessionId;
     case "approval.respond": return isRecord(result.approval) && result.approval.sessionId === request.params.sessionId
       && result.approval.runId === request.params.runId && result.approval.id === request.params.approvalId;
     default: return true;

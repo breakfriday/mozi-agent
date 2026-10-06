@@ -2,8 +2,11 @@ import { create } from "zustand";
 import type { AgentState } from "./types";
 import { initialAgentState } from "./agentState";
 
-export function rememberAgentSession(sessionId: string): void {
-  try { sessionStorage.setItem("mozi.agent.sessionId", sessionId); } catch { /* Storage may be disabled. */ }
+export function rememberAgentSession(sessionId: string | null): void {
+  try {
+    if (sessionId) sessionStorage.setItem("mozi.agent.sessionId", sessionId);
+    else sessionStorage.removeItem("mozi.agent.sessionId");
+  } catch { /* Storage may be disabled. */ }
 }
 
 function savedSession(): string | null {

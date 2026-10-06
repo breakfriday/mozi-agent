@@ -13,6 +13,8 @@ export const AGENT_API_METHODS = {
   getRuntimeState: "runtime.getState",
   createSession: "session.create",
   listSessions: "session.list",
+  renameSession: "session.rename",
+  deleteSession: "session.delete",
   getSessionSnapshot: "session.snapshot",
   subscribeSession: "session.subscribe",
   unsubscribeSession: "session.unsubscribe",

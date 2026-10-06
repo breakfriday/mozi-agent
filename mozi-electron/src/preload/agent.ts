@@ -110,6 +110,8 @@ export function createAgentPreloadApi(
     getRuntimeState: () => request("runtime.getState", {}),
     createSession: (input) => request("session.create", input),
     listSessions: (input = {}) => request("session.list", input),
+    renameSession: (input) => request("session.rename", input),
+    deleteSession: (input) => request("session.delete", input),
     getSessionSnapshot: (input) => request("session.snapshot", input),
     subscribeSession: (input) => request("session.subscribe", input),
     unsubscribeSession: (input) => request("session.unsubscribe", input),

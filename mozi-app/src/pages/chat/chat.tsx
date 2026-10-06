@@ -14,6 +14,7 @@ import {
 import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
+import { SessionList } from "./SessionList";
 import styles from "./chat.module.css";
 
 const suggestions = [
@@ -173,9 +174,21 @@ function ChatThread() {
 }
 
 export function ChatPage() {
+  const sessionId = useAgentStore((state) => state.sessionId ?? state.localSessionId);
+  const title = useAgentStore((state) => state.sessions.find((session) => session.sessionId === state.sessionId)?.title ?? "新会话");
+  const syncing = useAgentStore((state) => state.syncStatus === "syncing");
+  const syncFailed = useAgentStore((state) => state.syncStatus === "error");
   return (
     <section className={styles.page} aria-label="智能对话">
-      <ChatThread />
+      <SessionList />
+      <div className={styles.conversation}>
+        <header className={styles.conversationHeader}>
+          <h1 title={title}>{title}</h1>
+          {syncing && <span role="status">正在加载会话…</span>}
+          {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
+        </header>
+        <ChatThread key={sessionId} />
+      </div>
     </section>
   );
 }

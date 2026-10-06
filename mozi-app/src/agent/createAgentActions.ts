@@ -1,7 +1,7 @@
 import { isAppError } from "../../../shared/agent";
 import type { AgentApi, AgentEvent, AppError, RuntimeNotice } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
-import { applyAgentEvent, installAgentSnapshot, isTerminalRun } from "./agentState";
+import { applyAgentEvent, initialAgentState, installAgentSnapshot, isTerminalRun } from "./agentState";
 import { interruptSubmissions, putSubmission } from "./submissionState";
 import type { AgentState, PendingSubmission } from "./types";
 
@@ -19,11 +19,16 @@ function appError(error: unknown): AppError {
 }
 
 /** App-wide async actions for one selected session; no mock transport or Agent loop. */
-export function createAgentActions(api: AgentApi, store: AgentStore, rememberSession: (id: string) => void = () => {}) {
+export function createAgentActions(api: AgentApi, store: AgentStore, rememberSession: (id: string | null) => void = () => {}) {
   let attached = false;
   let lifecycle = 0;
   let generation = 0;
   let noticeVersion = 0;
+  let connection = 0;
+  let listVersion = 0;
+  let operationVersion = 0;
+  let newCreateInput: { clientOperationId: string } | undefined;
+  const localSessions = new Map<string, Pick<AgentState, "localSessionId" | "pendingSubmissions" | "messageOrder">>();
   let startInFlight = false;
   let subscription: { subscriptionId: string; sessionId: string } | undefined;
   let createInput: { clientOperationId: string } | undefined;
@@ -33,6 +38,137 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
   const finishedRuns = new Set<string>();
   let offEvent: () => void = () => {};
   let offRuntime: () => void = () => {};
+
+  async function listSessions() {
+    const version = ++listVersion;
+    const token = connection;
+    store.setState({ sessionsLoading: true, sessionsError: null });
+    try {
+      const sessions: AgentState["sessions"] = [];
+      let cursor: string | undefined;
+      const cursors = new Set<string>();
+      do {
+        const page = await api.listSessions({ limit: 100, ...(cursor ? { cursor } : {}) });
+        if (version !== listVersion || token !== connection) return;
+        sessions.push(...page.items);
+        cursor = page.nextCursor;
+        if (cursor && cursors.has(cursor)) throw { code: "PROTOCOL_MISMATCH", message: "会话列表分页异常，请重试。" };
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      store.setState({ sessions });
+      const state = store.getState();
+      if (state.sessionId && !sessions.some(item => item.sessionId === state.sessionId)
+        && !state.inFlightSubmissionId && !state.sessionOperation) await activateSession(null);
+    } catch (error) {
+      if (version === listVersion && token === connection) store.setState({ sessionsError: appError(error) });
+    } finally {
+      if (version === listVersion && token === connection) store.setState({ sessionsLoading: false });
+    }
+  }
+
+  async function activateSession(sessionId: string | null) {
+    const state = store.getState();
+    if (state.inFlightSubmissionId || state.sessionOperation) return;
+    if (state.sessionId === sessionId) {
+      if (sessionId && state.runtime.state === "ready") await synchronize().catch(() => {});
+      return;
+    }
+    localSessions.set(state.sessionId ?? "draft", {
+      localSessionId: state.localSessionId, pendingSubmissions: state.pendingSubmissions, messageOrder: state.messageOrder,
+    });
+    generation++;
+    if (subscription) void api.unsubscribeSession({ subscriptionId: subscription.subscriptionId }).catch(() => {});
+    subscription = undefined;
+    syncJob = undefined;
+    buffered = [];
+    finishedRuns.clear();
+    const cached = localSessions.get(sessionId ?? "draft");
+    const empty = initialAgentState(sessionId);
+    store.setState({
+      ...empty, ...cached, runtime: state.runtime, sessions: state.sessions,
+      sessionsLoading: state.sessionsLoading, sessionsError: state.sessionsError,
+    });
+    rememberSession(sessionId);
+    if (sessionId && state.runtime.state === "ready") await synchronize().catch(() => {});
+  }
+
+  function bindCreatedSession(sessionId: string) {
+    store.setState((state) => ({
+      sessionId,
+      pendingSubmissions: Object.fromEntries(Object.entries(state.pendingSubmissions).map(([id, submission]) => [id,
+        submission.localSessionId === state.localSessionId && submission.sessionId === null
+          ? { ...submission, sessionId } : submission,
+      ])),
+    }));
+    localSessions.delete("draft");
+    rememberSession(sessionId);
+  }
+
+  async function newSession() {
+    const state = store.getState();
+    if (state.inFlightSubmissionId || state.sessionOperation) return;
+    const token = connection;
+    const operation = ++operationVersion;
+    ++listVersion;
+    store.setState({ sessionOperation: "new", sessionsError: null, sessionsLoading: false });
+    try {
+      // Reuse an uncertain creation when the current draft already has submissions.
+      const input = state.sessionId
+        ? newCreateInput ??= { clientOperationId: crypto.randomUUID() }
+        : createInput ??= { clientOperationId: crypto.randomUUID() };
+      const created = await api.createSession(input);
+      if (token !== connection) return;
+      ++listVersion;
+      if (state.sessionId) {
+        newCreateInput = undefined;
+        store.setState({ sessionOperation: null, sessionsLoading: false });
+        await activateSession(created.sessionId);
+      } else {
+        createInput = undefined;
+        bindCreatedSession(created.sessionId);
+        await synchronize().catch(() => {});
+      }
+      if (token === connection) void listSessions();
+    } catch (error) {
+      if (token === connection) store.setState({ sessionsError: appError(error) });
+    } finally {
+      if (token === connection && operation === operationVersion) store.setState({ sessionOperation: null });
+    }
+  }
+
+  async function mutateSession(sessionId: string, title?: string) {
+    const state = store.getState();
+    if (state.sessionOperation || state.inFlightSubmissionId) throw new Error("请等待当前操作完成。");
+    const token = connection;
+    const operation = ++operationVersion;
+    ++listVersion;
+    store.setState({ sessionOperation: sessionId, sessionsError: null, sessionsLoading: false });
+    try {
+      if (title !== undefined) {
+        const result = await api.renameSession({ sessionId, title: title.trim() });
+        if (token !== connection) throw new Error("Agent 连接已变化，请重试。");
+        ++listVersion;
+        store.setState({ sessionsLoading: false });
+        store.setState(current => ({ sessions: current.sessions.map(item => item.sessionId === sessionId ? result.session : item) }));
+      } else {
+        await api.deleteSession({ sessionId });
+        if (token !== connection) throw new Error("Agent 连接已变化，请重试。");
+        ++listVersion;
+        localSessions.delete(sessionId);
+        store.setState({ sessionsLoading: false });
+        store.setState(current => ({ sessions: current.sessions.filter(item => item.sessionId !== sessionId), sessionOperation: null }));
+        if (store.getState().sessionId === sessionId) {
+          await activateSession(store.getState().sessions[0]?.sessionId ?? null);
+          localSessions.delete(sessionId);
+        }
+      }
+    } catch (error) {
+      if (token === connection) store.setState({ sessionsError: appError(error) });
+      throw error;
+    } finally {
+      if (token === connection && operation === operationVersion) store.setState({ sessionOperation: null });
+    }
+  }
 
   function buffer(event: AgentEvent) {
     if (buffered.length >= 10_000) { buffered = []; overflow = true; }
@@ -44,7 +180,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     if (!sessionId) return Promise.resolve(true);
     const token = generation;
     if (syncJob?.token === token && syncJob.sessionId === sessionId) return syncJob.promise;
-    store.setState({ syncStatus: "syncing" });
+    store.setState({ syncStatus: "syncing", error: null });
     const job = { token, sessionId, promise: Promise.resolve(false) };
     job.promise = (async () => {
       try {
@@ -111,6 +247,8 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     noticeVersion++;
     if (notice.state === "unavailable") {
       generation++;
+      connection++;
+      listVersion++;
       subscription = undefined;
       syncJob = undefined;
       buffered = [];
@@ -118,10 +256,12 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       store.setState((state) => ({
         ...interruptSubmissions(state, startInFlight),
         runtime: notice, lastSeq: 0, syncStatus: "idle", activeRunId: null,
+        sessionsLoading: false, sessionOperation: null,
       }));
       startInFlight = false;
     } else {
       store.setState({ runtime: notice, error: null });
+      void listSessions();
       if (store.getState().sessionId) void synchronize().catch(() => {});
     }
   }
@@ -143,12 +283,14 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     attached = false;
     lifecycle++;
     generation++;
+    connection++;
+    listVersion++;
     offEvent(); offRuntime();
     if (subscription) void api.unsubscribeSession({ subscriptionId: subscription.subscriptionId }).catch(() => {});
     subscription = undefined;
     syncJob = undefined;
     buffered = [];
-    store.setState((state) => ({ ...interruptSubmissions(state, startInFlight), syncStatus: "idle" }));
+    store.setState((state) => ({ ...interruptSubmissions(state, startInFlight), syncStatus: "idle", sessionsLoading: false, sessionOperation: null }));
     startInFlight = false;
     log.info("chat.disposed");
   }
@@ -181,15 +323,8 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
         if (token !== generation) return;
         sessionId = created.sessionId;
         createInput = undefined;
-        const boundSessionId = sessionId;
-        store.setState((state) => ({
-          sessionId: boundSessionId,
-          pendingSubmissions: Object.fromEntries(Object.entries(state.pendingSubmissions).map(([id, submission]) => [id,
-            submission.localSessionId === state.localSessionId && submission.sessionId === null
-              ? { ...submission, sessionId: boundSessionId } : submission,
-          ])),
-        }));
-        rememberSession(sessionId);
+        bindCreatedSession(sessionId);
+        void listSessions();
       }
       if (store.getState().syncStatus !== "ready" && !await synchronize()) return;
       if (token !== generation) return;
@@ -231,11 +366,13 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
   }
 
   return {
-    initialize, dispose, refresh,
+    initialize, dispose, refresh, listSessions, activateSession, newSession,
+    renameSession: (sessionId: string, title: string) => mutateSession(sessionId, title),
+    deleteSession: (sessionId: string) => mutateSession(sessionId),
     async submit(text: string) {
       const content = text.trim();
       const state = store.getState();
-      if (!content || state.inFlightSubmissionId || state.activeRunId || state.syncStatus === "syncing") return;
+      if (!content || state.sessionOperation || state.inFlightSubmissionId || state.activeRunId || state.syncStatus === "syncing") return;
       if (Object.values(state.pendingSubmissions).some((submission) => submission.status === "unknown")) {
         store.setState({ error: { code: "REQUEST_TIMEOUT", message: "上一条提交结果尚未确认，请先重试原提交。" } });
         return;
@@ -249,7 +386,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     async retry(clientMessageId: string) {
       const state = store.getState();
       const pending = state.pendingSubmissions[clientMessageId];
-      if (!pending || state.inFlightSubmissionId || state.syncStatus === "syncing"
+      if (!pending || state.sessionOperation || state.inFlightSubmissionId || state.syncStatus === "syncing"
         || pending.localSessionId !== state.localSessionId || pending.sessionId !== state.sessionId) return;
       if (state.activeRunId && pending.status !== "unknown") return;
       if (Object.values(state.pendingSubmissions).some((item) => item.status === "unknown" && item.clientMessageId !== clientMessageId)) return;

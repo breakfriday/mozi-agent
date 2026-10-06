@@ -35,6 +35,14 @@ export type MethodMap = {
     params: { cursor?: string; limit?: number };
     result: { items: SessionSummary[]; nextCursor?: string };
   };
+  "session.rename": {
+    params: { sessionId: Id; title: string };
+    result: { session: SessionSummary };
+  };
+  "session.delete": {
+    params: { sessionId: Id };
+    result: { sessionId: Id };
+  };
   "session.snapshot": {
     params: { sessionId: Id };
     result: SessionSnapshot;

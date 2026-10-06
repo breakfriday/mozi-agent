@@ -25,7 +25,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     try {
       this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 3) {
+      if (version !== 3 && version !== 4) {
         if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
         this.db.exec("PRAGMA foreign_keys=OFF;");
         // Authorized development reset; native session files are never deleted.
@@ -38,6 +38,9 @@ export class SqliteMetadataRepository implements MetadataStore {
           this.db.exec("PRAGMA user_version=3;");
         });
       }
+      if (version !== 4) this.transaction(() => {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; PRAGMA user_version=4;");
+      });
       this.db.exec("PRAGMA foreign_keys=ON;");
     } catch (error) { this.db.close(); throw error; }
   }
@@ -52,10 +55,17 @@ export class SqliteMetadataRepository implements MetadataStore {
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
   listSessions(): SessionMetadata[] {
-    return this.statement("SELECT * FROM sessions ORDER BY created_at, id").all().map(row => ({
+    return this.statement("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY created_at, id").all().map(row => ({
       descriptor: { sessionId: String(row.id), engine: String(row.engine), locator: String(row.locator), cwd: String(row.cwd) },
       session: { sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
     }));
+  }
+  deletedSessionIds(): string[] {
+    return this.statement("SELECT id FROM sessions WHERE deleted_at IS NOT NULL").all().map(row => String(row.id));
+  }
+  // Retain native history and deduplication records; tombstones prevent rediscovery.
+  deleteSession(sessionId: string, deletedAt: string): void {
+    this.statement("UPDATE sessions SET deleted_at=? WHERE id=?").run(deletedAt, sessionId);
   }
   saveSession({ descriptor, session }: SessionMetadata): void {
     this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)

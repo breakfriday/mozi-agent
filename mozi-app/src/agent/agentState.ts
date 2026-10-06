@@ -6,6 +6,7 @@ export const isTerminalRun = (status: string) => ["completed", "cancelled", "fai
 
 export function initialAgentState(sessionId: string | null = null): AgentState {
   return {
+    sessions: [], sessionsLoading: false, sessionsError: null, sessionOperation: null,
     localSessionId: crypto.randomUUID(), sessionId, messages: [], messageOrder: [], runs: [], tools: [], approvals: [], activeRunId: null,
     lastSeq: 0, syncStatus: "idle", runtime: { state: "unavailable" },
     inFlightSubmissionId: null, pendingSubmissions: {}, error: null,
@@ -21,6 +22,7 @@ function upsert<T>(items: T[], item: T, id: (item: T) => string): T[] {
 export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapshot): AgentState {
   return reconcileMessages({
     ...state, sessionId: snapshot.session.sessionId, messages: snapshot.messages,
+    sessions: upsert(state.sessions, snapshot.session, (session) => session.sessionId),
     runs: snapshot.runs, tools: snapshot.tools, approvals: snapshot.approvals, lastSeq: snapshot.lastSeq,
     activeRunId: snapshot.runs.find((run) => !isTerminalRun(run.status))?.id ?? null,
   }, true);

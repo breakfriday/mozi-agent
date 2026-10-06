@@ -18,6 +18,7 @@ function setup(t, options = {}) {
     onEvent: (listener) => { eventListeners.add(listener); return () => eventListeners.delete(listener); },
     onRuntimeState: (listener) => { runtimeListeners.add(listener); return () => runtimeListeners.delete(listener); },
     getRuntimeState: async () => ({ state: "ready" }),
+    listSessions: async () => ({ items: [snapshot().session] }),
     createSession: async (input) => { calls.push(["create", input]); return { sessionId: "s" }; },
     subscribeSession: async (input) => { calls.push(["subscribe", input]); return { sessionId: "s", subscriptionId: "sub" }; },
     unsubscribeSession: async (input) => { calls.push(["unsubscribe", input]); return { removed: true }; },
@@ -222,4 +223,150 @@ test("restart ignores old snapshots and cleanup never cancels a running Run", as
   assert.equal(eventListeners.size, 0); assert.equal(runtimeListeners.size, 0);
   assert.equal(calls.filter(([method]) => method === "cancel").length, 1);
   actions.initialize(); await tick(); assert.equal(eventListeners.size, 1);
+});
+
+function multiSessionApi() {
+  const summary = id => ({ sessionId: id, title: id, createdAt: timestamp, updatedAt: timestamp });
+  return {
+    listSessions: async () => ({ items: ['s', 'b'].map(summary) }),
+    subscribeSession: async ({ sessionId }) => ({ sessionId, subscriptionId: `sub-${sessionId}` }),
+    getSessionSnapshot: async ({ sessionId }) => ({ session: summary(sessionId), lastSeq: 0,
+      messages: [{ id: `m-${sessionId}`, sessionId, role: 'user', status: 'completed', content: [{ id: 'p', type: 'text', text: `history-${sessionId}` }] }],
+      runs: [], tools: [], approvals: [] }),
+    renameSession: async ({ sessionId, title }) => ({ session: { ...summary(sessionId), title } }),
+    deleteSession: async ({ sessionId }) => ({ sessionId }),
+  };
+}
+
+test('switching sessions discards delayed snapshots and releases the previous subscription', async t => {
+  const f = setup(t, { sessionId: 's', api: multiSessionApi() });
+  f.actions.initialize(); await tick();
+  let release;
+  f.api.getSessionSnapshot = ({ sessionId }) => sessionId === 'b' ? new Promise(resolve => { release = resolve; }) : Promise.resolve(f.snapshot());
+  const pending = f.actions.activateSession('b'); await tick();
+  await f.actions.activateSession('s');
+  release({ ...f.snapshot(), session: { ...f.snapshot().session, sessionId: 'b' } });
+  await pending;
+  assert.equal(f.store.getState().sessionId, 's');
+  assert.equal(f.store.getState().syncStatus, 'ready');
+  assert.ok(f.calls.some(([method, params]) => method === 'unsubscribe' && params.subscriptionId === 'sub-b'));
+  assert.equal(f.calls.some(([method]) => method === 'cancel'), false);
+});
+
+test('a subscription arriving after switching is immediately reclaimed', async t => {
+  const f = setup(t, { sessionId: 's', api: multiSessionApi() });
+  f.actions.initialize(); await tick();
+  let release;
+  f.api.subscribeSession = () => new Promise(resolve => { release = resolve; });
+  const pending = f.actions.activateSession('b');
+  await f.actions.activateSession(null);
+  release({ sessionId: 'b', subscriptionId: 'late' }); await pending;
+  assert.equal(f.store.getState().sessionId, null);
+  assert.ok(f.calls.some(([method, params]) => method === 'unsubscribe' && params.subscriptionId === 'late'));
+});
+
+test('unknown submissions stay scoped to their conversation and survive switching back', async t => {
+  const f = setup(t, { sessionId: 's', api: { ...multiSessionApi(),
+    startRun: async () => { throw { code: 'REQUEST_TIMEOUT', message: 'unknown' }; },
+  } });
+  f.actions.initialize(); await tick();
+  await f.actions.submit('uncertain');
+  const id = Object.keys(f.store.getState().pendingSubmissions)[0];
+  assert.equal(f.store.getState().pendingSubmissions[id].status, 'unknown');
+  await f.actions.activateSession('b');
+  assert.equal(Object.keys(f.store.getState().pendingSubmissions).length, 0);
+  assert.equal(f.visible().some(m => m.content[0].text === 'uncertain'), false);
+  await f.actions.activateSession('s');
+  assert.equal(f.store.getState().pendingSubmissions[id].status, 'unknown');
+  assert.equal(f.visible().filter(m => m.content[0].text === 'uncertain').length, 1);
+});
+
+test('session catalog fetches all pages and ignores a stale list after rename', async t => {
+  const f = setup(t, { api: multiSessionApi() });
+  const summary = f.snapshot().session;
+  const cursors = [];
+  f.api.listSessions = async input => { cursors.push(input.cursor); return input.cursor
+    ? { items: [{ ...summary, sessionId: 'b' }] } : { items: [summary], nextCursor: 's' }; };
+  f.actions.initialize(); await tick();
+  assert.deepEqual(cursors, [undefined, 's']);
+  assert.equal(f.store.getState().sessions.length, 2);
+  let release;
+  f.api.listSessions = () => new Promise(resolve => { release = resolve; });
+  const stale = f.actions.listSessions();
+  await f.actions.renameSession('s', 'renamed');
+  release({ items: [summary] }); await stale;
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').title, 'renamed');
+  assert.equal(f.store.getState().sessions.length, 2);
+  assert.equal(f.store.getState().sessionsLoading, false);
+});
+
+test('deleting selected session activates its neighbor, then leaves an empty new conversation', async t => {
+  const f = setup(t, { sessionId: 's', api: multiSessionApi() });
+  f.actions.initialize(); await tick();
+  await f.actions.deleteSession('s');
+  assert.equal(f.store.getState().sessionId, 'b');
+  assert.equal(f.visible()[0].content[0].text, 'history-b');
+  await f.actions.deleteSession('b');
+  assert.equal(f.store.getState().sessionId, null);
+  assert.equal(f.store.getState().sessions.length, 0);
+  assert.equal(f.visible().length, 0);
+});
+
+test('failed deletion preserves selected history and reports the backend error', async t => {
+  const f = setup(t, { sessionId: 's', api: { ...multiSessionApi(),
+    deleteSession: async () => { throw { code: 'SESSION_BUSY', message: 'still running' }; },
+  } });
+  f.actions.initialize(); await tick();
+  await assert.rejects(f.actions.deleteSession('s'), e => e.code === 'SESSION_BUSY');
+  assert.equal(f.store.getState().sessionId, 's');
+  assert.equal(f.store.getState().sessions.length, 2);
+  assert.equal(f.visible()[0].content[0].text, 'history-s');
+  assert.equal(f.store.getState().sessionOperation, null);
+});
+
+test('new session retries reuse creation ID and snapshot retry does not create twice', async t => {
+  const f = setup(t, { sessionId: 's', api: multiSessionApi() });
+  f.actions.initialize(); await tick();
+  const ids = [];
+  f.api.createSession = async input => {
+    ids.push(input.clientOperationId);
+    if (ids.length === 1) throw { code: 'REQUEST_TIMEOUT', message: 'timeout' };
+    return { sessionId: 'b' };
+  };
+  f.api.getSessionSnapshot = async () => { throw { code: 'REQUEST_TIMEOUT', message: 'snapshot timeout' }; };
+  await f.actions.newSession(); await f.actions.newSession();
+  assert.equal(ids.length, 2); assert.equal(ids[0], ids[1]);
+  assert.equal(f.store.getState().sessionId, 'b');
+  f.api.getSessionSnapshot = multiSessionApi().getSessionSnapshot;
+  await f.actions.activateSession('b');
+  assert.equal(f.store.getState().syncStatus, 'ready');
+  assert.equal(f.store.getState().error, null);
+  assert.equal(ids.length, 2);
+});
+
+test('explicit new session creates the first conversation even before a message is sent', async t => {
+  const f = setup(t);
+  f.actions.initialize(); await tick();
+  await f.actions.newSession();
+  assert.equal(f.calls.filter(([method]) => method === 'create').length, 1);
+  assert.equal(f.store.getState().sessionId, 's');
+  assert.equal(f.store.getState().syncStatus, 'ready');
+  assert.equal(f.calls.some(([method]) => method === 'start'), false);
+});
+
+test('a catalog request predating a new session cannot deselect the newly created conversation', async t => {
+  const f = setup(t, { sessionId: 's', api: multiSessionApi() });
+  f.actions.initialize(); await tick();
+  let releaseList, releaseSnapshot;
+  f.api.listSessions = () => new Promise(resolve => { releaseList = resolve; });
+  const stale = f.actions.listSessions();
+  f.api.createSession = async () => ({ sessionId: 'b' });
+  f.api.getSessionSnapshot = () => new Promise(resolve => { releaseSnapshot = resolve; });
+  const pending = f.actions.newSession(); await tick();
+  releaseList({ items: [f.snapshot().session] }); await stale;
+  assert.equal(f.store.getState().sessionId, 'b');
+  f.api.listSessions = multiSessionApi().listSessions;
+  releaseSnapshot({ ...f.snapshot(), session: { ...f.snapshot().session, sessionId: 'b' } });
+  await pending;
+  assert.equal(f.store.getState().sessionId, 'b');
 });

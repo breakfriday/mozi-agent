@@ -1,5 +1,5 @@
 import type {
-  AppError, ApprovalView, InputPart, MessageView, RunView, RuntimeNotice, ToolView,
+  AppError, ApprovalView, InputPart, MessageView, RunView, RuntimeNotice, SessionSummary, ToolView,
 } from "../../../shared/agent";
 
 export type AgentMessage = Pick<MessageView, "id" | "role" | "content" | "status">;
@@ -16,6 +16,10 @@ export type PendingSubmission = {
 };
 
 export type AgentState = {
+  sessions: SessionSummary[];
+  sessionsLoading: boolean;
+  sessionsError: AppError | null;
+  sessionOperation: string | null;
   localSessionId: string;
   sessionId: string | null;
   messages: MessageView[];

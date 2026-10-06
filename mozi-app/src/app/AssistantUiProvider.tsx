@@ -41,6 +41,15 @@ async function onNew(message: AppendMessage) {
 // Other Agent views may use the domain store/actions directly.
 export function AssistantUiProvider({ children }: PropsWithChildren) {
   useEffect(() => agentActions.initialize(), []);
+  const sessionId = useAgentStore((state) => state.sessionId);
+  const localSessionId = useAgentStore((state) => state.localSessionId);
+  const sessions = useAgentStore((state) => state.sessions);
+  const sessionsLoading = useAgentStore((state) => state.sessionsLoading);
+  const sessionOperation = useAgentStore((state) => state.sessionOperation);
+  const connected = useAgentStore((state) => state.runtime.state === "ready");
+  const threads = useMemo(() => sessions.map((session) => ({
+    id: session.sessionId, remoteId: session.sessionId, title: session.title, status: "regular" as const,
+  })), [sessions]);
   const authoritativeMessages = useAgentStore((state) => state.messages);
   const pendingSubmissions = useAgentStore((state) => state.pendingSubmissions);
   const messageOrder = useAgentStore((state) => state.messageOrder);
@@ -54,7 +63,19 @@ export function AssistantUiProvider({ children }: PropsWithChildren) {
     messages,
     convertMessage,
     isRunning,
-    isSendDisabled: isRunning || isSubmitting || syncing || hasUnknownSubmission,
+    isLoading: syncing,
+    isSendDisabled: isRunning || isSubmitting || syncing || hasUnknownSubmission || sessionOperation !== null || (!!sessionId && !connected),
+    adapters: {
+      threadList: {
+        threadId: sessionId ?? localSessionId,
+        threads,
+        isLoading: sessionsLoading,
+        onSwitchToNewThread: agentActions.newSession,
+        onSwitchToThread: agentActions.activateSession,
+        onRename: agentActions.renameSession,
+        onDelete: agentActions.deleteSession,
+      },
+    },
     onNew,
     onCancel: agentActions.cancel,
   });

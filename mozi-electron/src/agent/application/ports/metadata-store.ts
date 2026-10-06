@@ -7,6 +7,8 @@ import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails,
  */
 export interface MetadataStore {
   listSessions(): SessionMetadata[];
+  deletedSessionIds(): string[];
+  deleteSession(sessionId: string, deletedAt: string): void;
   saveSession(metadata: SessionMetadata): void;
   readSession(sessionId: string): SessionMetadataDetails;
   unfinishedRuns(): RunView[];
