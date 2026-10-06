@@ -6,7 +6,7 @@ export const isTerminalRun = (status: string) => ["completed", "cancelled", "fai
 
 export function initialAgentState(sessionId: string | null = null): AgentState {
   return {
-    sessions: [], sessionsLoading: false, sessionsError: null, sessionOperation: null,
+    modelSelection: null, sessions: [], sessionsLoading: false, sessionsError: null, sessionOperation: null,
     localSessionId: crypto.randomUUID(), sessionId, messages: [], messageOrder: [], runs: [], tools: [], approvals: [], activeRunId: null,
     lastSeq: 0, syncStatus: "idle", runtime: { state: "unavailable" },
     inFlightSubmissionId: null, pendingSubmissions: {}, error: null,
@@ -21,7 +21,7 @@ function upsert<T>(items: T[], item: T, id: (item: T) => string): T[] {
 
 export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapshot): AgentState {
   return reconcileMessages({
-    ...state, sessionId: snapshot.session.sessionId, messages: snapshot.messages,
+    ...state, modelSelection: snapshot.session.model ?? null, sessionId: snapshot.session.sessionId, messages: snapshot.messages,
     sessions: upsert(state.sessions, snapshot.session, (session) => session.sessionId),
     runs: snapshot.runs, tools: snapshot.tools, approvals: snapshot.approvals, lastSeq: snapshot.lastSeq,
     activeRunId: snapshot.runs.find((run) => !isTerminalRun(run.status))?.id ?? null,
@@ -36,6 +36,7 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
       next.activeRunId = event.runId;
       break;
     case "run.updated":
+      if (event.data.run.model) next.modelSelection = event.data.run.model;
       next.runs = upsert(state.runs, event.data.run, (run) => run.id);
       if (!isTerminalRun(event.data.run.status)) next.activeRunId = event.runId;
       else if (state.activeRunId === event.runId) next.activeRunId = null;

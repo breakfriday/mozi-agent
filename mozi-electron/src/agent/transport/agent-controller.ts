@@ -6,8 +6,13 @@ export class AgentController {
   constructor(private readonly application: AgentApplication) {}
   async dispatch(request: RuntimeRequest): Promise<ResultOf<RuntimeMethod>> {
     this.application.assertAvailable();
-    const { sessions, runs } = this.application;
+    const { sessions, runs, models } = this.application;
     switch (request.method) {
+      case "model.settings": return models.settings();
+      case "provider.save": return models.save(request.params);
+      case "provider.remove": return models.remove(request.params.providerId);
+      case "model.setDefault": return models.setDefault(request.params.model);
+      case "session.setModel": return sessions.setModel(request.params);
       case "session.create": return sessions.create(request.params);
       case "session.list": return sessions.list(request.params);
       case "session.rename": return sessions.rename(request.params);

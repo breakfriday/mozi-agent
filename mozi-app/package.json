@@ -15,7 +15,8 @@
     "preview:filelocal": "vite preview --mode filelocal",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "check": "tsc --noEmit && eslint ."
+    "check": "tsc --noEmit && eslint .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
     "@tanstack/router-plugin": "^1.139.15",
     "@types/node": "^22.19.7",
     "@types/react": "^19.2.7",

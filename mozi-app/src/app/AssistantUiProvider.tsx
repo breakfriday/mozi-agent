@@ -5,6 +5,7 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import { useEffect, useMemo, type PropsWithChildren } from "react";
+import { modelActions } from "@/agent/modelActions";
 import { agentActions } from "@/agent/agentActions";
 import { useAgentStore } from "@/agent/agentStore";
 import type { AgentMessage } from "@/agent/types";
@@ -41,6 +42,7 @@ async function onNew(message: AppendMessage) {
 // Other Agent views may use the domain store/actions directly.
 export function AssistantUiProvider({ children }: PropsWithChildren) {
   useEffect(() => agentActions.initialize(), []);
+  useEffect(() => modelActions.initialize(), []);
   const sessionId = useAgentStore((state) => state.sessionId);
   const localSessionId = useAgentStore((state) => state.localSessionId);
   const sessions = useAgentStore((state) => state.sessions);

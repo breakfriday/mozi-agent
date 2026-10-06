@@ -1,7 +1,7 @@
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { RunView } from "../../../../../shared/agent";
+import type { ModelSelection, RunView } from "../../../../../shared/agent";
 import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "../../application/models";
 import { AGENT_SCHEMA_V3 } from "./schema";
 import type { MetadataStore } from "../../application/ports/metadata-store";
@@ -11,6 +11,8 @@ const parse = <T>(value: Row[string]): T => JSON.parse(String(value)) as T;
 const runView = (row: Row): RunView => ({
   id: String(row.id), sessionId: String(row.session_id), userMessageId: String(row.user_message_id),
   status: row.status as RunView["status"], createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+  ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}),
+  ...(row.model_config_version ? { modelConfigVersion: String(row.model_config_version) } : {}),
   ...(row.error !== null ? { error: parse<NonNullable<RunView["error"]>>(row.error) } : {}),
   ...(row.interruption_reason !== null ? { interruptionReason: String(row.interruption_reason) } : {}),
 });
@@ -25,7 +27,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     try {
       this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 3 && version !== 4) {
+      if (version !== 3 && version !== 4 && version !== 5) {
         if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
         this.db.exec("PRAGMA foreign_keys=OFF;");
         // Authorized development reset; native session files are never deleted.
@@ -38,8 +40,16 @@ export class SqliteMetadataRepository implements MetadataStore {
           this.db.exec("PRAGMA user_version=3;");
         });
       }
-      if (version !== 4) this.transaction(() => {
+      if (version !== 4 && version !== 5) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; PRAGMA user_version=4;");
+      });
+      if (version !== 5) this.transaction(() => {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN model TEXT;
+          ALTER TABLE runs ADD COLUMN model TEXT;
+          ALTER TABLE runs ADD COLUMN model_config_version TEXT;
+          ALTER TABLE creations ADD COLUMN model TEXT;
+          CREATE TABLE model_settings (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL);
+          PRAGMA user_version=5;`);
       });
       this.db.exec("PRAGMA foreign_keys=ON;");
     } catch (error) { this.db.close(); throw error; }
@@ -54,10 +64,17 @@ export class SqliteMetadataRepository implements MetadataStore {
     try { const result = work(); this.db.exec("COMMIT"); return result; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
+  getDefaultModel(): ModelSelection | undefined {
+    const row = this.statement("SELECT selection FROM model_settings WHERE id=1").get();
+    return row ? parse<ModelSelection>(row.selection) : undefined;
+  }
+  setDefaultModel(model: ModelSelection): void {
+    this.statement("INSERT INTO model_settings (id, selection) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET selection=excluded.selection").run(JSON.stringify(model));
+  }
   listSessions(): SessionMetadata[] {
     return this.statement("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY created_at, id").all().map(row => ({
       descriptor: { sessionId: String(row.id), engine: String(row.engine), locator: String(row.locator), cwd: String(row.cwd) },
-      session: { sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
+      session: { ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}), sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
     }));
   }
   deletedSessionIds(): string[] {
@@ -68,10 +85,10 @@ export class SqliteMetadataRepository implements MetadataStore {
     this.statement("UPDATE sessions SET deleted_at=? WHERE id=?").run(deletedAt, sessionId);
   }
   saveSession({ descriptor, session }: SessionMetadata): void {
-    this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+    this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET engine=excluded.engine, locator=excluded.locator, cwd=excluded.cwd,
-      title=excluded.title, updated_at=excluded.updated_at`)
-      .run(session.sessionId, descriptor.engine, descriptor.locator, descriptor.cwd, session.title, session.createdAt, session.updatedAt);
+      title=excluded.title, updated_at=excluded.updated_at, model=excluded.model`)
+      .run(session.sessionId, descriptor.engine, descriptor.locator, descriptor.cwd, session.title, session.createdAt, session.updatedAt, session.model ? JSON.stringify(session.model) : null);
   }
   readSession(sessionId: string): SessionMetadataDetails {
     return {
@@ -92,14 +109,14 @@ export class SqliteMetadataRepository implements MetadataStore {
     const row = this.statement("SELECT * FROM runs WHERE session_id=? AND id=?").get(sessionId, runId);
     return row ? runView(row) : undefined;
   }
-  findCreation(operationId: string): { title: string; sessionId: string } | undefined {
-    const row = this.statement("SELECT title, session_id FROM creations WHERE operation_id=?").get(operationId);
-    return row ? { title: String(row.title), sessionId: String(row.session_id) } : undefined;
+  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection } | undefined {
+    const row = this.statement("SELECT title, session_id, model FROM creations WHERE operation_id=?").get(operationId);
+    return row ? { title: String(row.title), sessionId: String(row.session_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}) } : undefined;
   }
-  create(operationId: string, metadata: SessionMetadata): void {
+  create(operationId: string, metadata: SessionMetadata, model?: ModelSelection): void {
     this.transaction(() => {
       this.saveSession(metadata);
-      this.statement("INSERT INTO creations VALUES (?, ?, ?)").run(operationId, metadata.session.title, metadata.descriptor.sessionId);
+      this.statement("INSERT INTO creations (operation_id, title, session_id, model) VALUES (?, ?, ?, ?)").run(operationId, metadata.session.title, metadata.descriptor.sessionId, model ? JSON.stringify(model) : null);
     });
   }
   findSubmission(sessionId: string, clientMessageId: string): SubmissionRecord | undefined {
@@ -109,8 +126,8 @@ export class SqliteMetadataRepository implements MetadataStore {
   accept({ run, clientMessageId, contentHash, pendingContent }: RunMetadata, link: MessageLink): void {
     this.transaction(() => {
       this.statement(`INSERT INTO runs (id, session_id, user_message_id, client_id, content_hash, pending_content,
-        status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(run.id, run.sessionId, run.userMessageId, clientMessageId, contentHash, JSON.stringify(pendingContent), run.status, run.createdAt, run.updatedAt);
+        status, created_at, updated_at, model, model_config_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(run.id, run.sessionId, run.userMessageId, clientMessageId, contentHash, JSON.stringify(pendingContent), run.status, run.createdAt, run.updatedAt, run.model ? JSON.stringify(run.model) : null, run.modelConfigVersion ?? null);
       this.writeLinks(run.sessionId, [link]);
       this.touch(run);
     });

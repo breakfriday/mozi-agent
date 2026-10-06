@@ -1,5 +1,7 @@
 import type { Id, InputPart, TerminalStatus, SessionSummary, SessionSnapshot, RunView, AppError, MessageView, MessagePart, ToolView, ToolOutcome, ApprovalView, RunOutcome } from "./models";
 
+import type { ModelSelection, ModelSettings, ProviderSaveInput } from "./providers";
+
 export type StartRunInput = {
   sessionId: Id;
   clientMessageId: Id;
@@ -23,12 +25,17 @@ export type CancelRunResult = {
 );
 
 export type MethodMap = {
+  "model.settings": { params: Record<string, never>; result: ModelSettings };
+  "provider.save": { params: ProviderSaveInput; result: ModelSettings };
+  "provider.remove": { params: { providerId: string }; result: ModelSettings };
+  "model.setDefault": { params: { model: ModelSelection }; result: ModelSettings };
+  "session.setModel": { params: { sessionId: Id; model: ModelSelection }; result: { session: SessionSummary } };
   "runtime.getState": {
     params: Record<string, never>;
     result: RuntimeNotice;
   };
   "session.create": {
-    params: { clientOperationId: Id; title?: string };
+    params: { clientOperationId: Id; title?: string; model?: ModelSelection };
     result: { sessionId: Id };
   };
   "session.list": {

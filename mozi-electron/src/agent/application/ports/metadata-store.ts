@@ -1,4 +1,4 @@
-import type { RunView } from "../../../../../shared/agent";
+import type { ModelSelection, RunView } from "../../../../../shared/agent";
 import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "../models";
 
 /** Mozi metadata only: no history, UI snapshots or SDK context.
@@ -6,6 +6,8 @@ import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails,
  * must also serialize acceptance in RunService.
  */
 export interface MetadataStore {
+  getDefaultModel(): ModelSelection | undefined;
+  setDefaultModel(model: ModelSelection): void;
   listSessions(): SessionMetadata[];
   deletedSessionIds(): string[];
   deleteSession(sessionId: string, deletedAt: string): void;
@@ -13,8 +15,8 @@ export interface MetadataStore {
   readSession(sessionId: string): SessionMetadataDetails;
   unfinishedRuns(): RunView[];
   findRun(sessionId: string, runId: string): RunView | undefined;
-  findCreation(operationId: string): { title: string; sessionId: string } | undefined;
-  create(operationId: string, metadata: SessionMetadata): void;
+  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection } | undefined;
+  create(operationId: string, metadata: SessionMetadata, model?: ModelSelection): void;
   findSubmission(sessionId: string, clientMessageId: string): SubmissionRecord | undefined;
   accept(metadata: RunMetadata, link: MessageLink): void;
   updateRun(run: RunView): void;

@@ -14,7 +14,7 @@ export function createAgent(config: AgentConfig, send: (packet: RuntimePacket) =
   const store = new SqliteMetadataRepository(path.join(config.dataDir, "mozi.sqlite"));
   try {
     const runtime = new PiAdapter(config);
-    const application = new AgentApplication(store, runtime, event => server.event(event), fatal);
+    const application = new AgentApplication(store, runtime, event => server.event(event), fatal, runtime, config.provider && config.modelId ? { providerId: config.provider, modelId: config.modelId } : undefined);
     const server = new IpcServer(new AgentController(application), send);
     return { application, server };
   } catch (error) { store.close(); throw error; }

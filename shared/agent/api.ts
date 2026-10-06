@@ -11,6 +11,11 @@ export type ApiResult<T> =
 
 export const AGENT_API_METHODS = {
   getRuntimeState: "runtime.getState",
+  getModelSettings: "model.settings",
+  saveProvider: "provider.save",
+  removeProvider: "provider.remove",
+  setDefaultModel: "model.setDefault",
+  setSessionModel: "session.setModel",
   createSession: "session.create",
   listSessions: "session.list",
   renameSession: "session.rename",
@@ -25,7 +30,7 @@ export const AGENT_API_METHODS = {
 } as const satisfies Record<string, Method>;
 
 type ApiMethodName = keyof typeof AGENT_API_METHODS;
-type ArgumentsFor<M extends Method> = M extends "runtime.getState"
+type ArgumentsFor<M extends Method> = M extends "runtime.getState" | "model.settings"
   ? []
   : M extends "session.list"
     ? [input?: ParamsOf<M>]

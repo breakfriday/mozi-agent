@@ -8,7 +8,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@aiwayds/pi-bailian-token-plan": [
+        "./src/agent/infrastructure/pi/providers/bailian-package.d.ts"
+      ]
+    }
   },
   "include": ["src", "forge.config.ts", "vite.*.config.ts"]
 }

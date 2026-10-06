@@ -17,7 +17,7 @@ function createApplication(...args) {
 const { IpcServer } = load(path.resolve(__dirname, '../../src/agent/transport/ipc-server.ts'));
 const { isAgentEvent, responseMatchesRequest } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
 const tick = () => new Promise(setImmediate);
-async function fixture(t) {
+async function fixture(t, catalogFactory) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'mozi-service-'));
   const events = [], fatal = [], executions = [];
   let sessionCount = 0;
@@ -47,7 +47,7 @@ async function fixture(t) {
   };
   const filename = path.join(directory, 'state.sqlite');
   const repository = new SqliteMetadataRepository(filename);
-  const service = createApplication(repository, runtime, e => { assert.equal(isAgentEvent(e), true); events.push(e); }, e => fatal.push(e));
+  const service = createApplication(repository, runtime, e => { assert.equal(isAgentEvent(e), true); events.push(e); }, e => fatal.push(e), catalogFactory?.(runtime));
   await service.initialize();
   t.after(async () => { await service.close(); rmSync(directory, { recursive: true, force: true }); });
   let id = 0;
@@ -462,4 +462,60 @@ test('deleting during history loading cannot resurrect a cached session or accep
   await assert.rejects(pending, e => e.code === 'SESSION_NOT_FOUND');
   assert.equal(recovered.sessions.peek(sessionId), undefined);
   await recovered.close();
+});
+
+
+test('provider defaults, session choices and accepted Runs persist independently', async t => {
+  let version = 'configuration-one'; const opened = [];
+  const a = { providerId: 'first', modelId: 'same-model' };
+  const b = { providerId: 'second', modelId: 'same-model' };
+  const f = await fixture(t, runtime => ({
+    listProviders: async () => [], saveProvider: async () => {}, removeProvider: async () => {},
+    prepareModel: async selection => {
+      if (!['first', 'second'].includes(selection.providerId)) throw { code: 'INVALID_ARGUMENT' };
+      const captured = version;
+      return { selection, configVersion: captured, openSession: descriptor => {
+        opened.push({ selection, version: captured }); return runtime.openSession(descriptor);
+      } };
+    },
+  }));
+  await f.call('model.setDefault', { model: a });
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'model-session' });
+  assert.deepEqual((await f.call('session.snapshot', { sessionId })).session.model, a);
+  await f.call('model.setDefault', { model: b });
+  assert.deepEqual((await f.call('session.snapshot', { sessionId })).session.model, a);
+  const accepted = await f.call('run.start', input(sessionId));
+  version = 'configuration-two';
+  await assert.rejects(f.call('session.setModel', { sessionId, model: b }), e => e.code === 'SESSION_BUSY');
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ selection: a, version: 'configuration-one' }]);
+  const run = await f.call('run.get', { sessionId, runId: accepted.runId });
+  assert.deepEqual(run.model, a); assert.equal(run.modelConfigVersion, 'configuration-one');
+  f.executions[0].resolve(); await tick();
+  await f.call('session.setModel', { sessionId, model: b });
+  await assert.rejects(f.call('provider.remove', { providerId: 'second' }), e => e.code === 'INVALID_ARGUMENT');
+  assert.deepEqual(JSON.parse(JSON.stringify(f.repository.listSessions()[0].session.model)), b);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.repository.getDefaultModel())), b);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.repository.readSession(sessionId).runs[0].run.model)), a);
+  assert.equal((await f.call('run.start', input(sessionId))).disposition, 'duplicate');
+  const next = await f.call('run.start', input(sessionId, 'next')); await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened[1])), { selection: b, version: 'configuration-two' });
+  f.executions[1].resolve(); await tick();
+  assert.equal((await f.call('run.get', { sessionId, runId: next.runId })).status, 'completed');
+});
+
+test('session creation deduplication compares the requested model, not a later default', async t => {
+  const f = await fixture(t, runtime => ({ listProviders: async () => [],
+    prepareModel: async selection => ({ selection, configVersion: 'one', openSession: d => runtime.openSession(d) }),
+  }));
+  const a = { providerId: 'a', modelId: 'm' }, b = { providerId: 'b', modelId: 'm' };
+  await f.call('model.setDefault', { model: a });
+  const created = await f.call('session.create', { clientOperationId: 'implicit' });
+  await f.call('model.setDefault', { model: b });
+  assert.deepEqual(await f.call('session.create', { clientOperationId: 'implicit' }), created);
+  const request = { clientOperationId: 'explicit', model: a };
+  const explicit = await f.call('session.create', request);
+  await f.call('session.setModel', { sessionId: explicit.sessionId, model: b });
+  assert.deepEqual(await f.call('session.create', { ...request, model: { modelId: a.modelId, providerId: a.providerId } }), explicit);
+  await assert.rejects(f.call('session.create', { ...request, model: b }), e => e.code === 'SUBMISSION_CONFLICT');
 });

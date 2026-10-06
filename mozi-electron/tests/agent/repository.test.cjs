@@ -14,7 +14,7 @@ function file(t) {
 }
 const metadata = () => ({ descriptor: { sessionId: 's', engine: 'pi', locator: '/pi/session.jsonl', cwd: '/tmp' },
   session: { sessionId: 's', title: 'keep', createdAt: '2026-10-05T00:00:00Z', updatedAt: '2026-10-05T00:00:00Z' } });
-for (const version of [1, 2]) test(`authorized development reset replaces v${version} with four metadata tables`, t => {
+for (const version of [1, 2]) test(`authorized development reset replaces v${version} with metadata tables`, t => {
   const filename = file(t);
   const old = new DatabaseSync(filename);
   old.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, record TEXT NOT NULL);
@@ -30,13 +30,13 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
   assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name),
-    ['creations', 'message_links', 'runs', 'sessions']);
+    ['creations', 'message_links', 'model_settings', 'runs', 'sessions']);
   assert.equal(db.prepare('PRAGMA table_info(sessions)').all().some(column => ['record', 'last_seq', 'file_path'].includes(column.name)), false);
   db.close();
 });
-test('v4 reopens without resetting metadata; unknown versions are never discarded', t => {
+test('v5 reopens without resetting metadata; unknown versions are never discarded', t => {
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
   const reopened = new SqliteMetadataRepository(filename);
@@ -83,5 +83,25 @@ test('v3 migration preserves sessions and creation deduplication; deletions surv
   assert.equal(reopened.listSessions().length, 0);
   assert.deepEqual(Array.from(reopened.deletedSessionIds()), ['s']);
   assert.equal(reopened.findCreation('operation').sessionId, 's');
+  reopened.close();
+});
+
+
+test('v4 upgrades in place and model choices survive reopening', t => {
+  const filename = file(t);
+  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/schema.ts'));
+  const old = new DatabaseSync(filename);
+  old.exec(AGENT_SCHEMA_V3);
+  old.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES ('s', 'pi', '/native', '/tmp', 'original', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); PRAGMA user_version=4;");
+  old.close();
+  const repository = new SqliteMetadataRepository(filename);
+  const model = { providerId: 'bailian-tp', modelId: 'model' };
+  assert.equal(repository.listSessions()[0].session.title, 'original');
+  repository.setDefaultModel(model);
+  repository.saveSession({ ...metadata(), session: { ...metadata().session, model } });
+  repository.close();
+  const reopened = new SqliteMetadataRepository(filename);
+  assert.deepEqual(JSON.parse(JSON.stringify(reopened.getDefaultModel())), model);
+  assert.deepEqual(JSON.parse(JSON.stringify(reopened.listSessions()[0].session.model)), model);
   reopened.close();
 });

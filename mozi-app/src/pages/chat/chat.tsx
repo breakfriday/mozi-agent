@@ -14,6 +14,7 @@ import {
 import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
+import { ModelControls } from "./ModelControls";
 import { SessionList } from "./SessionList";
 import styles from "./chat.module.css";
 
@@ -187,6 +188,7 @@ export function ChatPage() {
           {syncing && <span role="status">正在加载会话…</span>}
           {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
         </header>
+        <ModelControls />
         <ChatThread key={sessionId} />
       </div>
     </section>

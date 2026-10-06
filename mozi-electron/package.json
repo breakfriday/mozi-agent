@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "electron-forge start",
+    "debug": "electron-forge start --inspect-electron ",
     "start:filelocal": "cross-env ELECTRON_RENDERER_MODE=filelocal electron-forge start",
     "build:renderer": "node scripts/build-renderer.cjs",
     "copy:renderer": "node scripts/copy-renderer.cjs",
@@ -24,6 +25,7 @@
     "test:agent:lifecycle": "npm run build:agent && node tests/agent-lifecycle.smoke.cjs"
   },
   "dependencies": {
+    "@aiwayds/pi-bailian-token-plan": "1.1.2",
     "@earendil-works/pi-coding-agent": "1.0.3",
     "electron-squirrel-startup": "^1.0.1"
   },

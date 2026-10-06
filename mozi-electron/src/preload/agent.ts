@@ -108,6 +108,11 @@ export function createAgentPreloadApi(
 
   const api = {
     getRuntimeState: () => request("runtime.getState", {}),
+    getModelSettings: () => request("model.settings", {}),
+    saveProvider: (input) => request("provider.save", input),
+    removeProvider: (input) => request("provider.remove", input),
+    setDefaultModel: (input) => request("model.setDefault", input),
+    setSessionModel: (input) => request("session.setModel", input),
     createSession: (input) => request("session.create", input),
     listSessions: (input = {}) => request("session.list", input),
     renameSession: (input) => request("session.rename", input),

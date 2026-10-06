@@ -1,5 +1,5 @@
 import type {
-  AppError, ApprovalView, InputPart, MessageView, RunView, RuntimeNotice, SessionSummary, ToolView,
+  AppError, ApprovalView, InputPart, ModelSelection, MessageView, RunView, RuntimeNotice, SessionSummary, ToolView,
 } from "../../../shared/agent";
 
 export type AgentMessage = Pick<MessageView, "id" | "role" | "content" | "status">;
@@ -22,6 +22,7 @@ export type AgentState = {
   sessionOperation: string | null;
   localSessionId: string;
   sessionId: string | null;
+  modelSelection: ModelSelection | null;
   messages: MessageView[];
   messageOrder: string[];
   runs: RunView[];

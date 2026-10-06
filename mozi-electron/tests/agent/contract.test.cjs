@@ -10,6 +10,13 @@ const timestamp = "2026-10-05T00:00:00.000Z";
 
 test("every public method has matching parameter and result validation", () => {
   const cases = {
+    "model.settings": [{}, { providers: [] }],
+    "provider.save": [{ providerId: "bailian-tp", apiKey: "test-only" }, { providers: [] }],
+    "provider.remove": [{ providerId: "custom" }, { providers: [] }],
+    "model.setDefault": [{ model: { providerId: "bailian-tp", modelId: "test" } }, { providers: [] }],
+    "session.setModel": [{ sessionId: "session", model: { providerId: "bailian-tp", modelId: "test" } }, {
+      session: { sessionId: "session", title: "Chat", createdAt: timestamp, updatedAt: timestamp, model: { providerId: "bailian-tp", modelId: "test" } },
+    }],
     "runtime.getState": [{}, { state: "unavailable" }],
     "session.create": [{ clientOperationId: "operation" }, { sessionId: "session" }],
     "session.list": [{}, { items: [] }],
@@ -46,6 +53,13 @@ test("every public method has matching parameter and result validation", () => {
 test("requests reject unsupported content, extra keys, invalid decisions, and invalid version", () => {
   for (const input of [
     request("session.create", {}),
+    request("provider.save", { providerId: "constructor", apiKey: "secret" }),
+    request("provider.save", { providerId: "custom", baseUrl: "file:///tmp/private" }),
+    request("provider.save", { providerId: "custom", baseUrl: "https://user:secret@example.com/v1" }),
+    request("provider.save", { providerId: "custom", apiKey: "!echo secret" }),
+    request("provider.save", { providerId: "custom", apiKey: "$UNKNOWN" }),
+    request("provider.save", { providerId: "custom", api: "arbitrary-code" }),
+    request("session.setModel", { sessionId: "s", model: { modelId: "model" } }),
     request("session.snapshot", { sessionId: "" }),
     request("session.rename", { sessionId: "s", title: "  " }),
     request("session.rename", { sessionId: "s", title: "x".repeat(201) }),

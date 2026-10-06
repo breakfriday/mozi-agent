@@ -10,6 +10,9 @@ import type {
   RuntimeNotice, RuntimeShutdown,
 } from "./protocol";
 
+import { PROVIDER_APIS } from "./providers";
+import type { ModelSelection, ProviderModel, ProviderView, ModelSettings } from "./providers";
+
 type Guard<T> = (value: unknown) => value is T;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,6 +88,22 @@ export const isAppError = object<AppError>({
   message: string,
 });
 
+export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id });
+const positive: Guard<number> = (value): value is number => sequence(value) && value > 0 && value <= 100_000_000;
+const providerModel = object<ProviderModel>({ id, name: id, contextWindow: positive, maxTokens: positive, reasoning: boolean, vision: boolean });
+const providerView = object<ProviderView>({
+  id, name: string, source: oneOf("builtin", "extension", "configured", "custom"), configured: boolean,
+  baseUrl: string, api: string, endpointLocked: boolean, removable: boolean,
+  models: array(providerModel), customModels: array(providerModel),
+});
+const modelSettings = object<ModelSettings>({ providers: array(providerView), defaultModel: optional(isModelSelection) });
+const providerId: Guard<string> = (value): value is string => id(value) && /^[a-z0-9][a-z0-9._-]*$/.test(value)
+  && !["__proto__", "constructor", "prototype"].includes(value);
+const endpoint: Guard<string> = (value): value is string => {
+  if (!string(value) || value.length > 2048) return false;
+  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash; }
+  catch { return false; }
+};
 const terminalStatus = oneOf(...TERMINAL_RUN_STATUSES);
 const inputPart = object<InputPart>({ type: oneOf("text"), text: string });
 const messagePart = object<MessagePart>({ id, type: oneOf("text"), text: string });
@@ -92,6 +111,7 @@ const runView = object<RunView>({
   id, sessionId: id, userMessageId: id,
   status: oneOf(...RUN_STATUSES),
   createdAt: date, updatedAt: date, error: optional(isAppError), interruptionReason: optional(string),
+  model: optional(isModelSelection), modelConfigVersion: optional(id),
 });
 const messageView = object<MessageView>({
   id, sessionId: id, runId: optional(id), role: oneOf("user", "assistant"),
@@ -108,7 +128,7 @@ const approvalView = object<ApprovalView>({
   status: oneOf(...APPROVAL_STATUSES),
   createdAt: date, resolvedAt: optional(date),
 });
-const sessionSummary = object<SessionSummary>({ sessionId: id, title: string, createdAt: date, updatedAt: date });
+const sessionSummary = object<SessionSummary>({ sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
 const snapshot = object<SessionSnapshot>({
   session: sessionSummary, lastSeq: sequence, messages: array(messageView), tools: array(toolView),
   runs: array(runView), approvals: array(approvalView),
@@ -132,8 +152,18 @@ const runOutcome: Guard<RunOutcome> = (value): value is RunOutcome =>
   isRecord(value) && terminalStatus(value.status) && outcomeValidators[value.status](value);
 
 const paramsValidators = {
+  "model.settings": object<ParamsOf<"model.settings">>({}),
+  "provider.save": object<ParamsOf<"provider.save">>({ providerId,
+    name: optional(id), baseUrl: optional(endpoint), api: optional(oneOf(...PROVIDER_APIS)),
+    models: optional((value): value is ProviderModel[] => array(providerModel)(value) && value.length <= 100
+      && new Set(value.map(item => item.id)).size === value.length && value.every(item => item.maxTokens <= item.contextWindow)),
+    apiKey: optional((value): value is string => string(value) && value.trim().length > 0 && value.length <= 16_384 && !/[\r\n]/.test(value) && !/^[!$]/.test(value.trim())),
+  }),
+  "provider.remove": object<ParamsOf<"provider.remove">>({ providerId }),
+  "model.setDefault": object<ParamsOf<"model.setDefault">>({ model: isModelSelection }),
+  "session.setModel": object<ParamsOf<"session.setModel">>({ sessionId: id, model: isModelSelection }),
   "runtime.getState": object<ParamsOf<"runtime.getState">>({}),
-  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, title: optional(string) }),
+  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, title: optional(string), model: optional(isModelSelection) }),
   "session.list": object<ParamsOf<"session.list">>({
     cursor: optional(id), limit: optional((value): value is number => sequence(value) && value > 0 && value <= 100),
   }),
@@ -163,6 +193,11 @@ const cancelFinished = object<Extract<ResultOf<"run.cancel">, { disposition: "al
   sessionId: id, runId: id, disposition: oneOf("already_finished"), status: terminalStatus,
 });
 const resultValidators = {
+  "model.settings": modelSettings,
+  "provider.save": modelSettings,
+  "provider.remove": modelSettings,
+  "model.setDefault": modelSettings,
+  "session.setModel": object<ResultOf<"session.setModel">>({ session: sessionSummary }),
   "runtime.getState": isRuntimeNotice,
   "session.create": object<ResultOf<"session.create">>({ sessionId: id }),
   "session.list": object<ResultOf<"session.list">>({ items: array(sessionSummary), nextCursor: optional(id) }),
@@ -220,6 +255,7 @@ export function responseMatchesRequest(request: AgentRequest, value: unknown): b
     case "run.cancel": return result.sessionId === request.params.sessionId && result.runId === request.params.runId;
     case "run.get": return result.sessionId === request.params.sessionId && result.id === request.params.runId;
     case "session.delete": return result.sessionId === request.params.sessionId;
+    case "session.setModel":
     case "session.rename":
     case "session.snapshot": return isRecord(result.session) && result.session.sessionId === request.params.sessionId;
     case "session.subscribe": return result.sessionId === request.params.sessionId;

@@ -1,5 +1,5 @@
 import { isAppError } from "../../../shared/agent";
-import type { AgentApi, AgentEvent, AppError, RuntimeNotice } from "../../../shared/agent";
+import type { AgentApi, AgentEvent, AppError, ModelSelection, ParamsOf, RuntimeNotice } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
 import { applyAgentEvent, initialAgentState, installAgentSnapshot, isTerminalRun } from "./agentState";
 import { interruptSubmissions, putSubmission } from "./submissionState";
@@ -27,11 +27,11 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
   let connection = 0;
   let listVersion = 0;
   let operationVersion = 0;
-  let newCreateInput: { clientOperationId: string } | undefined;
-  const localSessions = new Map<string, Pick<AgentState, "localSessionId" | "pendingSubmissions" | "messageOrder">>();
+  let newCreateInput: ParamsOf<"session.create"> | undefined;
+  const localSessions = new Map<string, Pick<AgentState, "localSessionId" | "pendingSubmissions" | "messageOrder" | "modelSelection">>();
   let startInFlight = false;
   let subscription: { subscriptionId: string; sessionId: string } | undefined;
-  let createInput: { clientOperationId: string } | undefined;
+  let createInput: ParamsOf<"session.create"> | undefined;
   let syncJob: { token: number; sessionId: string; promise: Promise<boolean> } | undefined;
   let buffered: AgentEvent[] = [];
   let overflow = false;
@@ -74,7 +74,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       return;
     }
     localSessions.set(state.sessionId ?? "draft", {
-      localSessionId: state.localSessionId, pendingSubmissions: state.pendingSubmissions, messageOrder: state.messageOrder,
+      localSessionId: state.localSessionId, pendingSubmissions: state.pendingSubmissions, messageOrder: state.messageOrder, modelSelection: state.modelSelection,
     });
     generation++;
     if (subscription) void api.unsubscribeSession({ subscriptionId: subscription.subscriptionId }).catch(() => {});
@@ -115,7 +115,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
       // Reuse an uncertain creation when the current draft already has submissions.
       const input = state.sessionId
         ? newCreateInput ??= { clientOperationId: crypto.randomUUID() }
-        : createInput ??= { clientOperationId: crypto.randomUUID() };
+        : createInput ??= { clientOperationId: crypto.randomUUID(), ...(state.modelSelection ? { model: state.modelSelection } : {}) };
       const created = await api.createSession(input);
       if (token !== connection) return;
       ++listVersion;
@@ -318,7 +318,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     try {
       let sessionId = store.getState().sessionId;
       if (!sessionId) {
-        createInput ??= { clientOperationId: crypto.randomUUID() };
+        createInput ??= { clientOperationId: crypto.randomUUID(), ...(store.getState().modelSelection ? { model: store.getState().modelSelection! } : {}) };
         const created = await api.createSession(createInput);
         if (token !== generation) return;
         sessionId = created.sessionId;
@@ -347,6 +347,7 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     } catch (error) {
       if (token !== generation) return;
       const failure = appError(error);
+      if (!submitted && !store.getState().sessionId && ["INVALID_ARGUMENT", "PERMISSION_DENIED"].includes(failure.code)) createInput = undefined;
       const uncertain = submitted && !["INVALID_ARGUMENT", "SESSION_NOT_FOUND", "SESSION_BUSY", "CAPACITY_EXCEEDED", "SUBMISSION_CONFLICT", "PERMISSION_DENIED"].includes(failure.code);
       store.setState((state) => ({
         pendingSubmissions: state.pendingSubmissions[pending.clientMessageId] ? {
@@ -365,7 +366,37 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
     }
   }
 
+  async function setModel(model: ModelSelection) {
+    const state = store.getState();
+    if (state.runtime.state !== "ready" || state.sessionOperation || state.inFlightSubmissionId || state.activeRunId || state.syncStatus === "syncing"
+      || Object.values(state.pendingSubmissions).some(item => item.status === "unknown")) {
+      throw new Error("请等待当前操作完成或停止任务后再切换模型。");
+    }
+    if (!state.sessionId) {
+      if (createInput) throw new Error("上次创建会话尚未确认，请先重试原提交。");
+      store.setState({ modelSelection: model });
+      return;
+    }
+    const token = generation;
+    ++listVersion;
+    const operation = ++operationVersion;
+    store.setState({ sessionOperation: `model:${state.sessionId}`, sessionsLoading: false, error: null });
+    try {
+      const { session } = await api.setSessionModel({ sessionId: state.sessionId, model });
+      if (token !== generation) return;
+      ++listVersion;
+      store.setState(current => ({ modelSelection: session.model ?? null, sessionsLoading: false,
+        sessions: current.sessions.map(item => item.sessionId === session.sessionId ? session : item) }));
+    } catch (error) {
+      if (token === generation) store.setState({ error: appError(error) });
+      throw error;
+    } finally {
+      if (token === generation && operation === operationVersion) store.setState({ sessionOperation: null });
+    }
+  }
+
   return {
+    setModel,
     initialize, dispose, refresh, listSessions, activateSession, newSession,
     renameSession: (sessionId: string, title: string) => mutateSession(sessionId, title),
     deleteSession: (sessionId: string) => mutateSession(sessionId),

@@ -81,6 +81,11 @@ export function createAgentApi(getBridge: () => AgentBridgeApi | undefined = get
     getRuntimeState: () => getBridge()
       ? call("runtime.getState", {}, (api) => api.getRuntimeState())
       : Promise.resolve({ state: "unavailable", reason: "Agent is available only in the Mozi desktop app." }),
+    getModelSettings: () => call("model.settings", {}, (api) => api.getModelSettings()),
+    saveProvider: (input) => call("provider.save", input, (api) => api.saveProvider(input)),
+    removeProvider: (input) => call("provider.remove", input, (api) => api.removeProvider(input)),
+    setDefaultModel: (input) => call("model.setDefault", input, (api) => api.setDefaultModel(input)),
+    setSessionModel: (input) => call("session.setModel", input, (api) => api.setSessionModel(input)),
     createSession: (input) => call("session.create", input, (api) => api.createSession(input)),
     listSessions: (input) => call("session.list", input, (api) => api.listSessions(input)),
     renameSession: (input) => call("session.rename", input, (api) => api.renameSession(input)),

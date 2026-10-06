@@ -69,3 +69,13 @@ test("large/cyclic/accessor payloads and sink failures cannot affect application
   configureAgentLogging({}, () => { throw new Error("broken sink"); });
   assert.doesNotThrow(() => log.error("response.rejected", { code: "INTERNAL_ERROR" }));
 });
+
+test('provider credentials are redacted even when full request/response payload logging is enabled', () => {
+  const { log, records } = setup({ payloads: true });
+  log.debug('request.send', { method: 'provider.save', params: { providerId: 'bailian-tp', apiKey: 'never-log-this-secret', name: 'Plan' } });
+  log.error('response.rejected', { result: { credentials: { key: 'nested-secret' }, authorization: 'Bearer hidden' } });
+  const serialized = JSON.stringify(records);
+  for (const secret of ['never-log-this-secret', 'nested-secret', 'Bearer hidden']) assert.equal(serialized.includes(secret), false);
+  assert.equal(serialized.includes('redacted'), true);
+  assert.equal(records[0].method, 'provider.save');
+});

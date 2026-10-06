@@ -8,17 +8,19 @@ import { contentHash, type ApplicationControl, type MessageLink } from "./models
 import { SessionState, linkKey } from "./state/session-state";
 import type { SessionService } from "./session-service";
 import type { AgentEventPublisher } from "./agent-event-publisher";
+import type { ModelService } from "./model-service";
+import type { PreparedModel } from "./ports/model-catalog";
 import { appError, failure } from "./errors";
 
 const log = createAgentLogger("agent-service");
 const now = () => new Date().toISOString();
-type Execution = { cancelled: boolean; session?: RuntimeSession; done: Promise<void> };
+type Execution = { model?: PreparedModel; cancelled: boolean; session?: RuntimeSession; done: Promise<void> };
 export class RunService {
   private readonly active = new Map<string, Execution>();
   private readonly busySessions = new Set<string>();
   constructor(private readonly repository: MetadataStore, private readonly runtime: AgentRuntime,
     private readonly sessions: SessionService, private readonly events: AgentEventPublisher,
-    private readonly control: ApplicationControl) {}
+    private readonly control: ApplicationControl, private readonly models: ModelService) {}
 
   recover(): void {
     for (const run of this.repository.unfinishedRuns()) {
@@ -34,7 +36,16 @@ export class RunService {
     if (duplicate) return duplicate;
     await this.sessions.load(input.sessionId);
     this.control.assertAvailable();
-    return this.accept(input);
+    const selection = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
+    const prepared = await this.models.prepare(selection);
+    this.control.assertAvailable(); this.sessions.assertExists(input.sessionId);
+    const accepted = this.duplicate(input);
+    if (accepted) return accepted;
+    const latest = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
+    if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId) {
+      throw failure("SESSION_BUSY", "会话模型已变化，请重新发送。");
+    }
+    return this.accept(input, prepared);
   }
   get(input: ParamsOf<"run.get">): RunView {
     this.control.assertAvailable(); this.sessions.assertExists(input.sessionId);
@@ -64,7 +75,7 @@ export class RunService {
     }
   }
 
-  private accept(input: StartRunInput): RunAccepted {
+  private accept(input: StartRunInput, prepared?: PreparedModel): RunAccepted {
     const state = this.sessions.loaded(input.sessionId);
     // Check again after async history loading: simultaneous retries share one acceptance.
     const duplicate = this.duplicate(input);
@@ -72,7 +83,8 @@ export class RunService {
     const hash = contentHash(input.content);
     if (this.busySessions.has(input.sessionId)) throw failure("SESSION_BUSY", "当前会话仍有正在执行的任务。");
     if (this.active.size >= 8) throw failure("CAPACITY_EXCEEDED", "同时运行的任务过多。");
-    const run: RunView = { id: randomUUID(), sessionId: input.sessionId, userMessageId: randomUUID(), status: "accepted", createdAt: now(), updatedAt: now() };
+    if (prepared && !state.record.snapshot.session.model) this.sessions.bindModel(input.sessionId, prepared.selection);
+    const run: RunView = { ...(prepared ? { model: prepared.selection, modelConfigVersion: prepared.configVersion } : {}), id: randomUUID(), sessionId: input.sessionId, userMessageId: randomUUID(), status: "accepted", createdAt: now(), updatedAt: now() };
     const message: MessageView = {
       id: run.userMessageId, sessionId: input.sessionId, runId: run.id, clientMessageId: input.clientMessageId,
       role: "user", status: "accepted", content: input.content.map((part, index) => ({ ...part, id: this.partId(run.userMessageId, index) })),
@@ -84,7 +96,7 @@ export class RunService {
     this.repository.accept({ run, clientMessageId: input.clientMessageId, contentHash: hash, pendingContent: input.content }, link);
     state.appendRun(run); state.appendMessage(message); state.appendLink(link);
     this.busySessions.add(input.sessionId);
-    const execution: Execution = { cancelled: false, done: Promise.resolve() };
+    const execution: Execution = { model: prepared, cancelled: false, done: Promise.resolve() };
     this.active.set(run.id, execution);
     this.events.publish(state, run.id, { type: "run.updated", data: { run } });
     this.events.publish(state, run.id, { type: "message.accepted", data: { message } });
@@ -96,7 +108,8 @@ export class RunService {
   private async execute(state: SessionState, run: RunView, input: StartRunInput, execution: Execution): Promise<void> {
     let outcome: RunOutcome = { status: "completed" };
     try {
-      if (!execution.cancelled) execution.session = await this.runtime.openSession(state.record.descriptor);
+      if (!execution.cancelled) execution.session = await (execution.model
+        ? execution.model.openSession(state.record.descriptor) : this.runtime.openSession(state.record.descriptor));
       if (!execution.cancelled) {
         transitionRun(run, "running", now()); state.refreshRun(run.id);
         this.control.write(() => this.repository.updateRun(run));

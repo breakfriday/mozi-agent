@@ -370,3 +370,23 @@ test('a catalog request predating a new session cannot deselect the newly create
   await pending;
   assert.equal(f.store.getState().sessionId, 'b');
 });
+
+
+test('draft selection is carried into creation; existing session changes go through the API', async t => {
+  const f = setup(t);
+  f.actions.initialize(); await tick();
+  const model = { providerId: 'bailian-tp', modelId: 'deepseek' };
+  await f.actions.setModel(model);
+  assert.deepEqual(f.store.getState().modelSelection, model);
+  await f.actions.submit('hello');
+  assert.deepEqual(f.calls.find(c => c[0] === 'create')[1].model, model);
+  f.store.setState({ activeRunId: null, inFlightSubmissionId: null, pendingSubmissions: {} });
+  let changed;
+  f.api.setSessionModel = async input => { changed = input; return { session: { ...f.snapshot().session, model: input.model } }; };
+  const next = { providerId: 'deepseek', modelId: 'deepseek' };
+  await f.actions.setModel(next);
+  assert.deepEqual(JSON.parse(JSON.stringify(changed)), { sessionId: 's', model: next });
+  assert.deepEqual(f.store.getState().modelSelection, next);
+  f.store.setState({ activeRunId: 'r' });
+  await assert.rejects(f.actions.setModel(model));
+});

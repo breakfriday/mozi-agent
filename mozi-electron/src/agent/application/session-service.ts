@@ -1,5 +1,5 @@
 import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor } from "../../../../shared/agent";
-import type { ParamsOf, ResultOf, SessionSnapshot } from "../../../../shared/agent";
+import type { ModelSelection, ParamsOf, ResultOf, SessionSnapshot } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import type { MetadataStore } from "./ports/metadata-store";
 import type { AgentRuntime } from "./ports/agent-runtime";
@@ -7,6 +7,7 @@ import type { ApplicationControl, SessionMetadata, SessionRecord } from "./model
 import { SessionState } from "./state/session-state";
 import { projectHistory } from "./state/history-projection";
 import type { AgentEventPublisher } from "./agent-event-publisher";
+import type { ModelService } from "./model-service";
 import { failure } from "./errors";
 
 const log = createAgentLogger("agent-service");
@@ -17,7 +18,7 @@ export class SessionService {
   private readonly loading = new Map<string, Promise<SessionState>>();
   private createQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly repository: MetadataStore, private readonly runtime: AgentRuntime,
-    private readonly events: AgentEventPublisher, private readonly control: ApplicationControl) {}
+    private readonly events: AgentEventPublisher, private readonly control: ApplicationControl, private readonly models: ModelService) {}
   async initialize(): Promise<void> {
     const nativeSessions = await this.runtime.listSessions();
     const deleted = new Set(this.repository.deletedSessionIds());
@@ -69,18 +70,21 @@ export class SessionService {
       const existing = this.repository.findCreation(input.clientOperationId);
       if (existing) {
         this.assertExists(existing.sessionId);
-        if (existing.title !== title) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
+        if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
         return { sessionId: existing.sessionId };
       }
+      const model = input.model ?? this.models.defaultSelection();
+      if (model) await this.models.prepare(model);
+      this.control.assertAvailable();
       const descriptor = await this.runtime.createSession();
       const record: SessionRecord = {
         descriptor, messageLinks: [],
-        snapshot: { session: { sessionId: descriptor.sessionId, title, createdAt: now(), updatedAt: now() },
+        snapshot: { session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
           lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] },
       };
       this.assertSnapshot(record.snapshot);
       const metadata = { descriptor, session: record.snapshot.session };
-      this.repository.create(input.clientOperationId, metadata);
+      this.repository.create(input.clientOperationId, metadata, input.model);
       this.catalog.set(descriptor.sessionId, metadata);
       this.sessions.set(descriptor.sessionId, new SessionState(record));
       log.info("session.created", { sessionId: descriptor.sessionId, clientOperationId: input.clientOperationId });
@@ -88,6 +92,26 @@ export class SessionService {
     });
     this.createQueue = job.catch(() => {});
     return job;
+  }
+
+  async setModel(input: ParamsOf<"session.setModel">): Promise<ResultOf<"session.setModel">> {
+    this.control.assertAvailable(); this.assertExists(input.sessionId);
+    await this.models.prepare(input.model);
+    this.control.assertAvailable(); this.assertExists(input.sessionId);
+    if (this.repository.unfinishedRuns().some(run => run.sessionId === input.sessionId)) {
+      throw failure("SESSION_BUSY", "请先停止当前任务，再切换 provider 或模型。");
+    }
+    return { session: this.bindModel(input.sessionId, input.model) };
+  }
+  bindModel(sessionId: string, model: ModelSelection) {
+    this.assertExists(sessionId);
+    const metadata = this.catalog.get(sessionId)!;
+    const session = { ...metadata.session, model: { ...model }, updatedAt: now() };
+    this.control.write(() => this.repository.saveSession({ ...metadata, session }));
+    metadata.session = session;
+    const cached = this.sessions.get(sessionId);
+    if (cached) cached.record.snapshot.session = session;
+    return structuredClone(session);
   }
 
   rename(input: ParamsOf<"session.rename">): ResultOf<"session.rename"> {

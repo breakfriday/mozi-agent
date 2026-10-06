@@ -1,3 +1,5 @@
+import type { ModelSelection } from "./providers";
+
 // Application views and values. No Electron, Pi, or UI dependencies.
 export type Id = string;
 
@@ -55,6 +57,8 @@ export type RunView = {
   updatedAt: string;
   error?: AppError;
   interruptionReason?: string;
+  model?: ModelSelection;
+  modelConfigVersion?: string;
 };
 
 export type MessageView = {
@@ -91,6 +95,7 @@ export type ApprovalView = {
 };
 
 export type SessionSummary = {
+  model?: ModelSelection;
   sessionId: Id; // Pi 原生会话 ID
   title: string;
   createdAt: string;

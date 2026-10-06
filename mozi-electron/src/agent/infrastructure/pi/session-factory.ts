@@ -2,6 +2,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SettingsManage
 import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import type { RuntimeSessionDescriptor } from "../../application/ports/agent-runtime";
+import type { PiModelBinding } from "./provider-manager";
 import { failure } from "../../application/errors";
 
 /** Pi-specific options; bootstrap configuration is structurally compatible. */
@@ -11,12 +12,12 @@ export interface PiConfig { dataDir: string; cwd: string; piDir: string; provide
 export class PiSessionFactory {
   private modelRuntime?: Promise<ModelRuntime>;
   constructor(private readonly config: PiConfig) {}
-  async create(manager: SessionManager, descriptor: RuntimeSessionDescriptor): Promise<AgentSession> {
+  async create(manager: SessionManager, descriptor: RuntimeSessionDescriptor, binding?: PiModelBinding): Promise<AgentSession> {
     const { piDir, provider, modelId } = this.config;
-    this.modelRuntime ??= ModelRuntime.create({ authPath: path.join(piDir, "auth.json"), modelsPath: path.join(piDir, "models.json"),
+    if (!binding) this.modelRuntime ??= ModelRuntime.create({ authPath: path.join(piDir, "auth.json"), modelsPath: path.join(piDir, "models.json"),
       modelsStorePath: path.join(this.config.dataDir, "models-cache.json"), allowModelNetwork: false });
-    const modelRuntime = await this.modelRuntime;
-    const model = provider && modelId ? modelRuntime.getModel(provider, modelId) : undefined;
+    const modelRuntime = binding?.runtime ?? await this.modelRuntime!;
+    const model = binding?.model ?? (provider && modelId ? modelRuntime.getModel(provider, modelId) : undefined);
     if (provider && !model) throw failure("INVALID_ARGUMENT", `未找到配置的模型 ${provider}/${modelId}，请检查 Pi models.json。`);
     const settings = SettingsManager.inMemory(SettingsManager.create(descriptor.cwd, piDir).getSettings());
     const loader = new DefaultResourceLoader({ cwd: descriptor.cwd, agentDir: piDir, settingsManager: settings,
