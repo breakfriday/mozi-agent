@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { InputPart, RunView, SessionSnapshot, SessionSummary } from "../../../shared/agent";
-import type { RuntimeSessionDescriptor } from "./runtime";
+import type { InputPart, RunView, SessionSnapshot, SessionSummary } from "../../../../shared/agent";
+import type { RuntimeSessionDescriptor } from "./ports/agent-runtime";
 
 export interface MessageLink {
   messageId: string; runId: string; role: "user" | "assistant"; ordinal: number; nativeEntryId?: string;
@@ -31,3 +31,11 @@ export interface SessionMetadataDetails {
 }
 export const contentHash = (content: InputPart[]): string => createHash("sha256")
   .update(JSON.stringify(content.map(({ type, text }) => ({ type, text })))).digest("hex");
+
+/** Lifecycle/failure coordination shared by application services; no process API. */
+export interface ApplicationControl {
+  assertAvailable(): void;
+  write(work: () => void): void;
+  fail(error: unknown): void;
+  isFailed(): boolean;
+}

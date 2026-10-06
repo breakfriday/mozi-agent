@@ -1,10 +1,10 @@
-import type { InputPart } from "../../../shared/agent";
+import type { InputPart } from "../../../../../shared/agent";
 
-/** Application-owned port. Only PiAdapter imports SDK types. */
+/** Application-owned port. Only the Pi infrastructure imports SDK types. */
 export interface RuntimeSessionDescriptor {
   sessionId: string;
   engine: string;
-  /** Opaque to AgentService; interpreted only by the owning adapter. */
+  /** Opaque to the application; interpreted only by the owning adapter. */
   locator: string;
   cwd: string;
 }
@@ -14,7 +14,7 @@ export interface RuntimeSessionInfo {
   createdAt: string;
   updatedAt: string;
 }
-export type RuntimeOutput =
+export type RuntimeEvent =
   | { type: "message.start"; ordinal: number }
   | { type: "message.delta"; ordinal: number; partIndex: number; delta: string }
   | { type: "message.complete"; ordinal: number; parts: { index: number; text: string }[]; nativeEntryId?: string };
@@ -29,7 +29,7 @@ export interface RuntimeHistoryMessage {
 }
 export interface RuntimeSession {
   execute(input: { runId: string; clientMessageId: string; content: InputPart[] },
-    emit: (event: RuntimeOutput) => void): Promise<void>;
+    emit: (event: RuntimeEvent) => void): Promise<void>;
   cancel(): Promise<void>;
   dispose(): void;
 }

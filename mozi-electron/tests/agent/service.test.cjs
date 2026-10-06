@@ -5,9 +5,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const load = require('../helpers/load-ts.cjs')();
-const { AgentRepository } = load(path.resolve(__dirname, '../../src/agent/repository.ts'));
-const { AgentService } = load(path.resolve(__dirname, '../../src/agent/service.ts'));
-const { AgentServer } = load(path.resolve(__dirname, '../../src/agent/transport.ts'));
+const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/metadata-repository.ts'));
+const { AgentApplication } = load(path.resolve(__dirname, '../../src/agent/application/agent-application.ts'));
+const { AgentController } = load(path.resolve(__dirname, '../../src/agent/transport/agent-controller.ts'));
+function createApplication(...args) {
+  const application = new AgentApplication(...args);
+  const controller = new AgentController(application);
+  return { application, controller, sessions: application.sessions,
+    initialize: () => application.initialize(), close: () => application.close(), dispatch: request => controller.dispatch(request) };
+}
+const { IpcServer } = load(path.resolve(__dirname, '../../src/agent/transport/ipc-server.ts'));
 const { isAgentEvent, responseMatchesRequest } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
 const tick = () => new Promise(setImmediate);
 async function fixture(t) {
@@ -39,8 +46,8 @@ async function fixture(t) {
     }; }, dispose() {},
   };
   const filename = path.join(directory, 'state.sqlite');
-  const repository = new AgentRepository(filename);
-  const service = new AgentService(repository, runtime, e => { assert.equal(isAgentEvent(e), true); events.push(e); }, e => fatal.push(e));
+  const repository = new SqliteMetadataRepository(filename);
+  const service = createApplication(repository, runtime, e => { assert.equal(isAgentEvent(e), true); events.push(e); }, e => fatal.push(e));
   await service.initialize();
   t.after(async () => { await service.close(); rmSync(directory, { recursive: true, force: true }); });
   let id = 0;
@@ -96,8 +103,8 @@ test('process recovery interrupts durable reservations and never resubmits origi
   const copy = path.join(path.dirname(f.filename), 'recovered.sqlite');
   const source = new DatabaseSync(f.filename);
   source.prepare('VACUUM INTO ?').run(copy); source.close();
-  const recoveredRepo = new AgentRepository(copy);
-  const recovered = new AgentService(recoveredRepo, f.runtime, () => {}, e => { throw e; });
+  const recoveredRepo = new SqliteMetadataRepository(copy);
+  const recovered = createApplication(recoveredRepo, f.runtime, () => {}, e => { throw e; });
   await recovered.initialize();
   const reply = await recovered.dispatch({ method: 'run.start', params: input(sessionId) });
   assert.equal(reply.disposition, 'duplicate'); assert.equal(reply.runId, runId);
@@ -160,8 +167,8 @@ test('crash recovery uses native history, preserves IDs and interrupts without r
   const before = await f.call('session.snapshot', { sessionId });
   const copy = path.join(path.dirname(f.filename), 'crash.sqlite');
   const db = new DatabaseSync(f.filename); db.prepare('VACUUM INTO ?').run(copy); db.close();
-  const repo = new AgentRepository(copy);
-  const recovered = new AgentService(repo, f.runtime, () => {}, error => { throw error; });
+  const repo = new SqliteMetadataRepository(copy);
+  const recovered = createApplication(repo, f.runtime, () => {}, error => { throw error; });
   await recovered.initialize();
   const snapshot = await recovered.dispatch({ method: 'session.snapshot', params: { sessionId } });
   assert.equal(snapshot.messages[1].id, before.messages[1].id);
@@ -199,7 +206,7 @@ test('new execution writes the same rows with short and long history and never s
       execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'history '.repeat(100) }] });
       execution.resolve(); await tick();
     }
-    const state = f.service.sessions.get(sessionId);
+    const state = f.service.sessions.peek(sessionId);
     for (const message of state.record.snapshot.messages) {
       Object.defineProperty(message.content, 'toJSON', { configurable: true, value() { throw Error('Historical message serialized'); } });
     }
@@ -224,7 +231,7 @@ test('new execution writes the same rows with short and long history and never s
 
 test('server validates shared requests and returns structured errors without waiting on runs', async t => {
   const f = await fixture(t); t.after(() => f.service.close());
-  const sent = []; const server = new AgentServer(f.service, packet => sent.push(packet));
+  const sent = []; const server = new IpcServer(f.service.controller, packet => sent.push(packet));
   await server.receive({ protocolVersion: 1, kind: 'request', requestId: 'bad', method: 'run.start', params: {} });
   assert.equal(sent.pop().error.code, 'INVALID_ARGUMENT');
   const request = { protocolVersion: 1, kind: 'request', requestId: 'create', method: 'session.create', params: { clientOperationId: 'create' } };
@@ -261,8 +268,8 @@ test('output capacity failure preserves the valid in-memory projection', async t
 });
 
 async function reopen(t, f, filename = f.filename) {
-  const repository = new AgentRepository(filename);
-  const service = new AgentService(repository, f.runtime, () => {}, error => { throw error; });
+  const repository = new SqliteMetadataRepository(filename);
+  const service = createApplication(repository, f.runtime, () => {}, error => { throw error; });
   await service.initialize(); t.after(() => service.close());
   return { repository, service, call: (method, params) => service.dispatch({ method, params }) };
 }
@@ -319,7 +326,7 @@ test('missing native history fails that query instead of substituting a SQL tran
   const restored = await reopen(t, f);
   assert.equal((await restored.call('session.list', {})).items[0].sessionId, sessionId);
   await assert.rejects(restored.call('session.snapshot', { sessionId }), /native file missing/);
-  assert.equal(restored.service.sessions.size, 0);
+  assert.equal(restored.service.sessions.peek(sessionId), undefined);
 });
 
 test('simultaneous submissions after a cold native-history load accept only once', async t => {
@@ -355,5 +362,54 @@ test('deduplication and Run queries survive a native history read failure', asyn
   assert.equal(duplicate.runId, accepted.runId); assert.equal(duplicate.disposition, 'duplicate');
   assert.equal((await restored.call('run.get', { sessionId, runId: accepted.runId })).status, 'cancelled');
   await assert.rejects(restored.call('session.snapshot', { sessionId }), /native unavailable/);
-  assert.equal(restored.service.sessions.size, 0);
+  assert.equal(restored.service.sessions.peek(sessionId), undefined);
+});
+
+test('cancel during native reconciliation wins before the terminal decision and emits one finish', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'create' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  const execution = f.executions[0];
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'done' }] });
+  const read = f.runtime.readHistory;
+  let release;
+  f.runtime.readHistory = async descriptor => { await new Promise(resolve => { release = resolve; }); return read(descriptor); };
+  execution.resolve(); await tick();
+  assert.equal((await f.call('run.cancel', { sessionId, runId })).disposition, 'requested');
+  release(); await tick();
+  assert.equal((await f.call('run.get', { sessionId, runId })).status, 'cancelled');
+  assert.equal(f.repository.findRun(sessionId, runId).status, 'cancelled');
+  assert.equal(f.events.filter(event => event.type === 'run.finished').length, 1);
+  assert.deepEqual(f.fatal, []);
+  f.runtime.readHistory = read;
+});
+
+test('shutdown during session loading blocks late acceptance and waits before closing resources', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'create' });
+  await f.service.close();
+  const restored = await reopen(t, f);
+  const read = f.runtime.readHistory;
+  let release;
+  f.runtime.readHistory = async descriptor => { await new Promise(resolve => { release = resolve; }); return read(descriptor); };
+  const request = restored.call('run.start', input(sessionId));
+  const rejected = assert.rejects(request, error => error.code === 'RUNTIME_UNAVAILABLE');
+  let disposed = false; f.runtime.dispose = () => { disposed = true; };
+  const close = restored.service.close();
+  await tick(); assert.equal(disposed, false);
+  release(); await rejected; await close;
+  assert.equal(disposed, true); assert.equal(f.executions.length, 0);
+  const db = new DatabaseSync(f.filename); assert.equal(db.prepare('SELECT count(*) AS n FROM runs').get().n, 0); db.close();
+  f.runtime.readHistory = read;
+});
+
+test('failed initialization can be closed once and requests remain unavailable', async () => {
+  let disposed = 0, closed = 0;
+  const service = createApplication({ close() { closed++; } }, {
+    async listSessions() { throw Error('discovery failed'); }, dispose() { disposed++; },
+  }, () => {}, () => {});
+  await assert.rejects(service.initialize(), /discovery failed/);
+  await assert.rejects(service.dispatch({ method: 'session.list', params: {} }), error => error.code === 'RUNTIME_UNAVAILABLE');
+  await Promise.all([service.close(), service.close()]);
+  assert.equal(closed, 1); assert.equal(disposed, 1);
 });

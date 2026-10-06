@@ -1,13 +1,9 @@
-import path from "node:path";
 import { AGENT_PROTOCOL_VERSION, isRuntimeShutdown } from "../../../shared/agent";
 import type { RuntimePacket } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
-import { readAgentConfig } from "./config";
-import { PiAdapter } from "./pi-adapter";
-import { AgentRepository } from "./repository";
-import { AgentService } from "./service";
-import { AgentServer } from "./transport";
-import { appError } from "./errors";
+import { readAgentConfig } from "./bootstrap/config";
+import { createAgent } from "./bootstrap/create-agent";
+import { appError } from "./application/errors";
 
 const log = createAgentLogger("agent-service");
 const port = process.parentPort;
@@ -23,17 +19,13 @@ process.on("uncaughtException", fatal);
 process.on("unhandledRejection", fatal);
 async function start(): Promise<void> {
   const config = readAgentConfig(process.env);
-  const repository = new AgentRepository(path.join(config.dataDir, "mozi.sqlite"));
-  const runtime = new PiAdapter(config);
-  const service = new AgentService(repository, runtime, (event) => server.event(event), fatal);
-  const server = new AgentServer(service, send);
-  const initialized = service.initialize();
+  const { application, server } = createAgent(config, send, fatal);
+  const initialized = application.initialize();
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
     send({ protocolVersion: AGENT_PROTOCOL_VERSION, kind: "runtime", state: "unavailable", reason: "Agent 正在关闭。" });
-    await initialized;
-    await service.close();
+    await application.close();
     log.info("service.stopped");
     process.exit(0);
   };

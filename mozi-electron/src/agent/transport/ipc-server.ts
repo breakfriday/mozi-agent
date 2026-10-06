@@ -1,12 +1,12 @@
-import { AGENT_PROTOCOL_VERSION, AGENT_MAX_PENDING_REQUESTS, isAgentRequest, isAgentEvent, isRecord, responseMatchesRequest } from "../../../shared/agent";
-import type { AgentEvent, RuntimePacket, RuntimeRequest, RuntimeResponse } from "../../../shared/agent";
-import { createAgentLogger } from "../../../shared/agent/logging";
-import { appError, failure } from "./errors";
-import type { AgentService } from "./service";
+import { AGENT_PROTOCOL_VERSION, AGENT_MAX_PENDING_REQUESTS, isAgentRequest, isAgentEvent, isRecord, responseMatchesRequest } from "../../../../shared/agent";
+import type { AgentEvent, RuntimePacket, RuntimeRequest, RuntimeResponse } from "../../../../shared/agent";
+import { createAgentLogger } from "../../../../shared/agent/logging";
+import { appError, failure } from "../application/errors";
+import type { AgentController } from "./agent-controller";
 const log = createAgentLogger("agent-service");
-export class AgentServer {
+export class IpcServer {
   private readonly pending = new Set<string>();
-  constructor(private readonly service: AgentService, private readonly send: (packet: RuntimePacket) => void) {}
+  constructor(private readonly controller: AgentController, private readonly send: (packet: RuntimePacket) => void) {}
   async receive(value: unknown): Promise<void> {
     const requestId = isRecord(value) && typeof value.requestId === "string" && value.requestId.trim() && value.requestId.length <= 256 ? value.requestId : "invalid-request";
     log.debug("request.received", value);
@@ -20,7 +20,7 @@ export class AgentServer {
       this.pending.add(requestId); owned = true;
       const request = value as RuntimeRequest;
       log.debug("request.validated", request);
-      const result = await this.service.dispatch(request);
+      const result = await this.controller.dispatch(request);
       response = { protocolVersion: AGENT_PROTOCOL_VERSION, kind: "response", requestId, ok: true, result } as RuntimeResponse;
       if (!responseMatchesRequest(request, response)) throw failure("CAPACITY_EXCEEDED", "响应超过容量或不符合共享契约。");
     } catch (error) {

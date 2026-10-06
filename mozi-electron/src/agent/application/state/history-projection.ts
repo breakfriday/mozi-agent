@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { MessageView } from "../../../shared/agent";
-import type { RuntimeHistoryMessage } from "./runtime";
-import type { MessageLink, SessionMetadata, SessionMetadataDetails, SessionRecord } from "./storage-models";
+import type { MessageView } from "../../../../../shared/agent";
+import type { RuntimeHistoryMessage } from "../ports/agent-runtime";
+import type { MessageLink, SessionMetadata, SessionMetadataDetails, SessionRecord } from "../models";
 import { linkKey } from "./session-state";
 
 export const partId = (messageId: string, index: number): string => `${messageId}:text:${index}`;

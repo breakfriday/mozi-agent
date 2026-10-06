@@ -1,11 +1,11 @@
-import type { RunView } from "../../../shared/agent";
-import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "./storage-models";
+import type { RunView } from "../../../../../shared/agent";
+import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "../models";
 
 /** Mozi metadata only: no history, UI snapshots or SDK context.
  * Mutations synchronously commit before acceptance/events. An async implementation
- * must also serialize acceptance in AgentService.
+ * must also serialize acceptance in RunService.
  */
-export interface AgentStore {
+export interface MetadataStore {
   listSessions(): SessionMetadata[];
   saveSession(metadata: SessionMetadata): void;
   readSession(sessionId: string): SessionMetadataDetails;

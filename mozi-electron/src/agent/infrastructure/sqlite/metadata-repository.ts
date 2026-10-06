@@ -1,10 +1,10 @@
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { RunView } from "../../../shared/agent";
-import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "./storage-models";
-import { AGENT_SCHEMA_V3 } from "./storage-schema";
-import type { AgentStore } from "./agent-store";
+import type { RunView } from "../../../../../shared/agent";
+import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails, SubmissionRecord } from "../../application/models";
+import { AGENT_SCHEMA_V3 } from "./schema";
+import type { MetadataStore } from "../../application/ports/metadata-store";
 
 type Row = Record<string, string | number | bigint | Uint8Array | null>;
 const parse = <T>(value: Row[string]): T => JSON.parse(String(value)) as T;
@@ -16,7 +16,7 @@ const runView = (row: Row): RunView => ({
 });
 
 /** Single writer for Mozi metadata. Message bodies belong to the native runtime. */
-export class AgentRepository implements AgentStore {
+export class SqliteMetadataRepository implements MetadataStore {
   private readonly db: DatabaseSync;
   private readonly statements = new Map<string, StatementSync>();
   constructor(filename: string) {

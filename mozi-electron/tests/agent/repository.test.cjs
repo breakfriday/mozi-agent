@@ -5,8 +5,8 @@ const { mkdtempSync, rmSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { AgentRepository } = load(path.resolve(__dirname, '../../src/agent/repository.ts'));
-const { contentHash } = load(path.resolve(__dirname, '../../src/agent/storage-models.ts'));
+const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/metadata-repository.ts'));
+const { contentHash } = load(path.resolve(__dirname, '../../src/agent/application/models.ts'));
 function file(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-repository-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -27,7 +27,7 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
     CREATE TABLE message_links (message_id TEXT REFERENCES messages(id));
     CREATE TABLE tools (id TEXT); CREATE TABLE approvals (id TEXT);`);
   old.close();
-  const repository = new AgentRepository(filename);
+  const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
@@ -37,17 +37,17 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   db.close();
 });
 test('v3 reopens without resetting metadata; unknown versions are never discarded', t => {
-  const filename = file(t), repository = new AgentRepository(filename);
+  const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
-  const reopened = new AgentRepository(filename);
+  const reopened = new SqliteMetadataRepository(filename);
   assert.equal(reopened.listSessions()[0].session.title, 'keep'); reopened.close();
   const db = new DatabaseSync(filename); db.exec('PRAGMA user_version=99');
-  assert.throws(() => new AgentRepository(filename), /Unsupported/);
+  assert.throws(() => new SqliteMetadataRepository(filename), /Unsupported/);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 99);
   assert.equal(db.prepare('SELECT title FROM sessions').get().title, 'keep'); db.close();
 });
 test('native acknowledgement clears only the confirmed input and preserves deduplication', t => {
-  const filename = file(t), repository = new AgentRepository(filename);
+  const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata());
   const run = { id: 'r', sessionId: 's', userMessageId: 'm', status: 'accepted', createdAt: metadata().session.createdAt, updatedAt: metadata().session.updatedAt };
   const pendingContent = [{ type: 'text', text: 'pending input' }];
