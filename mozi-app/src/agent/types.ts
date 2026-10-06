@@ -2,7 +2,7 @@ import type {
   AppError, ApprovalView, InputPart, ModelSelection, MessageView, RunView, RuntimeNotice, SessionSummary, ToolView,
 } from "../../../shared/agent";
 
-export type AgentMessage = Pick<MessageView, "id" | "role" | "content" | "status">;
+export type AgentMessage = Pick<MessageView, "id" | "role" | "content" | "status" | "responseModelId">;
 
 export type PendingSubmission = {
   localSessionId: string;

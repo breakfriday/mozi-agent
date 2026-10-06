@@ -519,3 +519,16 @@ test('session creation deduplication compares the requested model, not a later d
   assert.deepEqual(await f.call('session.create', { ...request, model: { modelId: a.modelId, providerId: a.providerId } }), explicit);
   await assert.rejects(f.call('session.create', { ...request, model: b }), e => e.code === 'SUBMISSION_CONFLICT');
 });
+
+test('provider-reported model travels through events and snapshots independently of the selected model', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'reported-model' });
+  await f.call('run.start', input(sessionId)); await tick();
+  const execution = f.executions[0];
+  execution.emit({ type: 'message.start', ordinal: 0 });
+  execution.emit({ type: 'message.model', ordinal: 0, responseModelId: 'server-reported-version' });
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'answer' }] });
+  execution.resolve(); await tick();
+  assert.equal(f.events.find(event => event.type === 'message.model.reported').data.responseModelId, 'server-reported-version');
+  assert.equal((await f.call('session.snapshot', { sessionId })).messages.at(-1).responseModelId, 'server-reported-version');
+});

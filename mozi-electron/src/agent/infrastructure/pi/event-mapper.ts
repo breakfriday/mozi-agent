@@ -11,6 +11,7 @@ export const textParts = (content: unknown): { index: number; text: string }[] =
 export class PiEventMapper {
   private ordinal = -1;
   lastFailure?: string;
+  get currentOrdinal(): number { return this.ordinal; }
   map(event: AgentSessionEvent): RuntimeEvent | undefined {
     if (event.type === "message_start" && event.message.role === "assistant") {
       this.ordinal++; this.lastFailure = undefined;

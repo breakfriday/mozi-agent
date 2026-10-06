@@ -5,6 +5,7 @@ import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInf
 import { failure } from "../../application/errors";
 import type { PiConfig } from "./session-factory";
 import { textParts } from "./event-mapper";
+import { RESPONSE_MODEL_ENTRY, validResponseModel } from "./response-model";
 
 /** Native identity and history stay within the Pi integration boundary. */
 export class PiNativeHistory {
@@ -43,7 +44,16 @@ export class PiNativeHistory {
     const messages: RuntimeHistoryMessage[] = [];
     let runId: string | undefined;
     let ordinal = 0, seenUser = false;
-    for (const entry of this.open(descriptor).getBranch()) {
+    const branch = this.open(descriptor).getBranch();
+    const responseModels = new Map<string, string>();
+    for (const entry of branch) {
+      if (entry.type !== "custom" || entry.customType !== RESPONSE_MODEL_ENTRY) continue;
+      const data = entry.data as { nativeEntryId?: unknown; responseModelId?: unknown } | undefined;
+      if (typeof data?.nativeEntryId === "string" && validResponseModel(data.responseModelId)) {
+        responseModels.set(data.nativeEntryId, data.responseModelId);
+      }
+    }
+    for (const entry of branch) {
       if (entry.type === "custom" && entry.customType === "mozi.run") {
         const data = entry.data as { runId?: unknown } | undefined;
         runId = typeof data?.runId === "string" ? data.runId : undefined;
@@ -60,6 +70,7 @@ export class PiNativeHistory {
           ordinal: entry.message.role === "assistant" ? ordinal++ : 0,
           nativeEntryId: entry.id, createdAt: entry.timestamp,
           status: stop === "error" ? "failed" : stop === "aborted" ? "cancelled" : "completed",
+          ...(entry.message.role === "assistant" && responseModels.has(entry.id) ? { responseModelId: responseModels.get(entry.id) } : {}),
           parts: textParts(entry.message.content) });
       }
     }

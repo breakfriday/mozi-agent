@@ -135,3 +135,49 @@ test('inherited credentials stay read-only and are never included in the catalog
   assert.equal(response.includes('external-plan-secret'), false);
   assert.equal(response.includes('managed-plan-secret'), false);
 });
+
+test('response model evidence comes only from HTTP chunks, survives native history, and never leaks between requests', async t => {
+  const f = await fixture(t);
+  const { createServer } = require('node:http');
+  const modes = ['model', 'server-model-2026', undefined, '', 'conflict'];
+  let requestIndex = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const request = JSON.parse(body);
+    assert.equal(request.model, 'model');
+    assert.equal(JSON.stringify(request.messages).includes('mozi.provider-response-model'), false);
+    assert.equal(JSON.stringify(request.messages).includes('server-model-2026'), false, 'response metadata is not sent as dialogue');
+    const reported = modes[requestIndex++];
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    for (const index of [0, 1]) {
+      const model = reported === 'conflict' ? `conflicting-model-${index}` : reported;
+      const chunk = { id: `response-${requestIndex}`, object: 'chat.completion.chunk', created: 1,
+        ...(model !== undefined ? { model } : {}),
+        choices: [{ index: 0, delta: index === 0 ? { role: 'assistant', content: 'answer' } : {}, finish_reason: index === 1 ? 'stop' : null }] };
+      res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    }
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
+  const adapter = new PiAdapter(f.config);
+  await adapter.saveProvider({ ...custom('fixture'), baseUrl: `http://127.0.0.1:${server.address().port}/v1` });
+  const descriptor = await adapter.createSession();
+  const expected = ['model', 'server-model-2026', undefined, undefined, undefined];
+  for (let index = 0; index < modes.length; index++) {
+    const prepared = await adapter.prepareModel({ providerId: 'fixture', modelId: 'model' });
+    const session = await prepared.openSession(descriptor);
+    const events = [];
+    try { await session.execute({ runId: `evidence-${index}`, clientMessageId: `input-${index}`, content: [{ type: 'text', text: 'Compare this answer' }] }, event => events.push(event)); }
+    finally { session.dispose(); }
+    assert.equal(events.find(e => e.type === 'message.model')?.responseModelId, expected[index]);
+    assert.equal(events.filter(e => e.type === 'message.model').length, expected[index] ? 1 : 0);
+    const reopened = new PiAdapter(f.config);
+    const history = (await reopened.readHistory(descriptor)).filter(m => m.role === 'assistant');
+    assert.equal(history.length, index + 1);
+    assert.deepEqual(Array.from(history, m => m.responseModelId), expected.slice(0, index + 1));
+  }
+  const native = readFileSync(descriptor.locator, 'utf8');
+  assert.equal(native.split('\n').filter(line => line.includes('mozi.provider-response-model')).length, 2);
+});

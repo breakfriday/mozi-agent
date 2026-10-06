@@ -116,7 +116,7 @@ export class RunService {
         this.events.publish(state, run.id, { type: "run.updated", data: { run } });
         this.events.publish(state, run.id, { type: "run.started", data: {} });
         await execution.session!.execute({ runId: run.id, clientMessageId: input.clientMessageId, content: input.content },
-          event => { if (!this.control.isFailed() && !execution.cancelled && !terminal(run)) this.output(state, run, event); });
+          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "message.model") && !terminal(run)) this.output(state, run, event); });
       }
       if (execution.cancelled) outcome = { status: "cancelled" };
     } catch (error) {
@@ -156,7 +156,10 @@ export class RunService {
     }
     const entry = state.messages.get(link.messageId)!, message = entry.value;
     if (message.status !== "streaming") return;
-    if (event.type === "message.delta") {
+    if (event.type === "message.model") {
+      state.reportResponseModel(entry, event.responseModelId);
+      this.events.publish(state, run.id, { type: "message.model.reported", data: { messageId: message.id, responseModelId: event.responseModelId } });
+    } else if (event.type === "message.delta") {
       const partId = this.partId(message.id, event.partIndex);
       state.appendDelta(entry, partId, event.delta);
       this.events.publish(state, run.id, { type: "message.text.delta", data: { messageId: message.id, partId, delta: event.delta } });

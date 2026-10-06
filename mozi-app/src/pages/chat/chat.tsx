@@ -54,12 +54,15 @@ function UserMessage({ messageKey }: { messageKey: string }) {
   );
 }
 
-function AssistantMessage() {
+function AssistantMessage({ responseModelId }: { responseModelId?: string }) {
   return (
     <MessagePrimitive.Root className={styles.assistantMessage}>
       <MoziIcon />
       <div className={styles.assistantBody}>
-        <span className={styles.messageAuthor}>Mozi</span>
+        <div className={styles.messageHeading}>
+          <span className={styles.messageAuthor}>Mozi</span>
+          {responseModelId && <span className={styles.responseModel} aria-label="服务商返回模型" title="模型服务响应中声明的模型">{responseModelId}</span>}
+        </div>
         <div className={styles.markdown}>
           <MessagePrimitive.Parts>
             {({ part }) =>
@@ -119,7 +122,7 @@ function ChatThread() {
         <div className={styles.messages}>
           <ThreadPrimitive.Messages>
             {({ message }) =>
-              message.role === "user" ? <UserMessage messageKey={message.id} /> : <AssistantMessage />
+              message.role === "user" ? <UserMessage messageKey={message.id} /> : <AssistantMessage responseModelId={typeof message.metadata.custom.responseModelId === "string" ? message.metadata.custom.responseModelId : undefined} />
             }
           </ThreadPrimitive.Messages>
         </div>

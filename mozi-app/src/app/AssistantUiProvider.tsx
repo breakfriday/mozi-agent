@@ -19,6 +19,7 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
     id: message.id,
     role: "assistant",
     content,
+    metadata: { custom: { responseModelId: message.responseModelId } },
     status:
       message.status === "streaming"
         ? { type: "running" }

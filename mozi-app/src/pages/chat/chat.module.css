@@ -349,3 +349,6 @@
   .page { flex-direction: column; }
   .conversationHeader { padding: 10px 12px; }
 }
+
+.messageHeading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.responseModel { font-size: 12px; color: var(--app-muted-color); overflow-wrap: anywhere; }

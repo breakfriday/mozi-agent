@@ -85,6 +85,7 @@ test('Pi mapping keeps ordinals per execution, handles retries and never creates
 test('Pi execution waits for idle, removes subscriptions and releases resources once', async () => {
   const order = []; let listener;
   const session = {
+    agent: { streamFunction() { throw new Error("Not used by this fixture"); } },
     subscribe(callback) { listener = callback; return () => order.push('unsubscribe'); },
     async prompt() { order.push('prompt'); listener({ type: 'message_start', message: { role: 'assistant' } }); },
     async waitForIdle() { order.push('idle'); }, async abort() { order.push('abort'); }, dispose() { order.push('dispose'); },

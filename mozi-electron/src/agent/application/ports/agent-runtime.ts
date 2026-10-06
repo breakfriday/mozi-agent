@@ -15,10 +15,12 @@ export interface RuntimeSessionInfo {
   updatedAt: string;
 }
 export type RuntimeEvent =
+  | { type: "message.model"; ordinal: number; responseModelId: string }
   | { type: "message.start"; ordinal: number }
   | { type: "message.delta"; ordinal: number; partIndex: number; delta: string }
   | { type: "message.complete"; ordinal: number; parts: { index: number; text: string }[]; nativeEntryId?: string };
 export interface RuntimeHistoryMessage {
+  responseModelId?: string;
   runId?: string;
   role: "user" | "assistant";
   ordinal: number;

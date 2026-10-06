@@ -52,6 +52,12 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
         }];
       }
       break;
+    case "message.model.reported": {
+      const message = state.messages.find(item => item.id === event.data.messageId);
+      if (!message || message.role !== "assistant") throw new Error("Missing assistant message before model event.");
+      next.messages = upsert(state.messages, { ...message, responseModelId: event.data.responseModelId }, item => item.id);
+      break;
+    }
     case "message.text.delta":
     case "message.completed": {
       const message = state.messages.find((item) => item.id === event.data.messageId);

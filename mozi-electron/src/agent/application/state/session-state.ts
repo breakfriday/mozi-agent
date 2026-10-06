@@ -83,6 +83,12 @@ export class SessionState {
     part.text += delta; entry.chars += delta.length;
     entry.bytes += growth.bytes; entry.nodes += growth.nodes; this.grow(growth);
   }
+  reportResponseModel(entry: MessageEntry, responseModelId: string): void {
+    const size = measure({ ...entry.value, responseModelId });
+    this.ensureCapacity({ bytes: size.bytes - entry.bytes, nodes: size.nodes - entry.nodes });
+    entry.value.responseModelId = responseModelId;
+    this.refreshMessage(entry);
+  }
   completeMessage(entry: MessageEntry, content: MessageView["content"], status: MessageView["status"] = "completed"): void {
     const next = { ...entry.value, content, status };
     if (chars(next) > 256_000) throw failure("CAPACITY_EXCEEDED", "单条回复超过当前展示容量。");

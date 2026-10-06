@@ -6,6 +6,7 @@ import { useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
 import { agentActions } from "@/agent/agentActions";
 import { modelActions } from "@/agent/modelActions";
+import { showsAllProviders, visibleProviders } from "@/agent/providerVisibility";
 import styles from "./model-controls.module.css";
 
 type ProviderForm = {
@@ -99,20 +100,24 @@ function ProviderEditor({ provider, onClose }: { provider?: ProviderView; onClos
   </Modal>;
 }
 
-function ModelChoices({ value, onChange, disabled }: { value?: ModelSelection; onChange(model: ModelSelection): void; disabled?: boolean }) {
-  // Keep the store snapshot stable while settings are absent; create the UI fallback outside the selector.
-  const providers = useModelStore((state) => state.settings?.providers) ?? [];
+function ModelChoices({ providers, loaded, value, onChange, disabled }: {
+  providers: ProviderView[]; loaded: boolean; value?: ModelSelection; onChange(model: ModelSelection): void; disabled?: boolean;
+}) {
   const provider = providers.find(item => item.id === value?.providerId);
-  return <div className={styles.choices}>
-    <Select aria-label="服务提供商" placeholder="选择 provider" showSearch optionFilterProp="label"
-      value={value?.providerId} disabled={disabled}
-      options={providers.map(item => ({ value: item.id, disabled: !item.configured,
-        label: `${item.name}${item.configured ? "" : "（未配置凭据）"}` }))}
-      onChange={(id) => { const model = providers.find(item => item.id === id)?.models[0]; if (model) onChange({ providerId: id, modelId: model.id }); }} />
-    <Select aria-label="模型" placeholder="选择该 provider 的模型" showSearch optionFilterProp="label"
-      value={value?.modelId} disabled={disabled || !provider?.configured}
-      options={provider?.models.map(model => ({ value: model.id, label: model.name })) ?? []}
-      onChange={(modelId) => { if (provider) onChange({ providerId: provider.id, modelId }); }} />
+  const hiddenSelection = loaded && value && !provider;
+  return <div className={styles.selection}>
+    <div className={styles.choices}>
+      <Select aria-label="服务提供商" placeholder="选择 provider" showSearch optionFilterProp="label"
+        value={provider?.id} disabled={disabled}
+        options={providers.map(item => ({ value: item.id, disabled: !item.configured,
+          label: `${item.name}${item.configured ? "" : "（未配置凭据）"}` }))}
+        onChange={(id) => { const model = providers.find(item => item.id === id)?.models[0]; if (model) onChange({ providerId: id, modelId: model.id }); }} />
+      <Select aria-label="模型" placeholder="选择该 provider 的模型" showSearch optionFilterProp="label"
+        value={provider ? value?.modelId : undefined} disabled={disabled || !provider?.configured}
+        options={provider?.models.map(model => ({ value: model.id, label: model.name })) ?? []}
+        onChange={(modelId) => { if (provider) onChange({ providerId: provider.id, modelId }); }} />
+    </div>
+    {hiddenSelection && <div role="status" className={styles.hint}>当前选择的服务未在列表中展示，原有模型绑定仍保留；可重新选择服务。</div>}
   </div>;
 }
 
@@ -121,6 +126,8 @@ export function ModelControls() {
   const [editing, setEditing] = useState<ProviderView | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const settings = useModelStore((state) => state.settings);
+  // Derive the display list after reading the stable store snapshot, never inside its selector.
+  const providers = visibleProviders(settings?.providers);
   const loading = useModelStore((state) => state.loading);
   const saving = useModelStore((state) => state.saving);
   const loadError = useModelStore((state) => state.error);
@@ -136,23 +143,23 @@ export function ModelControls() {
   }
   return <div className={styles.root}>
     <div className={styles.toolbar}>
-      <ModelChoices value={selected} disabled={!connected || busy || loading || saving} onChange={(model) => void select(model)} />
+      <ModelChoices providers={providers} loaded={!!settings} value={selected} disabled={!connected || busy || loading || saving} onChange={(model) => void select(model)} />
       <Button icon={<SettingOutlined />} onClick={() => { setOpen(true); if (connected) void modelActions.refresh(); }} aria-label="模型服务设置">配置</Button>
     </div>
     {(error || loadError) && <div role="alert" className={styles.hint}>{error || loadError}
       <button type="button" disabled={!connected || saving || loading} onClick={() => { setError(null); void modelActions.refresh(); }}>重新加载</button></div>}
     <Modal open={open} title="模型服务设置" footer={null} width={760} onCancel={() => { if (!saving) setOpen(false); }}>
       <p>先配置服务，再选择它支持的模型。默认模型用于新会话，已有会话保留自己的选择。</p>
-      <ModelChoices value={settings?.defaultModel} disabled={!connected || loading || saving}
+      <ModelChoices providers={providers} loaded={!!settings} value={settings?.defaultModel} disabled={!connected || loading || saving}
         onChange={(model) => { void modelActions.setDefault(model).catch(() => {}); }} />
       <p className={styles.hint}>上方选择为全局默认模型。凭据仅在桌面端后台保存；当前配置表单支持 API Key。</p>
       {loadError && <Alert type="error" showIcon title={loadError} />}
       <div className={styles.settingsActions}>
         <Button onClick={() => void modelActions.refresh()} disabled={!connected || saving} loading={loading}>刷新服务列表</Button>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!connected || saving} onClick={() => setEditing("new")}>添加 provider</Button>
+        {showsAllProviders() && <Button type="primary" icon={<PlusOutlined />} disabled={!connected || saving} onClick={() => setEditing("new")}>添加 provider</Button>}
       </div>
       <div className={styles.providers}>
-        {settings?.providers.map(provider => <div className={styles.provider} key={provider.id}>
+        {providers.map(provider => <div className={styles.provider} key={provider.id}>
           <div><strong>{provider.name}</strong><div className={styles.hint}>{provider.id} · {provider.models.length} 个模型 · {provider.configured ? "凭据已配置" : "未配置凭据"}</div></div>
           <Button disabled={!connected || saving} onClick={() => setEditing(provider)}>配置服务</Button>
         </div>)}

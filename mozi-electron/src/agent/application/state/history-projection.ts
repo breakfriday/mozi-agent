@@ -41,6 +41,7 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
     present.add(id);
     entries.push({ at: native.createdAt, message: {
       id, sessionId, role: native.role, status: native.status,
+      ...(native.role === "assistant" && native.responseModelId ? { responseModelId: native.responseModelId } : {}),
       ...(run ? { runId: run.run.id } : {}),
       ...(native.role === "user" && link && run ? { clientMessageId: run.clientMessageId } : {}),
       content: native.parts.map(part => ({ id: partId(id, part.index), type: "text", text: part.text })),

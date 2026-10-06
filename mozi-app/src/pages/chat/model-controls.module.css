@@ -1,6 +1,7 @@
 .root { padding: 12px 24px 0; }
 .toolbar, .choices, .formRow, .settingsActions, .provider { display: flex; gap: 10px; align-items: center; }
 .choices { flex: 1; min-width: 0; }
+.selection { flex: 1; min-width: 0; }
 .choices > :global(.ant-select) { flex: 1; min-width: 0; }
 .toolbar > button { flex-shrink: 0; }
 .hint { color: var(--app-muted-color); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

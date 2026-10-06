@@ -115,7 +115,7 @@ const runView = object<RunView>({
 });
 const messageView = object<MessageView>({
   id, sessionId: id, runId: optional(id), role: oneOf("user", "assistant"),
-  content: array(messagePart), clientMessageId: optional(id),
+  content: array(messagePart), clientMessageId: optional(id), responseModelId: optional(id),
   status: oneOf(...MESSAGE_STATUSES),
 });
 const toolView = object<ToolView>({
@@ -272,6 +272,7 @@ const eventValidators = {
   "message.accepted": object<EventData<"message.accepted">>({ message: messageView }),
   "message.started": object<EventData<"message.started">>({ messageId: id, role: oneOf("assistant") }),
   "message.text.delta": object<EventData<"message.text.delta">>({ messageId: id, partId: id, delta: string }),
+  "message.model.reported": object<EventData<"message.model.reported">>({ messageId: id, responseModelId: id }),
   "message.completed": object<EventData<"message.completed">>({ messageId: id, content: array(messagePart) }),
   "tool.updated": object<EventData<"tool.updated">>({ tool: toolView }),
   "tool.input.delta": object<EventData<"tool.input.delta">>({ toolCallId: id, delta: string }),

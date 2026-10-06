@@ -62,6 +62,8 @@ export type RunView = {
 };
 
 export type MessageView = {
+  /** Model identifier explicitly reported by the provider response; never a requested/configured model. */
+  responseModelId?: string;
   id: Id;
   sessionId: Id;
   runId?: Id;

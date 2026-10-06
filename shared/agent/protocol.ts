@@ -137,6 +137,7 @@ export type EventPayload =
       type: "message.completed";
       data: { messageId: Id; content: MessagePart[] };
     }
+  | { type: "message.model.reported"; data: { messageId: Id; responseModelId: string } }
   | { type: "tool.updated"; data: { tool: ToolView } }
   | {
       type: "tool.input.delta";
