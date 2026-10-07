@@ -62,9 +62,11 @@ export class PiSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      //  systemPrompt: "你是 Mozi，一个嵌入桌面应用的智能助手。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。" });
       systemPrompt:
-        "请准确回答用户问题。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。",
+        "你是 Mozi，一个嵌入桌面应用的智能助手。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。",
+      //
+      // systemPrompt:
+      //   "请准确回答用户问题。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。",
     });
     await loader.reload();
     const { session } = await createAgentSession({
