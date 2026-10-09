@@ -30,13 +30,13 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
   assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name),
     ['creations', 'message_links', 'model_settings', 'runs', 'sessions']);
   assert.equal(db.prepare('PRAGMA table_info(sessions)').all().some(column => ['record', 'last_seq', 'file_path'].includes(column.name)), false);
   db.close();
 });
-test('v5 reopens without resetting metadata; unknown versions are never discarded', t => {
+test('v6 reopens without resetting metadata; unknown versions are never discarded', t => {
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
   const reopened = new SqliteMetadataRepository(filename);
@@ -104,4 +104,19 @@ test('v4 upgrades in place and model choices survive reopening', t => {
   assert.deepEqual(JSON.parse(JSON.stringify(reopened.getDefaultModel())), model);
   assert.deepEqual(JSON.parse(JSON.stringify(reopened.listSessions()[0].session.model)), model);
   reopened.close();
+});
+
+test('v5 title migration preserves existing metadata and records title provenance durably', t => {
+  const filename = file(t);
+  const original = new SqliteMetadataRepository(filename);
+  original.create('operation', metadata()); original.close();
+  const old = new DatabaseSync(filename);
+  old.exec('ALTER TABLE sessions DROP COLUMN title_source; PRAGMA user_version=5;'); old.close();
+  const upgraded = new SqliteMetadataRepository(filename);
+  assert.equal(upgraded.listSessions()[0].session.title, 'keep');
+  assert.equal(upgraded.listSessions()[0].titleSource, undefined);
+  assert.equal(upgraded.findCreation('operation').sessionId, 's');
+  upgraded.saveSession({ ...upgraded.listSessions()[0], titleSource: 'automatic' }); upgraded.close();
+  const reopened = new SqliteMetadataRepository(filename);
+  assert.equal(reopened.listSessions()[0].titleSource, 'automatic'); reopened.close();
 });

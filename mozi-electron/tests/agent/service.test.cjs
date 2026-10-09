@@ -16,6 +16,7 @@ function createApplication(...args) {
 }
 const { IpcServer } = load(path.resolve(__dirname, '../../src/agent/transport/ipc-server.ts'));
 const { isAgentEvent, responseMatchesRequest } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
+const { titleFromFirstMessage } = load(path.resolve(__dirname, '../../src/agent/domain/session-title.ts'));
 const tick = () => new Promise(setImmediate);
 async function fixture(t, catalogFactory) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'mozi-service-'));
@@ -26,16 +27,22 @@ async function fixture(t, catalogFactory) {
   const runtime = {
     async createSession() {
       const descriptor = { sessionId: `s${++sessionCount}`, engine: 'fixture', cwd: directory, locator: `native-${sessionCount}` };
-      nativeSessions.push({ descriptor, title: 'native title', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      nativeSessions.push({ descriptor, title: '新会话', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       histories.set(descriptor.sessionId, []); return descriptor;
     },
     async listSessions() { return structuredClone(nativeSessions); },
+    setSessionName(descriptor, name) {
+      Object.assign(nativeSessions.find(s => s.descriptor.sessionId === descriptor.sessionId), { name, title: name });
+    },
     async readHistory(descriptor) { historyReads++; return structuredClone(histories.get(descriptor.sessionId) ?? []); },
     async openSession(descriptor) { return {
       execute(input, emit) {
         const history = histories.get(descriptor.sessionId);
         history.push({ runId: input.runId, role: 'user', ordinal: 0, nativeEntryId: `${input.runId}-user`,
-          status: 'completed', createdAt: new Date().toISOString(), parts: input.content.map((p, index) => ({ index, text: p.text })) });
+          status: 'completed', createdAt: new Date().toISOString(), parts: input.content.map((p, index) => ({ index, type: p.type, text: p.text })) });
+        const native = nativeSessions.find(s => s.descriptor.sessionId === descriptor.sessionId);
+        native.title = native.name || titleFromFirstMessage(history.find(m => m.role === 'user').parts.map(p => p.text).join('\n'));
+        emit({ type: 'session.title', title: native.title });
         return new Promise((resolve, reject) => executions.push({ input, resolve, reject, emit(event) {
           emit(event);
           if (event.type === 'message.complete') history.push({ runId: input.runId, role: 'assistant', ordinal: event.ordinal,
@@ -56,6 +63,46 @@ async function fixture(t, catalogFactory) {
 }
 const input = (sessionId, clientMessageId = 'client', text = 'hello') => ({ sessionId, clientMessageId, content: [{ type: 'text', text }] });
 
+test('reasoning streams through application events and preserves part identities after native-history recovery', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'reasoning' });
+  await f.call('run.start', input(sessionId)); await tick();
+  const execution = f.executions[0];
+  execution.emit({ type: 'message.reasoning.delta', ordinal: 0, partIndex: 0, delta: '分析' });
+  execution.emit({ type: 'message.reasoning.delta', ordinal: 0, partIndex: 0, delta: '问题' });
+  execution.emit({ type: 'message.delta', ordinal: 0, partIndex: 1, delta: '答案' });
+  const streaming = (await f.call('session.snapshot', { sessionId })).messages.at(-1);
+  assert.deepEqual(streaming.content.map(p => p.type), ['reasoning', 'text']);
+  assert.equal(streaming.content[0].text, '分析问题');
+  assert.equal(f.events.filter(e => e.type === 'message.reasoning.delta').length, 2);
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [
+    { index: 0, type: 'reasoning', text: '完整分析' }, { index: 1, type: 'text', text: '完整答案' },
+  ] });
+  execution.resolve(); await tick();
+  const finished = (await f.call('session.snapshot', { sessionId })).messages.at(-1);
+  assert.deepEqual(finished.content.map(p => p.id), streaming.content.map(p => p.id));
+  assert.equal(finished.status, 'completed');
+  await f.service.close();
+  const restored = await reopen(t, f);
+  const recovered = (await restored.call('session.snapshot', { sessionId })).messages.at(-1);
+  assert.deepEqual(recovered.content, finished.content);
+  assert.equal(recovered.id, finished.id);
+  assert.deepEqual(f.fatal, []);
+});
+
+test('cancellation retains partial reasoning and rejects late execution deltas', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'reasoning-cancel' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  f.executions[0].emit({ type: 'message.reasoning.delta', ordinal: 0, partIndex: 0, delta: '已思考部分' });
+  await f.call('run.cancel', { sessionId, runId }); await tick();
+  f.executions[0].emit({ type: 'message.reasoning.delta', ordinal: 0, partIndex: 0, delta: '迟到内容' });
+  const message = (await f.call('session.snapshot', { sessionId })).messages.at(-1);
+  assert.equal(message.status, 'cancelled');
+  assert.equal(message.content[0].text, '已思考部分');
+  assert.equal(message.content[0].type, 'reasoning');
+});
+
 test('durable acceptance deduplicates before busy checks and responds before model completion', async t => {
   const f = await fixture(t); t.after(() => f.service.close());
   const [{ sessionId }, again] = await Promise.all([f.call('session.create', { clientOperationId: 'create' }), f.call('session.create', { clientOperationId: 'create' })]);
@@ -74,7 +121,7 @@ test('durable acceptance deduplicates before busy checks and responds before mod
   const snapshot = await f.call('session.snapshot', { sessionId });
   assert.equal(snapshot.messages[1].content[0].text, 'a');
   assert.equal(snapshot.lastSeq, f.events.at(-1).seq);
-  run.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'abc' }] }); run.resolve(); await tick();
+  run.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'abc' }] }); run.resolve(); await tick();
   assert.equal((await f.call('run.get', { sessionId, runId: accepted.runId })).status, 'completed');
   assert.deepEqual(f.events.map(e => e.seq), f.events.map((_, index) => index + 1));
   assert.equal(f.events.filter(e => e.type === 'run.finished').length, 1);
@@ -137,7 +184,7 @@ test('deltas and completed assistant bodies never enter SQLite; confirmed input 
   assert.equal(a.writes().length, 0);
   assert.equal(f.historyReads(), reads);
   assert.equal((await f.call('session.snapshot', { sessionId })).messages[1].content[0].text, '中'.repeat(1000));
-  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'native final' }] });
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'native final' }] });
   execution.resolve(); await tick();
   assert.equal(a.db.prepare('SELECT pending_content FROM runs').get().pending_content, null);
   assert.equal(f.repository.readSession(sessionId).links.every(link => link.nativeEntryId), true);
@@ -203,7 +250,7 @@ test('new execution writes the same rows with short and long history and never s
     for (let i = 0; i < historyCount; i++) {
       await f.call('run.start', input(sessionId, `history-${i}`)); await tick();
       const execution = f.executions.at(-1);
-      execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'history '.repeat(100) }] });
+      execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'history '.repeat(100) }] });
       execution.resolve(); await tick();
     }
     const state = f.service.sessions.peek(sessionId);
@@ -214,7 +261,7 @@ test('new execution writes the same rows with short and long history and never s
     const accepted = await f.call('run.start', input(sessionId, 'new')); await tick();
     const execution = f.executions.at(-1);
     for (let i = 0; i < 1000; i++) execution.emit({ type: 'message.delta', ordinal: 0, partIndex: 0, delta: 'a' });
-    execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'a'.repeat(1000) }] });
+    execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'a'.repeat(1000) }] });
     execution.resolve(); await tick();
     assert.deepEqual(f.fatal, []);
     const writes = a.writes();
@@ -279,8 +326,8 @@ test('native-only sessions are discovered without SQL history and loaded only wh
   const descriptor = await f.runtime.createSession();
   const { sessionId } = descriptor;
   f.histories.get(sessionId).push(
-    { role: 'user', ordinal: 0, nativeEntryId: 'native-user', createdAt: '2026-10-05T00:00:00Z', status: 'completed', parts: [{ index: 0, text: 'imported question' }] },
-    { role: 'assistant', ordinal: 0, nativeEntryId: 'native-answer', createdAt: '2026-10-05T00:00:01Z', status: 'completed', parts: [{ index: 0, text: 'imported answer' }] });
+    { role: 'user', ordinal: 0, nativeEntryId: 'native-user', createdAt: '2026-10-05T00:00:00Z', status: 'completed', parts: [{ index: 0, type: 'text', text: 'imported question' }] },
+    { role: 'assistant', ordinal: 0, nativeEntryId: 'native-answer', createdAt: '2026-10-05T00:00:01Z', status: 'completed', parts: [{ index: 0, type: 'text', text: 'imported answer' }] });
   await f.service.close();
   const restored = await reopen(t, f);
   assert.equal(f.historyReads(), 0, 'discovery must not request full UI histories');
@@ -302,7 +349,7 @@ test('restart projects completed content from native history with stable IDs and
   const f = await fixture(t);
   const { sessionId } = await f.call('session.create', { clientOperationId: 'create' });
   const accepted = await f.call('run.start', input(sessionId)); await tick();
-  f.executions[0].emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'answer' }] });
+  f.executions[0].emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'answer' }] });
   f.executions[0].resolve(); await tick();
   const before = await f.call('session.snapshot', { sessionId });
   await f.service.close();
@@ -370,7 +417,7 @@ test('cancel during native reconciliation wins before the terminal decision and 
   const { sessionId } = await f.call('session.create', { clientOperationId: 'create' });
   const { runId } = await f.call('run.start', input(sessionId)); await tick();
   const execution = f.executions[0];
-  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'done' }] });
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'done' }] });
   const read = f.runtime.readHistory;
   let release;
   f.runtime.readHistory = async descriptor => { await new Promise(resolve => { release = resolve; }); return read(descriptor); };
@@ -527,8 +574,65 @@ test('provider-reported model travels through events and snapshots independently
   const execution = f.executions[0];
   execution.emit({ type: 'message.start', ordinal: 0 });
   execution.emit({ type: 'message.model', ordinal: 0, responseModelId: 'server-reported-version' });
-  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, text: 'answer' }] });
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'answer' }] });
   execution.resolve(); await tick();
   assert.equal(f.events.find(event => event.type === 'message.model.reported').data.responseModelId, 'server-reported-version');
   assert.equal((await f.call('session.snapshot', { sessionId })).messages.at(-1).responseModelId, 'server-reported-version');
+});
+
+test('automatic titles publish before model output, remain based on first input and recover without becoming explicit', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'automatic-title' });
+  assert.equal((await f.call('session.list', {})).items[0].title, '新会话');
+  await f.call('run.start', input(sessionId, 'first', '  检查\n 播放器连接  ')); await tick();
+  assert.equal(f.events.find(e => e.type === 'session.updated').data.session.title, '检查 播放器连接');
+  assert.equal(f.events.some(e => e.type === 'message.started'), false, 'title does not wait for model output');
+  assert.equal((await f.call('session.snapshot', { sessionId })).session.title, '检查 播放器连接');
+  f.executions[0].resolve(); await tick();
+  await f.call('run.start', input(sessionId, 'second', '完全不同的话题')); await tick();
+  assert.equal((await f.call('session.list', {})).items[0].title, '检查 播放器连接');
+  f.executions[1].resolve(); await tick();
+  await f.service.close();
+  const restored = await reopen(t, f);
+  assert.equal(restored.repository.listSessions()[0].titleSource, 'automatic');
+  assert.equal((await restored.call('session.list', {})).items[0].title, '检查 播放器连接');
+  assert.equal(f.nativeSessions[0].name, undefined);
+});
+
+test('manual names, including the placeholder text, survive late title events and native discovery', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'manual-title' });
+  await f.call('run.start', input(sessionId)); await tick();
+  await f.call('session.rename', { sessionId, title: '新会话' });
+  f.executions[0].emit({ type: 'session.title', title: 'stale automatic title' });
+  assert.equal((await f.call('session.snapshot', { sessionId })).session.title, '新会话');
+  assert.equal(f.nativeSessions[0].name, '新会话');
+  f.executions[0].resolve(); await tick(); await f.service.close();
+  const restored = await reopen(t, f);
+  assert.equal(restored.repository.listSessions()[0].titleSource, 'explicit');
+  assert.equal((await restored.call('session.list', {})).items[0].title, '新会话');
+});
+
+test('legacy placeholder titles refresh while SQLite-only names migrate to native exactly once', async t => {
+  const f = await fixture(t);
+  for (const title of ['新会话', '我的旧名称']) await f.call('session.create', { clientOperationId: title });
+  for (const metadata of f.repository.listSessions()) {
+    metadata.titleSource = undefined;
+    metadata.session.title = metadata.descriptor.sessionId === 's1' ? '新会话' : '我的旧名称';
+    f.repository.saveSession(metadata);
+  }
+  f.nativeSessions[0].title = '已有的第一条消息';
+  f.nativeSessions[1].title = '另一个第一条消息';
+  await f.service.close();
+  const restored = await reopen(t, f);
+  const titles = new Map((await restored.call('session.list', {})).items.map(s => [s.sessionId, s.title]));
+  assert.equal(titles.get('s1'), '已有的第一条消息');
+  assert.equal(titles.get('s2'), '我的旧名称');
+  assert.equal(f.nativeSessions[0].name, undefined);
+  assert.equal(f.nativeSessions[1].name, '我的旧名称');
+  await restored.service.close();
+  // Native edits after migration are authoritative, not overwritten by old cache.
+  f.runtime.setSessionName(f.nativeSessions[1].descriptor, '从 Pi 修改的名称');
+  const again = await reopen(t, f);
+  assert.equal((await again.call('session.list', {})).items.find(s => s.sessionId === 's2').title, '从 Pi 修改的名称');
 });

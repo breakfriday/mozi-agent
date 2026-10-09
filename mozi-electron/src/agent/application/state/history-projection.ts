@@ -4,7 +4,7 @@ import type { RuntimeHistoryMessage } from "../ports/agent-runtime";
 import type { MessageLink, SessionMetadata, SessionMetadataDetails, SessionRecord } from "../models";
 import { linkKey } from "./session-state";
 
-export const partId = (messageId: string, index: number): string => `${messageId}:text:${index}`;
+export const partId = (messageId: string, index: number, type: "text" | "reasoning" = "text"): string => `${messageId}:${type}:${index}`;
 const nativeId = (metadata: SessionMetadata, entryId: string): string => "native:" + createHash("sha256")
   .update(JSON.stringify([metadata.descriptor.engine, metadata.descriptor.sessionId, entryId])).digest("hex");
 
@@ -44,7 +44,7 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
       ...(native.role === "assistant" && native.responseModelId ? { responseModelId: native.responseModelId } : {}),
       ...(run ? { runId: run.run.id } : {}),
       ...(native.role === "user" && link && run ? { clientMessageId: run.clientMessageId } : {}),
-      content: native.parts.map(part => ({ id: partId(id, part.index), type: "text", text: part.text })),
+      content: native.parts.map(part => ({ id: partId(id, part.index, part.type), type: part.type, text: part.text })),
     } });
   }
   for (const item of details.runs) {

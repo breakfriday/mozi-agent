@@ -71,15 +71,16 @@ export class SessionState {
     this.grow({ bytes: size.bytes - entry.bytes, nodes: size.nodes - entry.nodes });
     Object.assign(entry, size, { chars: chars(entry.value) });
   }
-  appendDelta(entry: MessageEntry, partId: string, delta: string): void {
+  appendDelta(entry: MessageEntry, partId: string, delta: string, type: MessageView["content"][number]["type"] = "text"): void {
     if (entry.chars + delta.length > 256_000) throw failure("CAPACITY_EXCEEDED", "单条回复超过当前展示容量。");
     let part = entry.value.content.find(part => part.id === partId);
-    const added = part ? { bytes: 0, nodes: 0 } : measure({ id: partId, type: "text", text: "" });
+    if (part && part.type !== type) throw failure("PROTOCOL_MISMATCH", "内容块类型发生变化。");
+    const added = part ? { bytes: 0, nodes: 0 } : measure({ id: partId, type, text: "" });
     // JSON escaping is measured on the new delta only. Split surrogate pairs may
     // conservatively overcount until completion, but can never undercount capacity.
     const growth = { bytes: added.bytes + (part ? 0 : 1) + Buffer.byteLength(JSON.stringify(delta)) - 2, nodes: added.nodes };
     this.ensureCapacity(growth);
-    if (!part) { part = { id: partId, type: "text", text: "" }; entry.value.content.push(part); }
+    if (!part) { part = { id: partId, type, text: "" }; entry.value.content.push(part); }
     part.text += delta; entry.chars += delta.length;
     entry.bytes += growth.bytes; entry.nodes += growth.nodes; this.grow(growth);
   }

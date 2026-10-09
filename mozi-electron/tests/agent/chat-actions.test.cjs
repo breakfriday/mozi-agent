@@ -390,3 +390,16 @@ test('draft selection is carried into creation; existing session changes go thro
   f.store.setState({ activeRunId: 'r' });
   await assert.rejects(f.actions.setModel(model));
 });
+
+test('a title event invalidates a stale list response', async t => {
+  const f = setup(t, { sessionId: 's' });
+  f.actions.initialize(); await tick();
+  let resolveList;
+  f.api.listSessions = () => new Promise(resolve => { resolveList = resolve; });
+  const pending = f.actions.listSessions();
+  assert.equal(f.store.getState().sessionsLoading, true);
+  f.emit('session.updated', { session: { ...f.snapshot().session, title: '首条消息标题' } });
+  resolveList({ items: [f.snapshot().session] }); await pending;
+  assert.equal(f.store.getState().sessions[0].title, '首条消息标题');
+  assert.equal(f.store.getState().sessionsLoading, false);
+});

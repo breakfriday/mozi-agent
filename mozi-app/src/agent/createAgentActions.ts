@@ -227,6 +227,11 @@ export function createAgentActions(api: AgentApi, store: AgentStore, rememberSes
   function receiveEvent(event: AgentEvent) {
     const state = store.getState();
     if (event.sessionId !== state.sessionId) return;
+    if (event.type === "session.updated" && event.seq > state.lastSeq) {
+      // A list response requested before this event must not restore the old title.
+      ++listVersion;
+      store.setState({ sessionsLoading: false });
+    }
     if (event.type === "run.finished") finishedRuns.add(event.runId);
     if (state.syncStatus === "syncing") { buffer(event); return; }
     if (state.runtime.state !== "ready") return;

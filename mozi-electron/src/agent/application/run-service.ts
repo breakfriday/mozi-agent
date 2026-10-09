@@ -116,7 +116,7 @@ export class RunService {
         this.events.publish(state, run.id, { type: "run.updated", data: { run } });
         this.events.publish(state, run.id, { type: "run.started", data: {} });
         await execution.session!.execute({ runId: run.id, clientMessageId: input.clientMessageId, content: input.content },
-          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "message.model") && !terminal(run)) this.output(state, run, event); });
+          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
       }
       if (execution.cancelled) outcome = { status: "cancelled" };
     } catch (error) {
@@ -144,6 +144,10 @@ export class RunService {
   }
 
   private output(state: SessionState, run: RunView, event: RuntimeEvent): void {
+    if (event.type === "session.title") {
+      this.sessions.updateAutomaticTitle(run.sessionId, event.title, run.id);
+      return;
+    }
     if (!Number.isSafeInteger(event.ordinal) || event.ordinal < 0) throw failure("PROTOCOL_MISMATCH", "无效的运行时消息序号。");
     let link = state.links.get(linkKey(run.id, "assistant", event.ordinal));
     if (!link) {
@@ -159,12 +163,13 @@ export class RunService {
     if (event.type === "message.model") {
       state.reportResponseModel(entry, event.responseModelId);
       this.events.publish(state, run.id, { type: "message.model.reported", data: { messageId: message.id, responseModelId: event.responseModelId } });
-    } else if (event.type === "message.delta") {
-      const partId = this.partId(message.id, event.partIndex);
-      state.appendDelta(entry, partId, event.delta);
-      this.events.publish(state, run.id, { type: "message.text.delta", data: { messageId: message.id, partId, delta: event.delta } });
+    } else if (event.type === "message.delta" || event.type === "message.reasoning.delta") {
+      const type = event.type === "message.delta" ? "text" : "reasoning";
+      const partId = this.partId(message.id, event.partIndex, type);
+      state.appendDelta(entry, partId, event.delta, type);
+      this.events.publish(state, run.id, { type: type === "text" ? "message.text.delta" : "message.reasoning.delta", data: { messageId: message.id, partId, delta: event.delta } });
     } else if (event.type === "message.complete") {
-      const content = event.parts.map(part => ({ id: this.partId(message.id, part.index), type: "text" as const, text: part.text }));
+      const content = event.parts.map(part => ({ id: this.partId(message.id, part.index, part.type), type: part.type, text: part.text }));
       if (new Set(content.map(part => part.id)).size !== content.length) throw failure("PROTOCOL_MISMATCH", "重复的运行时内容块。");
       state.completeMessage(entry, content);
       const links: MessageLink[] = [];
@@ -191,9 +196,9 @@ export class RunService {
     log.info("run.finished", { sessionId: run.sessionId, runId: run.id, status: outcome.status });
   }
 
-  private partId(messageId: string, index: number): string {
+  private partId(messageId: string, index: number, type: "text" | "reasoning" = "text"): string {
     if (!Number.isSafeInteger(index) || index < 0) throw failure("PROTOCOL_MISMATCH", "无效的运行时内容块序号。");
-    return `${messageId}:text:${index}`;
+    return `${messageId}:${type}:${index}`;
   }
   private run(sessionId: string, runId: string): RunView {
     const run = this.sessions.peek(sessionId)?.runs.get(runId)?.value ?? this.repository.findRun(sessionId, runId);

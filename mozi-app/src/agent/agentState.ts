@@ -32,6 +32,10 @@ export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapsho
 export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentState {
   const next = { ...state, lastSeq: event.seq };
   switch (event.type) {
+    case "session.updated":
+      next.sessions = upsert(state.sessions, event.data.session, (session) => session.sessionId);
+      next.sessionsLoading = false;
+      break;
     case "run.started":
       next.activeRunId = event.runId;
       break;
@@ -59,14 +63,20 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
       break;
     }
     case "message.text.delta":
+    case "message.reasoning.delta":
     case "message.completed": {
       const message = state.messages.find((item) => item.id === event.data.messageId);
       if (!message) throw new Error("Missing message before event.");
+      if (message.role !== "assistant") throw new Error("Output event must target an assistant message.");
+      const partType = event.type === "message.reasoning.delta" ? "reasoning" as const : "text" as const;
+      if (event.type !== "message.completed" && message.content.some(part => part.id === event.data.partId && part.type !== partType)) {
+        throw new Error("Message part type changed.");
+      }
       const updated = event.type === "message.completed"
         ? { ...message, content: event.data.content, status: "completed" as const }
         : { ...message, content: message.content.some((part) => part.id === event.data.partId)
           ? message.content.map((part) => part.id === event.data.partId ? { ...part, text: part.text + event.data.delta } : part)
-          : [...message.content, { id: event.data.partId, type: "text" as const, text: event.data.delta }] };
+          : [...message.content, { id: event.data.partId, type: partType, text: event.data.delta }] };
       next.messages = upsert(state.messages, updated, (item) => item.id);
       break;
     }

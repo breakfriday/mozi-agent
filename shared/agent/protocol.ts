@@ -122,6 +122,7 @@ export type RuntimeRequest = Extract<AgentRequest, { method: RuntimeMethod }>;
 export type RuntimeResponse = { [M in RuntimeMethod]: ResponseFor<M> }[RuntimeMethod];
 
 export type EventPayload =
+  | { type: "session.updated"; data: { session: SessionSummary } }
   | { type: "run.started"; data: Record<string, never> }
   | { type: "run.updated"; data: { run: RunView } }
   | { type: "message.accepted"; data: { message: MessageView } }
@@ -131,6 +132,10 @@ export type EventPayload =
     }
   | {
       type: "message.text.delta";
+      data: { messageId: Id; partId: Id; delta: string };
+    }
+  | {
+      type: "message.reasoning.delta";
       data: { messageId: Id; partId: Id; delta: string };
     }
   | {

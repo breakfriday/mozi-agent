@@ -12,8 +12,11 @@ import type { AgentMessage } from "@/agent/types";
 import { selectChatMessages } from "@/agent/submissionState";
 
 function convertMessage(message: AgentMessage): ThreadMessageLike {
-  const content = message.content.map((part) => ({ type: "text" as const, text: part.text }));
-  if (message.role === "user") return { id: message.id, role: "user", content };
+  if (message.role === "user") return {
+    id: message.id, role: "user",
+    content: message.content.filter(part => part.type === "text").map(part => ({ type: "text" as const, text: part.text })),
+  };
+  const content = message.content.map(part => ({ id: part.id, type: part.type, text: part.text }));
 
   return {
     id: message.id,

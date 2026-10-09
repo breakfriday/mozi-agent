@@ -3,6 +3,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  groupPartByType,
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import {
@@ -16,6 +17,7 @@ import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
 import { ModelControls } from "./ModelControls";
 import { SessionList } from "./SessionList";
+import { Reasoning, ReasoningRoot, ReasoningTrigger, ReasoningContent, ReasoningText } from "@/components/assistant-ui/elements/reasoning.aui";
 import styles from "./chat.module.css";
 
 const suggestions = [
@@ -23,6 +25,7 @@ const suggestions = [
   "帮我分析一段日志",
   "整理问题排查步骤",
 ];
+const groupReasoning = groupPartByType({ reasoning: ["group-reasoning"] });
 
 function UserMessage({ messageKey }: { messageKey: string }) {
   const clientMessageId = messageKey.startsWith("client:") ? messageKey.slice("client:".length) : undefined;
@@ -64,11 +67,24 @@ function AssistantMessage({ responseModelId }: { responseModelId?: string }) {
           {responseModelId && <span className={styles.responseModel} aria-label="服务商返回模型" title="模型服务响应中声明的模型">{responseModelId}</span>}
         </div>
         <div className={styles.markdown}>
-          <MessagePrimitive.Parts>
-            {({ part }) =>
-              part.type === "text" ? <MarkdownTextPrimitive /> : null
-            }
-          </MessagePrimitive.Parts>
+          <MessagePrimitive.GroupedParts groupBy={groupReasoning}>
+            {({ part, children }) => {
+              if (part.type === "group-reasoning") {
+                const running = part.status.type === "running";
+                return (
+                  <ReasoningRoot streaming={running}>
+                    <ReasoningTrigger active={running} />
+                    <ReasoningContent aria-busy={running}>
+                      <ReasoningText>{children}</ReasoningText>
+                    </ReasoningContent>
+                  </ReasoningRoot>
+                );
+              }
+              if (part.type === "reasoning") return <Reasoning {...part} />;
+              if (part.type === "text") return <MarkdownTextPrimitive />;
+              return null;
+            }}
+          </MessagePrimitive.GroupedParts>
         </div>
         <AuiIf condition={(s) => s.message.status?.type === "running"}>
           <span className={styles.messageStatus} role="status">

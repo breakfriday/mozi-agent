@@ -4,11 +4,13 @@ import path from "node:path";
 import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../application/ports/agent-runtime";
 import { failure } from "../../application/errors";
 import type { PiConfig } from "./session-factory";
-import { textParts } from "./event-mapper";
+import { displayParts } from "./event-mapper";
 import { RESPONSE_MODEL_ENTRY, validResponseModel } from "./response-model";
+import { EMPTY_SESSION_TITLE, titleFromFirstMessage } from "../../domain/session-title";
 
 /** Native identity and history stay within the Pi integration boundary. */
 export class PiNativeHistory {
+  private readonly active = new Map<string, SessionManager>();
   private readonly sessionDir: string;
   constructor(private readonly config: Pick<PiConfig, "cwd" | "dataDir">) {
     this.sessionDir = path.join(config.dataDir, "pi-sessions");
@@ -31,12 +33,25 @@ export class PiNativeHistory {
     if (manager.getSessionId() !== descriptor.sessionId) throw failure("INTERNAL_ERROR", "Pi 会话身份与应用记录不一致。");
     return manager;
   }
+  acquire(descriptor: RuntimeSessionDescriptor): SessionManager {
+    if (this.active.has(descriptor.sessionId)) throw failure("SESSION_BUSY", "会话正在执行。");
+    const manager = this.open(descriptor);
+    this.active.set(descriptor.sessionId, manager);
+    return manager;
+  }
+  release(descriptor: RuntimeSessionDescriptor): void { this.active.delete(descriptor.sessionId); }
+  setSessionName(descriptor: RuntimeSessionDescriptor, name: string): void {
+    // Reuse the live writer so its leaf cursor includes the name entry.
+    const manager = this.active.get(descriptor.sessionId) ?? this.open(descriptor);
+    if (manager.getSessionName() !== name) manager.appendSessionInfo(name);
+  }
   async listSessions(): Promise<RuntimeSessionInfo[]> {
     // Search the application's native directory across working directories.
     const sessions = await SessionManager.listAll(this.sessionDir);
     return sessions.map(session => ({
       descriptor: { sessionId: session.id, engine: "pi", locator: session.path, cwd: session.cwd || this.config.cwd },
-      title: session.name || session.firstMessage.slice(0, 80) || "新会话",
+      ...(session.name ? { name: session.name } : {}),
+      title: session.name || (session.messageCount ? titleFromFirstMessage(session.firstMessage) : EMPTY_SESSION_TITLE),
       createdAt: session.created.toISOString(), updatedAt: session.modified.toISOString(),
     }));
   }
@@ -71,7 +86,7 @@ export class PiNativeHistory {
           nativeEntryId: entry.id, createdAt: entry.timestamp,
           status: stop === "error" ? "failed" : stop === "aborted" ? "cancelled" : "completed",
           ...(entry.message.role === "assistant" && responseModels.has(entry.id) ? { responseModelId: responseModels.get(entry.id) } : {}),
-          parts: textParts(entry.message.content) });
+          parts: displayParts(entry.message.content, entry.message.role === "assistant") });
       }
     }
     return messages;

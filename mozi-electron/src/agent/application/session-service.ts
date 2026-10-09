@@ -9,6 +9,7 @@ import { projectHistory } from "./state/history-projection";
 import type { AgentEventPublisher } from "./agent-event-publisher";
 import type { ModelService } from "./model-service";
 import { failure } from "./errors";
+import { EMPTY_SESSION_TITLE } from "../domain/session-title";
 
 const log = createAgentLogger("agent-service");
 const now = () => new Date().toISOString();
@@ -27,9 +28,16 @@ export class SessionService {
     for (const native of nativeSessions) {
       if (deleted.has(native.descriptor.sessionId)) continue;
       const id = native.descriptor.sessionId, existing = saved.get(id);
-      const metadata: SessionMetadata = { descriptor: native.descriptor,
-        session: existing ? { ...existing.session, updatedAt: existing.session.updatedAt > native.updatedAt ? existing.session.updatedAt : native.updatedAt }
-          : { sessionId: id, title: native.title, createdAt: native.createdAt, updatedAt: native.updatedAt } };
+      // One-time migration: preserve legacy non-placeholder titles before making
+      // the native name/first message authoritative. A recorded source prevents
+      // later automatic titles from being mistaken for user names.
+      const legacyName = existing && !existing.titleSource && existing.session.title !== EMPTY_SESSION_TITLE
+        ? existing.session.title.trim() : undefined;
+      if (legacyName) this.runtime.setSessionName(native.descriptor, legacyName);
+      const title = legacyName || native.title;
+      const metadata: SessionMetadata = { descriptor: native.descriptor, titleSource: legacyName || native.name ? "explicit" : "automatic",
+        session: existing ? { ...existing.session, title, updatedAt: existing.session.updatedAt > native.updatedAt ? existing.session.updatedAt : native.updatedAt }
+          : { sessionId: id, title, createdAt: native.createdAt, updatedAt: native.updatedAt } };
       this.catalog.set(id, metadata);
       if (!existing || JSON.stringify(existing) !== JSON.stringify(metadata)) this.repository.saveSession(metadata);
     }
@@ -64,7 +72,7 @@ export class SessionService {
   }
 
   create(input: ParamsOf<"session.create">): Promise<{ sessionId: string }> {
-    const title = input.title ?? "新会话";
+    const title = input.title?.replace(/[\r\n]+/g, " ").trim() || EMPTY_SESSION_TITLE;
     const job = this.createQueue.then(async () => {
       this.control.assertAvailable();
       const existing = this.repository.findCreation(input.clientOperationId);
@@ -77,13 +85,14 @@ export class SessionService {
       if (model) await this.models.prepare(model);
       this.control.assertAvailable();
       const descriptor = await this.runtime.createSession();
+      if (input.title?.trim()) this.runtime.setSessionName(descriptor, title);
       const record: SessionRecord = {
         descriptor, messageLinks: [],
         snapshot: { session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
           lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] },
       };
       this.assertSnapshot(record.snapshot);
-      const metadata = { descriptor, session: record.snapshot.session };
+      const metadata: SessionMetadata = { descriptor, session: record.snapshot.session, titleSource: input.title?.trim() ? "explicit" : "automatic" };
       this.repository.create(input.clientOperationId, metadata, input.model);
       this.catalog.set(descriptor.sessionId, metadata);
       this.sessions.set(descriptor.sessionId, new SessionState(record));
@@ -117,15 +126,30 @@ export class SessionService {
   rename(input: ParamsOf<"session.rename">): ResultOf<"session.rename"> {
     this.control.assertAvailable();
     this.assertExists(input.sessionId);
-    const title = input.title.trim();
+    const title = input.title.replace(/[\r\n]+/g, " ").trim();
     if (!title || input.title.length > 200) throw failure("INVALID_ARGUMENT", "会话名称需要 1–200 个字符。");
     const metadata = this.catalog.get(input.sessionId)!;
     const session = { ...metadata.session, title, updatedAt: now() };
-    this.control.write(() => this.repository.saveSession({ ...metadata, session }));
+    // Native first: a metadata-write failure can be recovered from the JSONL.
+    this.runtime.setSessionName(metadata.descriptor, title);
+    this.control.write(() => this.repository.saveSession({ ...metadata, session, titleSource: "explicit" }));
+    metadata.titleSource = "explicit";
     metadata.session = session;
     const cached = this.sessions.get(input.sessionId);
     if (cached) cached.record.snapshot.session = session;
     return structuredClone({ session });
+  }
+
+  updateAutomaticTitle(sessionId: string, title: string, runId: string): void {
+    const metadata = this.catalog.get(sessionId)!;
+    if (metadata.titleSource === "explicit" || metadata.session.title === title) return;
+    const session = { ...metadata.session, title, updatedAt: now() };
+    this.control.write(() => this.repository.saveSession({ ...metadata, session, titleSource: "automatic" }));
+    metadata.session = session;
+    metadata.titleSource = "automatic";
+    const state = this.loaded(sessionId);
+    state.record.snapshot.session = session;
+    this.events.publish(state, runId, { type: "session.updated", data: { session } });
   }
 
   delete(input: ParamsOf<"session.delete">): ResultOf<"session.delete"> {

@@ -10,7 +10,7 @@ export type InputPart = {
 
 export type MessagePart = {
   id: Id; // 与 delta.data.partId 对应
-  type: "text";
+  type: "text" | "reasoning";
   text: string;
 };
 

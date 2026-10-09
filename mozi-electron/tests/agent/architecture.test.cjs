@@ -90,7 +90,7 @@ test('Pi execution waits for idle, removes subscriptions and releases resources 
     async prompt() { order.push('prompt'); listener({ type: 'message_start', message: { role: 'assistant' } }); },
     async waitForIdle() { order.push('idle'); }, async abort() { order.push('abort'); }, dispose() { order.push('dispose'); },
   };
-  const execution = new PiExecution(session, { appendCustomEntry() { order.push('marker'); } });
+  const execution = new PiExecution(session, { getEntries() { return []; }, appendCustomEntry() { order.push('marker'); } });
   await execution.execute({ runId: 'r', clientMessageId: 'c', content: [{ type: 'text', text: 'hi' }] }, () => order.push('event'));
   assert.deepEqual(order, ['marker', 'prompt', 'event', 'idle', 'unsubscribe']);
   await Promise.all([execution.cancel(), execution.cancel()]);

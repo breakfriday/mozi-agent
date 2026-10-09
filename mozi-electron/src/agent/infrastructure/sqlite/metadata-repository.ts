@@ -27,7 +27,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     try {
       this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 3 && version !== 4 && version !== 5) {
+      if (version !== 3 && version !== 4 && version !== 5 && version !== 6) {
         if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
         this.db.exec("PRAGMA foreign_keys=OFF;");
         // Authorized development reset; native session files are never deleted.
@@ -40,16 +40,19 @@ export class SqliteMetadataRepository implements MetadataStore {
           this.db.exec("PRAGMA user_version=3;");
         });
       }
-      if (version !== 4 && version !== 5) this.transaction(() => {
+      if (version !== 4 && version !== 5 && version !== 6) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; PRAGMA user_version=4;");
       });
-      if (version !== 5) this.transaction(() => {
+      if (version !== 5 && version !== 6) this.transaction(() => {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model_config_version TEXT;
           ALTER TABLE creations ADD COLUMN model TEXT;
           CREATE TABLE model_settings (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL);
           PRAGMA user_version=5;`);
+      });
+      if (version !== 6) this.transaction(() => {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN title_source TEXT CHECK(title_source IN ('automatic', 'explicit')); PRAGMA user_version=6;");
       });
       this.db.exec("PRAGMA foreign_keys=ON;");
     } catch (error) { this.db.close(); throw error; }
@@ -73,6 +76,7 @@ export class SqliteMetadataRepository implements MetadataStore {
   }
   listSessions(): SessionMetadata[] {
     return this.statement("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY created_at, id").all().map(row => ({
+      ...(row.title_source ? { titleSource: row.title_source as SessionMetadata["titleSource"] } : {}),
       descriptor: { sessionId: String(row.id), engine: String(row.engine), locator: String(row.locator), cwd: String(row.cwd) },
       session: { ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}), sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
     }));
@@ -84,11 +88,11 @@ export class SqliteMetadataRepository implements MetadataStore {
   deleteSession(sessionId: string, deletedAt: string): void {
     this.statement("UPDATE sessions SET deleted_at=? WHERE id=?").run(deletedAt, sessionId);
   }
-  saveSession({ descriptor, session }: SessionMetadata): void {
-    this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  saveSession({ descriptor, session, titleSource }: SessionMetadata): void {
+    this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at, model, title_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET engine=excluded.engine, locator=excluded.locator, cwd=excluded.cwd,
-      title=excluded.title, updated_at=excluded.updated_at, model=excluded.model`)
-      .run(session.sessionId, descriptor.engine, descriptor.locator, descriptor.cwd, session.title, session.createdAt, session.updatedAt, session.model ? JSON.stringify(session.model) : null);
+      title=excluded.title, updated_at=excluded.updated_at, model=excluded.model, title_source=excluded.title_source`)
+      .run(session.sessionId, descriptor.engine, descriptor.locator, descriptor.cwd, session.title, session.createdAt, session.updatedAt, session.model ? JSON.stringify(session.model) : null, titleSource ?? null);
   }
   readSession(sessionId: string): SessionMetadataDetails {
     return {

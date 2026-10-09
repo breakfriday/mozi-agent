@@ -12,6 +12,8 @@ export interface SessionRecord {
   messageLinks: MessageLink[];
 }
 export interface SessionMetadata {
+  /** Undefined only for metadata written before native title synchronization. */
+  titleSource?: "automatic" | "explicit";
   descriptor: RuntimeSessionDescriptor;
   session: SessionSummary;
 }

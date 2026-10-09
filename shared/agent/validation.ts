@@ -106,18 +106,20 @@ const endpoint: Guard<string> = (value): value is string => {
 };
 const terminalStatus = oneOf(...TERMINAL_RUN_STATUSES);
 const inputPart = object<InputPart>({ type: oneOf("text"), text: string });
-const messagePart = object<MessagePart>({ id, type: oneOf("text"), text: string });
+const messagePart = object<MessagePart>({ id, type: oneOf("text", "reasoning"), text: string });
 const runView = object<RunView>({
   id, sessionId: id, userMessageId: id,
   status: oneOf(...RUN_STATUSES),
   createdAt: date, updatedAt: date, error: optional(isAppError), interruptionReason: optional(string),
   model: optional(isModelSelection), modelConfigVersion: optional(id),
 });
-const messageView = object<MessageView>({
+const messageViewShape = object<MessageView>({
   id, sessionId: id, runId: optional(id), role: oneOf("user", "assistant"),
   content: array(messagePart), clientMessageId: optional(id), responseModelId: optional(id),
   status: oneOf(...MESSAGE_STATUSES),
 });
+const messageView: Guard<MessageView> = (value): value is MessageView => messageViewShape(value)
+  && (value.role === "assistant" || value.content.every(part => part.type === "text"));
 const toolView = object<ToolView>({
   toolCallId: id, runId: id, toolName: id,
   status: oneOf(...TOOL_STATUSES),
@@ -267,11 +269,13 @@ export function responseMatchesRequest(request: AgentRequest, value: unknown): b
 
 type EventData<T extends EventPayload["type"]> = Extract<EventPayload, { type: T }>["data"];
 const eventValidators = {
+  "session.updated": object<EventData<"session.updated">>({ session: sessionSummary }),
   "run.started": object<EventData<"run.started">>({}),
   "run.updated": object<EventData<"run.updated">>({ run: runView }),
   "message.accepted": object<EventData<"message.accepted">>({ message: messageView }),
   "message.started": object<EventData<"message.started">>({ messageId: id, role: oneOf("assistant") }),
   "message.text.delta": object<EventData<"message.text.delta">>({ messageId: id, partId: id, delta: string }),
+  "message.reasoning.delta": object<EventData<"message.reasoning.delta">>({ messageId: id, partId: id, delta: string }),
   "message.model.reported": object<EventData<"message.model.reported">>({ messageId: id, responseModelId: id }),
   "message.completed": object<EventData<"message.completed">>({ messageId: id, content: array(messagePart) }),
   "tool.updated": object<EventData<"tool.updated">>({ tool: toolView }),
@@ -295,6 +299,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
   if (!eventValidators[value.type as EventPayload["type"]](value.data)) return false;
   const event = value as AgentEvent;
   switch (event.type) {
+    case "session.updated": return event.data.session.sessionId === event.sessionId;
     case "run.updated": return event.data.run.id === event.runId && event.data.run.sessionId === event.sessionId;
     case "message.accepted": return event.data.message.sessionId === event.sessionId
       && event.data.message.runId === event.runId;
