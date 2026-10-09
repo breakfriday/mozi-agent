@@ -5,7 +5,7 @@ import {
   ThreadPrimitive,
   groupPartByType,
 } from "@assistant-ui/react";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import { MarkdownText } from "@/components/assistant-ui/elements/markdown-text";
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
@@ -81,7 +81,7 @@ function AssistantMessage({ responseModelId }: { responseModelId?: string }) {
                 );
               }
               if (part.type === "reasoning") return <Reasoning {...part} />;
-              if (part.type === "text") return <MarkdownTextPrimitive />;
+              if (part.type === "text") return <MarkdownText />;
               return null;
             }}
           </MessagePrimitive.GroupedParts>

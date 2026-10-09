@@ -1,5 +1,3 @@
-// Adapted from the official assistant-ui registry (2026-10-09).
-// MIT license: ../LICENSE. Behavior retained; styles use the Mozi theme.
 "use client";
 
 import { forwardRef, memo, useCallback, useRef } from "react";
@@ -9,7 +7,7 @@ import {
   type ReasoningMessagePartComponent,
   type ReasoningGroupComponent,
 } from "@assistant-ui/react";
-import { MarkdownTextPrimitive as MarkdownText } from "@assistant-ui/react-markdown";
+import { MarkdownText } from "@/components/assistant-ui/elements/markdown-text";
 import {
   ANIMATION_DURATION,
   ReasoningRoot as ReasoningRootBase,
@@ -17,6 +15,7 @@ import {
   ReasoningContent,
   ReasoningText,
   ReasoningFade,
+  reasoningVariants,
   type ReasoningRootProps,
 } from "./reasoning";
 
@@ -116,4 +115,5 @@ export {
   ReasoningContent,
   ReasoningText,
   ReasoningFade,
+  reasoningVariants,
 };

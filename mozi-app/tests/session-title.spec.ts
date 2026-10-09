@@ -35,14 +35,14 @@ test("first-message title updates the sidebar and manual rename survives reload"
       },
     } } });
   });
-  await page.goto("/chat");
+  await page.goto("/mozi_app/chat");
   const list = page.getByRole("complementary", { name: "会话列表" });
   await expect(list.getByRole("button", { name: "重命名会话：新会话", exact: true })).toBeEnabled();
   await page.evaluate(() => window.dispatchEvent(new Event("fixture-user-persisted")));
   await expect(list.getByRole("button", { name: "重命名会话：检查播放器连接", exact: true })).toBeVisible();
   await list.getByRole("button", { name: "重命名会话：检查播放器连接", exact: true }).click();
   await page.getByRole("textbox", { name: "会话名称" }).fill("播放器排查记录");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByRole("dialog", { name: "重命名会话" }).getByRole("button", { name: /保\s*存/ }).click();
   await expect(list.getByRole("button", { name: "重命名会话：播放器排查记录", exact: true })).toBeVisible();
   await page.reload();
   await expect(list.getByRole("button", { name: "重命名会话：播放器排查记录", exact: true })).toBeVisible();

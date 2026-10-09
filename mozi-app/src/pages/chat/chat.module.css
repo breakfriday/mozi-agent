@@ -129,40 +129,6 @@
   font-size: 14px;
 }
 
-.markdown p {
-  margin: 10px 0;
-}
-.markdown pre {
-  overflow-x: auto;
-  padding: 16px;
-  border-radius: 10px;
-  background: var(--app-input-background);
-}
-.markdown pre code {
-  padding: 0;
-  background: transparent;
-}
-.markdown a {
-  color: var(--app-link-color);
-}
-.markdown table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  border-collapse: collapse;
-}
-.markdown th,
-.markdown td {
-  padding: 8px 12px;
-  border: 1px solid var(--app-border-color);
-}
-.markdown blockquote {
-  margin-inline: 0;
-  padding-left: 16px;
-  border-left: 3px solid var(--app-border-color);
-  color: var(--app-muted-color);
-}
-
 .composerArea {
   position: relative;
   flex-shrink: 0;

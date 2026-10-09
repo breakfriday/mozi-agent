@@ -1,5 +1,3 @@
-// Adapted from the official assistant-ui registry (2026-10-09).
-// MIT license: ../LICENSE. Behavior retained; styles use the Mozi theme.
 "use client";
 
 import {
@@ -14,8 +12,7 @@ import {
 import { useIsomorphicLayoutEffect } from "../utils/useIsomorphicLayoutEffect";
 import { cva, type VariantProps } from "class-variance-authority";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
-import { clsx as cn } from "clsx";
-import "./reasoning.css";
+import { cn } from "@/lib/utils";
 import {
   CollapsibleRoot as Collapsible,
   CollapsibleContent,
@@ -26,12 +23,12 @@ export const ANIMATION_DURATION = 200;
 
 const ReasoningPreviewContext = createContext(false);
 
-const reasoningVariants = cva("aui-reasoning-root", {
+const reasoningVariants = cva("aui-reasoning-root mb-4 w-full", {
   variants: {
     variant: {
-      outline: "aui-reasoning-outline",
+      outline: "rounded-lg border px-3 py-2",
       ghost: "",
-      muted: "aui-reasoning-muted",
+      muted: "bg-muted/50 rounded-lg px-3 py-2",
     },
   },
   defaultVariants: {
@@ -143,7 +140,6 @@ function ReasoningFade({
     return (
       <div
         data-slot="reasoning-fade"
-        data-side={side}
         className={cn(
           "aui-reasoning-fade pointer-events-none absolute inset-x-0 top-0 z-10 h-8",
           "bg-[linear-gradient(to_bottom,var(--color-background),transparent)]",
@@ -160,7 +156,6 @@ function ReasoningFade({
   return (
     <div
       data-slot="reasoning-fade"
-        data-side={side}
       className={cn(
         "aui-reasoning-fade pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8",
         "bg-[linear-gradient(to_top,var(--color-background),transparent)]",
@@ -188,7 +183,6 @@ function ReasoningTrigger({
   return (
     <CollapsibleTrigger
       data-slot="reasoning-trigger"
-      data-active={active || undefined}
       className={cn(
         "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex max-w-[75%] origin-left items-center gap-2 py-1.5 text-sm transition-[color,scale] active:scale-[0.98]",
         className,
@@ -206,7 +200,8 @@ function ReasoningTrigger({
           active && "shimmer motion-reduce:animate-none",
         )}
       >
-        {active ? "正在思考" : "思考过程"}{durationText}
+        {active ? "正在思考" : "思考过程"}
+        {durationText}
       </span>
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"
@@ -339,4 +334,5 @@ export {
   ReasoningContent,
   ReasoningText,
   ReasoningFade,
+  reasoningVariants,
 };
