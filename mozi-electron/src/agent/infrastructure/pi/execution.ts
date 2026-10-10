@@ -61,6 +61,15 @@ export class PiExecution implements RuntimeSession {
       } catch (error) { observerError = error; void this.session.abort().catch(() => {}); }
     });
     try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const localTime = new Intl.DateTimeFormat("zh-CN", {
+        dateStyle: "full", timeStyle: "long", timeZone,
+      }).format(new Date());
+      await this.session.sendCustomMessage({
+        customType: "mozi.prompt-time",
+        content: `本轮用户消息的本地时间：${localTime}（${timeZone}）。`,
+        display: false,
+      }, { triggerTurn: false });
       await this.session.prompt(input.content.map(part => part.text).join("\n"), { expandPromptTemplates: false });
       // Includes retries. Neither agent_end nor message_end proves the Run is durable/finished.
       await this.session.waitForIdle();
