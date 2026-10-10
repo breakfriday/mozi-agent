@@ -62,6 +62,8 @@ if (started) {
       const trayService = new TrayService(windowService, rendererEntry);
 
       registerWindowIpc(windowService, () => trayService.quitApplication());
+
+      // ========== Agent 初始化与启动：开始 ==========
       const agentIpc = registerAgentIpc(windowService, rendererEntry);
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
@@ -71,6 +73,7 @@ if (started) {
       disposeAgentIpc = () => agentIpc.dispose();
       registerAgentShutdown(agentProcess, () => agentIpc.dispose());
       agentProcess.start();
+      // ========== Agent 初始化与启动：结束 ==========
 
       trayService.start();
       trayService.showApplication();
