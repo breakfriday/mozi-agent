@@ -2,14 +2,30 @@ import type { AgentEvent, SessionSnapshot } from "../../../shared/agent";
 import type { AgentState } from "./types";
 import { reconcileMessages } from "./submissionState";
 
-export const isTerminalRun = (status: string) => ["completed", "cancelled", "failed", "interrupted"].includes(status);
+export const isTerminalRun = (status: string) =>
+  ["completed", "cancelled", "failed", "interrupted"].includes(status);
 
 export function initialAgentState(sessionId: string | null = null): AgentState {
   return {
-    modelSelection: null, sessions: [], sessionsLoading: false, sessionsError: null, sessionOperation: null,
-    localSessionId: crypto.randomUUID(), sessionId, messages: [], messageOrder: [], runs: [], tools: [], approvals: [], activeRunId: null,
-    lastSeq: 0, syncStatus: "idle", runtime: { state: "unavailable" },
-    inFlightSubmissionId: null, pendingSubmissions: {}, error: null,
+    modelSelection: null,
+    sessions: [],
+    sessionsLoading: false,
+    sessionsError: null,
+    sessionOperation: null,
+    localSessionId: crypto.randomUUID(),
+    sessionId,
+    messages: [],
+    messageOrder: [],
+    runs: [],
+    tools: [],
+    approvals: [],
+    activeRunId: null,
+    lastSeq: 0,
+    syncStatus: "idle",
+    runtime: { state: "unavailable" },
+    inFlightSubmissionId: null,
+    pendingSubmissions: {},
+    error: null,
   };
 }
 
@@ -19,7 +35,7 @@ function upsert<T>(
   getId: (item: T) => string,
 ): T[] {
   const itemId = getId(item);
-  const index = items.findIndex(existing => getId(existing) === itemId);
+  const index = items.findIndex((existing) => getId(existing) === itemId);
 
   // 不存在：追加到末尾
   if (index === -1) {
@@ -32,21 +48,45 @@ function upsert<T>(
   return next;
 }
 
-export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapshot): AgentState {
-  return reconcileMessages({
-    ...state, modelSelection: snapshot.session.model ?? null, sessionId: snapshot.session.sessionId, messages: snapshot.messages,
-    sessions: upsert(state.sessions, snapshot.session, (session) => session.sessionId),
-    runs: snapshot.runs, tools: snapshot.tools, approvals: snapshot.approvals, lastSeq: snapshot.lastSeq,
-    activeRunId: snapshot.runs.find((run) => !isTerminalRun(run.status))?.id ?? null,
-  }, true);
+export function installAgentSnapshot(
+  state: AgentState,
+  snapshot: SessionSnapshot,
+): AgentState {
+  return reconcileMessages(
+    {
+      ...state,
+      modelSelection: snapshot.session.model ?? null,
+      sessionId: snapshot.session.sessionId,
+      messages: snapshot.messages,
+      sessions: upsert(
+        state.sessions,
+        snapshot.session,
+        (session) => session.sessionId,
+      ),
+      runs: snapshot.runs,
+      tools: snapshot.tools,
+      approvals: snapshot.approvals,
+      lastSeq: snapshot.lastSeq,
+      activeRunId:
+        snapshot.runs.find((run) => !isTerminalRun(run.status))?.id ?? null,
+    },
+    true,
+  );
 }
 
 /** Caller enforces session routing and consecutive seq before applying an event. */
-export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentState {
+export function applyAgentEvent(
+  state: AgentState,
+  event: AgentEvent,
+): AgentState {
   const next = { ...state, lastSeq: event.seq };
   switch (event.type) {
     case "session.updated":
-      next.sessions = upsert(state.sessions, event.data.session, (session) => session.sessionId);
+      next.sessions = upsert(
+        state.sessions,
+        event.data.session,
+        (session) => session.sessionId,
+      );
       next.sessionsLoading = false;
       break;
     case "run.started":
@@ -59,78 +99,170 @@ export function applyAgentEvent(state: AgentState, event: AgentEvent): AgentStat
       else if (state.activeRunId === event.runId) next.activeRunId = null;
       break;
     case "message.accepted":
-      next.messages = upsert(state.messages, event.data.message, (message) => message.id);
+      next.messages = upsert(
+        state.messages,
+        event.data.message,
+        (message) => message.id,
+      );
       break;
     case "message.started":
-      if (!state.messages.some((message) => message.id === event.data.messageId)) {
-        next.messages = [...state.messages, {
-          id: event.data.messageId, sessionId: event.sessionId, runId: event.runId,
-          role: "assistant", content: [], status: "streaming",
-        }];
+      if (
+        !state.messages.some((message) => message.id === event.data.messageId)
+      ) {
+        next.messages = [
+          ...state.messages,
+          {
+            id: event.data.messageId,
+            sessionId: event.sessionId,
+            runId: event.runId,
+            role: "assistant",
+            content: [],
+            status: "streaming",
+          },
+        ];
       }
       break;
     case "message.model.reported": {
-      const message = state.messages.find(item => item.id === event.data.messageId);
-      if (!message || message.role !== "assistant") throw new Error("Missing assistant message before model event.");
-      next.messages = upsert(state.messages, { ...message, responseModelId: event.data.responseModelId }, item => item.id);
+      const message = state.messages.find(
+        (item) => item.id === event.data.messageId,
+      );
+      if (!message || message.role !== "assistant")
+        throw new Error("Missing assistant message before model event.");
+      next.messages = upsert(
+        state.messages,
+        { ...message, responseModelId: event.data.responseModelId },
+        (item) => item.id,
+      );
       break;
     }
     case "message.text.delta":
     case "message.reasoning.delta":
     case "message.completed": {
-      const message = state.messages.find((item) => item.id === event.data.messageId);
+      const message = state.messages.find(
+        (item) => item.id === event.data.messageId,
+      );
       if (!message) throw new Error("Missing message before event.");
-      if (message.role !== "assistant") throw new Error("Output event must target an assistant message.");
-      const partType = event.type === "message.reasoning.delta" ? "reasoning" as const : "text" as const;
-      if (event.type !== "message.completed" && message.content.some(part => part.id === event.data.partId && part.type !== partType)) {
+      if (message.role !== "assistant")
+        throw new Error("Output event must target an assistant message.");
+      const partType =
+        event.type === "message.reasoning.delta"
+          ? ("reasoning" as const)
+          : ("text" as const);
+      if (
+        event.type !== "message.completed" &&
+        message.content.some(
+          (part) => part.id === event.data.partId && part.type !== partType,
+        )
+      ) {
         throw new Error("Message part type changed.");
       }
-      const updated = event.type === "message.completed"
-        ? { ...message, content: event.data.content, status: "completed" as const }
-        : { ...message, content: message.content.some((part) => part.id === event.data.partId)
-          ? message.content.map((part) => part.id === event.data.partId ? { ...part, text: part.text + event.data.delta } : part)
-          : [...message.content, { id: event.data.partId, type: partType, text: event.data.delta }] };
+      const updated =
+        event.type === "message.completed"
+          ? {
+              ...message,
+              content: event.data.content,
+              status: "completed" as const,
+            }
+          : {
+              ...message,
+              content: message.content.some(
+                (part) => part.id === event.data.partId,
+              )
+                ? message.content.map((part) =>
+                    part.id === event.data.partId
+                      ? { ...part, text: part.text + event.data.delta }
+                      : part,
+                  )
+                : [
+                    ...message.content,
+                    {
+                      id: event.data.partId,
+                      type: partType,
+                      text: event.data.delta,
+                    },
+                  ],
+            };
       next.messages = upsert(state.messages, updated, (item) => item.id);
       break;
     }
     case "tool.updated":
     case "tool.completed":
-      next.tools = upsert(state.tools, event.data.tool, (tool) => tool.toolCallId);
+      next.tools = upsert(
+        state.tools,
+        event.data.tool,
+        (tool) => tool.toolCallId,
+      );
       break;
     case "tool.started":
     case "tool.input.delta":
     case "tool.output.delta": {
-      const tool = state.tools.find((item) => item.toolCallId === event.data.toolCallId);
+      const tool = state.tools.find(
+        (item) => item.toolCallId === event.data.toolCallId,
+      );
       if (!tool) throw new Error("Missing tool before event.");
-      const updated = event.type === "tool.started" ? { ...tool, status: "running" as const }
-        : event.type === "tool.input.delta" ? { ...tool, inputText: tool.inputText + event.data.delta }
-          : { ...tool, outputText: tool.outputText + event.data.delta };
+      const updated =
+        event.type === "tool.started"
+          ? { ...tool, status: "running" as const }
+          : event.type === "tool.input.delta"
+            ? { ...tool, inputText: tool.inputText + event.data.delta }
+            : { ...tool, outputText: tool.outputText + event.data.delta };
       next.tools = upsert(state.tools, updated, (item) => item.toolCallId);
       break;
     }
     case "approval.requested":
     case "approval.resolved":
-      next.approvals = upsert(state.approvals, event.data.approval, (approval) => approval.id);
+      next.approvals = upsert(
+        state.approvals,
+        event.data.approval,
+        (approval) => approval.id,
+      );
       break;
     case "run.finished": {
       const outcome = event.data;
-      next.runs = state.runs.map((run) => run.id === event.runId ? {
-        ...run, status: outcome.status,
-        error: outcome.status === "failed" ? outcome.error : undefined,
-        interruptionReason: outcome.status === "interrupted" ? outcome.reason : undefined,
-      } : run);
+      next.runs = state.runs.map((run) =>
+        run.id === event.runId
+          ? {
+              ...run,
+              status: outcome.status,
+              error: outcome.status === "failed" ? outcome.error : undefined,
+              interruptionReason:
+                outcome.status === "interrupted" ? outcome.reason : undefined,
+            }
+          : run,
+      );
       if (state.activeRunId === event.runId) next.activeRunId = null;
-      next.messages = state.messages.map((message) => message.runId === event.runId
-        && (message.status === "streaming" || message.status === "accepted")
-        ? { ...message, status: message.role === "user" ? "completed" : outcome.status } : message);
-      next.tools = state.tools.map((tool) => tool.runId === event.runId
-        && ["preparing", "awaiting_approval", "running"].includes(tool.status)
-        ? { ...tool, status: outcome.status === "cancelled" ? "cancelled" : "interrupted" } : tool);
-      next.approvals = state.approvals.map((approval) => approval.runId === event.runId && approval.status === "pending"
-        ? { ...approval, status: outcome.status === "cancelled" ? "cancelled" : "expired" } : approval);
+      next.messages = state.messages.map((message) =>
+        message.runId === event.runId &&
+        (message.status === "streaming" || message.status === "accepted")
+          ? {
+              ...message,
+              status: message.role === "user" ? "completed" : outcome.status,
+            }
+          : message,
+      );
+      next.tools = state.tools.map((tool) =>
+        tool.runId === event.runId &&
+        ["preparing", "awaiting_approval", "running"].includes(tool.status)
+          ? {
+              ...tool,
+              status:
+                outcome.status === "cancelled" ? "cancelled" : "interrupted",
+            }
+          : tool,
+      );
+      next.approvals = state.approvals.map((approval) =>
+        approval.runId === event.runId && approval.status === "pending"
+          ? {
+              ...approval,
+              status: outcome.status === "cancelled" ? "cancelled" : "expired",
+            }
+          : approval,
+      );
       if (outcome.status === "failed") next.error = outcome.error;
       break;
     }
   }
-  return event.type === "message.accepted" || event.type === "message.started" ? reconcileMessages(next) : next;
+  return event.type === "message.accepted" || event.type === "message.started"
+    ? reconcileMessages(next)
+    : next;
 }
