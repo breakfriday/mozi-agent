@@ -23,6 +23,8 @@ import {
   type ProviderSaveInput,
   type ProviderView,
   type ModelSelection,
+  type ProviderModelView,
+  type ThinkingLevel,
 } from "../../../../shared/agent";
 import { useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
@@ -349,6 +351,66 @@ function ProviderEditor({
   );
 }
 
+const thinkingLabels: Record<ThinkingLevel, string> = {
+  off: "关闭", minimal: "最少", low: "低", medium: "中", high: "高", xhigh: "更高", max: "最高",
+};
+
+function availableThinkingLevels(model?: ProviderModelView): ThinkingLevel[] {
+  return model?.thinkingLevels ?? (model?.reasoning ? ["off", "minimal", "low", "medium", "high"] : ["off"]);
+}
+
+function thinkingLevelFor(model: ProviderModelView, preferred?: ThinkingLevel): ThinkingLevel {
+  const levels = availableThinkingLevels(model);
+  return preferred && levels.includes(preferred) ? preferred : levels.includes("medium") ? "medium" : levels[0];
+}
+
+function ThinkingControls({ model, value, disabled, onChange }: {
+  model?: ProviderModelView;
+  value?: ModelSelection;
+  disabled?: boolean;
+  onChange(model: ModelSelection): void;
+}) {
+  const [lastEnabled, setLastEnabled] = useState<ThinkingLevel>("medium");
+  const levels = availableThinkingLevels(model);
+  const enabledLevels = levels.filter(level => level !== "off");
+  const level = value?.thinkingLevel ?? (model ? thinkingLevelFor(model) : "off");
+  const enabled = enabledLevels.length > 0 && level !== "off";
+  const toggleOnly = enabledLevels.length === 1;
+  const selectLevel = (next: ThinkingLevel) => {
+    if (value) onChange({ ...value, thinkingLevel: next });
+  };
+  return (
+    <div className={styles.thinking}>
+      <label className={styles.thinkingSwitch}>
+        <Switch
+          size="small"
+          aria-label="深度思考"
+          checked={enabled}
+          disabled={disabled || !model || !enabledLevels.length || !levels.includes("off")}
+          onChange={checked => {
+            if (!checked) { setLastEnabled(level); selectLevel("off"); }
+            else selectLevel(enabledLevels.some(item => item === lastEnabled) ? lastEnabled : enabledLevels[0]);
+          }}
+        />
+        <span>深度思考</span>
+      </label>
+      <Select<ThinkingLevel>
+        size="small"
+        aria-label="思考等级"
+        placeholder={enabledLevels.length ? enabled ? "选择等级" : "已关闭" : "不支持"}
+        value={enabled ? level : undefined}
+        disabled={disabled || !enabled || toggleOnly}
+        options={enabledLevels.map(item => ({ value: item, label: toggleOnly ? "自动" : `${thinkingLabels[item]} · ${item}` }))}
+        onChange={next => { setLastEnabled(next); selectLevel(next); }}
+      />
+      {model && <span className={styles.hint}>
+        {!enabledLevels.length ? "此模型不支持深度思考" : toggleOnly
+          ? "思考强度由模型决定" : !levels.includes("off") ? "此模型始终启用深度思考" : "按所选等级进行推理"}
+      </span>}
+    </div>
+  );
+}
+
 function ModelChoices({
   providers,
   loaded,
@@ -381,7 +443,7 @@ function ModelChoices({
           }))}
           onChange={(id) => {
             const model = providers.find((item) => item.id === id)?.models[0];
-            if (model) onChange({ providerId: id, modelId: model.id });
+            if (model) onChange({ providerId: id, modelId: model.id, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel) });
           }}
         />
         <Select
@@ -398,10 +460,18 @@ function ModelChoices({
             })) ?? []
           }
           onChange={(modelId) => {
-            if (provider) onChange({ providerId: provider.id, modelId });
+            const model = provider?.models.find(item => item.id === modelId);
+            if (provider && model) onChange({ providerId: provider.id, modelId, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel) });
           }}
         />
       </div>
+      <ThinkingControls
+        key={`${value?.providerId}/${value?.modelId}`}
+        model={provider?.models.find(item => item.id === value?.modelId)}
+        value={value}
+        disabled={disabled || !provider?.configured}
+        onChange={onChange}
+      />
       {hiddenSelection && (
         <div role="status" className={styles.hint}>
           当前选择的服务未在列表中展示，原有模型绑定仍保留；可重新选择服务。
@@ -488,7 +558,7 @@ export function ModelControls() {
         }}
       >
         <p>
-          先配置服务，再选择它支持的模型。默认模型用于新会话，已有会话保留自己的选择。
+          默认模型和思考设置用于新会话，已有会话保留自己的选择。
         </p>
         <ModelChoices
           providers={providers}

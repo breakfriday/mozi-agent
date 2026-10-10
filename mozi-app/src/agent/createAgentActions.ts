@@ -581,7 +581,7 @@ export function createAgentActions(
         (item) => item.status === "unknown",
       )
     ) {
-      throw new Error("请等待当前操作完成或停止任务后再切换模型。");
+      throw new Error("请等待当前操作完成或停止任务后再修改模型或思考设置。");
     }
     if (!state.sessionId) {
       if (createInput)

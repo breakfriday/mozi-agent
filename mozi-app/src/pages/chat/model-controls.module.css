@@ -2,6 +2,9 @@
 .toolbar, .choices, .formRow, .settingsActions, .provider { display: flex; gap: 10px; align-items: center; }
 .choices { flex: 1; min-width: 0; }
 .selection { flex: 1; min-width: 0; }
+.thinking { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.thinkingSwitch { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; white-space: nowrap; }
+.thinking > :global(.ant-select) { width: 126px; }
 .choices > :global(.ant-select) { flex: 1; min-width: 0; }
 .toolbar > button { flex-shrink: 0; }
 .hint { color: var(--app-muted-color); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
