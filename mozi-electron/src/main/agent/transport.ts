@@ -263,7 +263,8 @@ export class AgentTransport {
       return;
     }
     if (isAgentEvent(packet)) {
-      log.debug("event.validated", packet);
+      //  log.debug("event.validated", packet);
+      //  通知事件订阅者；当前由 agent-ipc.ts 接收并转发给有权限且已订阅会话的窗口。
       for (const listener of this.eventListeners) listener(packet);
       return;
     }
