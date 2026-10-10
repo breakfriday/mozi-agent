@@ -15,67 +15,93 @@ import { createAgentLogger } from "../../shared/agent/logging";
 const log = createAgentLogger("main");
 
 function resolveRendererEntry(): RendererEntry {
-  const mode = app.isPackaged ? "filelocal" : process.env.ELECTRON_RENDERER_MODE?.trim() || "dev";
+  const mode = app.isPackaged
+    ? "filelocal"
+    : process.env.ELECTRON_RENDERER_MODE?.trim() || "dev";
   if (mode === "dev") {
-    const url = process.env.ELECTRON_RENDERER_URL?.trim() || rendererConfig.rendererDevUrl;
+    const url =
+      process.env.ELECTRON_RENDERER_URL?.trim() ||
+      rendererConfig.rendererDevUrl;
     const parsed = new URL(url);
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error("ELECTRON_RENDERER_URL must use http:// or https://.");
+    if (!["http:", "https:"].includes(parsed.protocol))
+      throw new Error("ELECTRON_RENDERER_URL must use http:// or https://.");
     return { type: "url", url };
   }
-  if (mode !== "filelocal") throw new Error("ELECTRON_RENDERER_MODE must be dev or filelocal.");
-  const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "resources");
+  if (mode !== "filelocal")
+    throw new Error("ELECTRON_RENDERER_MODE must be dev or filelocal.");
+  const root = app.isPackaged
+    ? process.resourcesPath
+    : path.join(app.getAppPath(), "resources");
   const filePath = path.join(root, "renderer", "index.html");
-  if (!existsSync(filePath)) throw new Error(`Renderer file is missing: ${filePath}. Run pnpm build:renderer and pnpm copy:renderer.`);
+  if (!existsSync(filePath))
+    throw new Error(
+      `Renderer file is missing: ${filePath}. Run pnpm build:renderer and pnpm copy:renderer.`,
+    );
   return { type: "file", filePath, hash: rendererConfig.rendererHash || "/" };
 }
 
 if (started) {
   app.quit();
 } else if (!app.requestSingleInstanceLock()) {
-  log.info("app.instance.forwarded", { stage: "single-instance" }, {
-    message: "Mozi 已有实例运行，已请求旧实例显示窗口；当前实例退出。",
-  });
+  log.info(
+    "app.instance.forwarded",
+    { stage: "single-instance" },
+    {
+      message: "Mozi 已有实例运行，已请求旧实例显示窗口；当前实例退出。",
+    },
+  );
   app.quit();
 } else {
   let stopAgent: (() => Promise<void>) | undefined;
   let disposeAgentIpc: (() => void) | undefined;
-  app.whenReady().then(() => {
-    const windowService = new WindowService();
-    const rendererEntry = resolveRendererEntry();
-    const trayService = new TrayService(windowService, rendererEntry);
+  app
+    .whenReady()
+    .then(() => {
+      const windowService = new WindowService();
+      const rendererEntry = resolveRendererEntry();
+      const trayService = new TrayService(windowService, rendererEntry);
 
-    registerWindowIpc(windowService, () => trayService.quitApplication());
-    const agentIpc = registerAgentIpc(windowService, rendererEntry);
-    const agentProcess = new AgentProcessManager(agentIpc.transport, {
-      entry: path.join(__dirname, "agent.mjs"), dataDir: path.join(app.getPath("userData"), "agent"),
-    });
-    stopAgent = () => agentProcess.stop();
-    disposeAgentIpc = () => agentIpc.dispose();
-    registerAgentShutdown(agentProcess, () => agentIpc.dispose());
-    agentProcess.start();
+      registerWindowIpc(windowService, () => trayService.quitApplication());
+      const agentIpc = registerAgentIpc(windowService, rendererEntry);
+      const agentProcess = new AgentProcessManager(agentIpc.transport, {
+        entry: path.join(__dirname, "agent.mjs"),
+        dataDir: path.join(app.getPath("userData"), "agent"),
+      });
+      stopAgent = () => agentProcess.stop();
+      disposeAgentIpc = () => agentIpc.dispose();
+      registerAgentShutdown(agentProcess, () => agentIpc.dispose());
+      agentProcess.start();
 
-    trayService.start();
-    trayService.showApplication();
-    app.on("activate", () => trayService.showApplication());
-    app.on("second-instance", () => {
-      log.info("app.instance.received");
+      trayService.start();
       trayService.showApplication();
+      app.on("activate", () => trayService.showApplication());
+      app.on("second-instance", () => {
+        log.info("app.instance.received");
+        trayService.showApplication();
+      });
+      app.on("window-all-closed", () => {
+        // Subscribing prevents Electron's default quit; the tray owns explicit exit.
+      });
+      log.info("app.started");
+    })
+    .catch(async (error: unknown) => {
+      log.error(
+        "app.startup.failed",
+        { stage: "startup" },
+        {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+      );
+      // A failed startup must not leave an invisible process holding the instance lock.
+      try {
+        await stopAgent?.();
+      } finally {
+        try {
+          disposeAgentIpc?.();
+        } finally {
+          app.exit(1);
+        }
+      }
     });
-    app.on("window-all-closed", () => {
-      // Subscribing prevents Electron's default quit; the tray owns explicit exit.
-    });
-    log.info("app.started");
-  }).catch(async (error: unknown) => {
-    log.error("app.startup.failed", { stage: "startup" }, {
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    // A failed startup must not leave an invisible process holding the instance lock.
-    try {
-      await stopAgent?.();
-    } finally {
-      try { disposeAgentIpc?.(); }
-      finally { app.exit(1); }
-    }
-  });
 }
