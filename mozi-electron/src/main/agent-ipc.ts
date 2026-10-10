@@ -303,11 +303,11 @@ export function registerAgentIpc(
           ),
         );
       }
-      log.debug("request.validated", {
-        requestId,
-        method: value.method,
-        windowId,
-      });
+      // log.debug("request.validated", {
+      //   requestId,
+      //   method: value.method,
+      //   windowId,
+      // });
       if (activeRequests.has(requestId))
         return reply(
           errorResponse(

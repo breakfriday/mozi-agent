@@ -1,12 +1,23 @@
 import {
-  AGENT_MAX_PENDING_REQUESTS, AGENT_PROTOCOL_VERSION, AGENT_REQUEST_TIMEOUT_MS,
-  isAgentEvent, isAgentRequest, isRecord, isRuntimeControl, isWirePayload, responseMatchesRequest,
+  AGENT_MAX_PENDING_REQUESTS,
+  AGENT_PROTOCOL_VERSION,
+  AGENT_REQUEST_TIMEOUT_MS,
+  isAgentEvent,
+  isAgentRequest,
+  isRecord,
+  isRuntimeControl,
+  isWirePayload,
+  responseMatchesRequest,
 } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 
 const log = createAgentLogger("transport");
 import type {
-  AgentEvent, AppError, RuntimeNotice, RuntimeRequest, RuntimeResponse,
+  AgentEvent,
+  AppError,
+  RuntimeNotice,
+  RuntimeRequest,
+  RuntimeResponse,
 } from "../../../../shared/agent";
 
 /** Adapt a utilityProcess here; the router never owns the Agent loop. */
@@ -23,14 +34,27 @@ type PendingRequest = {
   startedAt: number;
 };
 
-export function errorResponse(requestId: string, code: AppError["code"], message: string): RuntimeResponse {
-  return { protocolVersion: AGENT_PROTOCOL_VERSION, kind: "response", requestId, ok: false, error: { code, message } };
+export function errorResponse(
+  requestId: string,
+  code: AppError["code"],
+  message: string,
+): RuntimeResponse {
+  return {
+    protocolVersion: AGENT_PROTOCOL_VERSION,
+    kind: "response",
+    requestId,
+    ok: false,
+    error: { code, message },
+  };
 }
 
 export class AgentTransport {
   private connection?: AgentConnection;
   private generation = 0;
-  private notice: RuntimeNotice = { state: "unavailable", reason: "Agent runtime is not connected." };
+  private notice: RuntimeNotice = {
+    state: "unavailable",
+    reason: "Agent runtime is not connected.",
+  };
   private readonly pending = new Map<string, PendingRequest>();
   private readonly eventListeners = new Set<(event: AgentEvent) => void>();
   private readonly stateListeners = new Set<(notice: RuntimeNotice) => void>();
@@ -38,21 +62,37 @@ export class AgentTransport {
 
   constructor(private readonly timeoutMs = AGENT_REQUEST_TIMEOUT_MS) {}
 
-  getState(): RuntimeNotice { return { ...this.notice }; }
+  getState(): RuntimeNotice {
+    return { ...this.notice };
+  }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {
     this.eventListeners.add(listener);
-    log.debug("listener.added", { listenerType: "event", listeners: this.eventListeners.size });
+    log.debug("listener.added", {
+      listenerType: "event",
+      listeners: this.eventListeners.size,
+    });
     return () => {
-      if (this.eventListeners.delete(listener)) log.debug("listener.removed", { listenerType: "event", listeners: this.eventListeners.size });
+      if (this.eventListeners.delete(listener))
+        log.debug("listener.removed", {
+          listenerType: "event",
+          listeners: this.eventListeners.size,
+        });
     };
   }
 
   onState(listener: (notice: RuntimeNotice) => void): () => void {
     this.stateListeners.add(listener);
-    log.debug("listener.added", { listenerType: "runtime", listeners: this.stateListeners.size });
+    log.debug("listener.added", {
+      listenerType: "runtime",
+      listeners: this.stateListeners.size,
+    });
     return () => {
-      if (this.stateListeners.delete(listener)) log.debug("listener.removed", { listenerType: "runtime", listeners: this.stateListeners.size });
+      if (this.stateListeners.delete(listener))
+        log.debug("listener.removed", {
+          listenerType: "runtime",
+          listeners: this.stateListeners.size,
+        });
     };
   }
 
@@ -63,23 +103,37 @@ export class AgentTransport {
     log.info("connection.opened", { generation });
     this.cleanups = [
       connection.onMessage((packet) => {
-        if (generation === this.generation && this.connection === connection) this.receive(packet);
-        else log.debug("packet.dropped", packet, { generation, stage: "old_connection" });
+        if (generation === this.generation && this.connection === connection)
+          this.receive(packet);
+        else
+          log.debug("packet.dropped", packet, {
+            generation,
+            stage: "old_connection",
+          });
       }),
       connection.onDisconnect((reason) => {
-        if (generation === this.generation && this.connection === connection) this.disconnect(reason);
+        if (generation === this.generation && this.connection === connection)
+          this.disconnect(reason);
       }),
     ];
   }
 
-  disconnect(reason = "Agent runtime disconnected.", code: AppError["code"] = "RUNTIME_UNAVAILABLE"): void {
+  disconnect(
+    reason = "Agent runtime disconnected.",
+    code: AppError["code"] = "RUNTIME_UNAVAILABLE",
+  ): void {
     this.generation++;
     this.connection = undefined;
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.notice = { state: "unavailable", reason };
-    log.info("connection.closed", { generation: this.generation, code, pendingRequests: this.pending.size });
-    for (const [requestId] of this.pending) this.cancelRequest(requestId, code, reason);
+    log.info("connection.closed", {
+      generation: this.generation,
+      code,
+      pendingRequests: this.pending.size,
+    });
+    for (const [requestId] of this.pending)
+      this.cancelRequest(requestId, code, reason);
     // Emit even if already unavailable: pending work from a previous connection is invalid.
     for (const listener of this.stateListeners) listener(this.getState());
   }
@@ -91,9 +145,13 @@ export class AgentTransport {
       log.warn("request.rejected", request, response);
       return Promise.resolve(response);
     };
-    if (!isAgentRequest(request)) return reject("INVALID_ARGUMENT", "Invalid Agent request.");
+    if (!isAgentRequest(request))
+      return reject("INVALID_ARGUMENT", "Invalid Agent request.");
     if (!this.connection || this.notice.state !== "ready") {
-      return reject("RUNTIME_UNAVAILABLE", this.notice.reason ?? "Agent runtime is unavailable.");
+      return reject(
+        "RUNTIME_UNAVAILABLE",
+        this.notice.reason ?? "Agent runtime is unavailable.",
+      );
     }
     if (this.pending.has(request.requestId)) {
       return reject("INVALID_ARGUMENT", "Request ID is already active.");
@@ -104,9 +162,18 @@ export class AgentTransport {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         log.warn("request.timeout", request, { code: "REQUEST_TIMEOUT" });
-        this.cancelRequest(request.requestId, "REQUEST_TIMEOUT", "Agent request timed out; execution may already have been accepted.");
+        this.cancelRequest(
+          request.requestId,
+          "REQUEST_TIMEOUT",
+          "Agent request timed out; execution may already have been accepted.",
+        );
       }, this.timeoutMs);
-      this.pending.set(request.requestId, { request, resolve, timer, startedAt: Date.now() });
+      this.pending.set(request.requestId, {
+        request,
+        resolve,
+        timer,
+        startedAt: Date.now(),
+      });
       try {
         log.debug("request.send", request, { generation: this.generation });
         this.connection!.postMessage(request);
@@ -117,7 +184,11 @@ export class AgentTransport {
   }
 
   // Cancels only the request wait, never a Run. Used on window close/navigation.
-  cancelRequest(requestId: string, code: AppError["code"] = "RUNTIME_UNAVAILABLE", message = "Request connection closed."): void {
+  cancelRequest(
+    requestId: string,
+    code: AppError["code"] = "RUNTIME_UNAVAILABLE",
+    message = "Request connection closed.",
+  ): void {
     this.complete(requestId, errorResponse(requestId, code, message));
   }
 
@@ -127,15 +198,23 @@ export class AgentTransport {
     clearTimeout(pending.timer);
     this.pending.delete(requestId);
     log[response.ok ? "debug" : "warn"]("response.return", response, {
-      method: pending.request.method, durationMs: Date.now() - pending.startedAt,
+      method: pending.request.method,
+      durationMs: Date.now() - pending.startedAt,
     });
     pending.resolve(response);
   }
 
   private receive(packet: unknown): void {
-    if (!isWirePayload(packet) || !isRecord(packet) || packet.protocolVersion !== AGENT_PROTOCOL_VERSION) {
+    if (
+      !isWirePayload(packet) ||
+      !isRecord(packet) ||
+      packet.protocolVersion !== AGENT_PROTOCOL_VERSION
+    ) {
       log.error("packet.rejected", packet, { code: "PROTOCOL_MISMATCH" });
-      this.disconnect("Invalid Agent protocol or oversized packet.", "PROTOCOL_MISMATCH");
+      this.disconnect(
+        "Invalid Agent protocol or oversized packet.",
+        "PROTOCOL_MISMATCH",
+      );
       return;
     }
     if (isRuntimeControl(packet)) {
@@ -149,8 +228,14 @@ export class AgentTransport {
       return;
     }
     if (this.notice.state !== "ready") {
-      log.error("packet.rejected", packet, { stage: "before_ready", code: "PROTOCOL_MISMATCH" });
-      this.disconnect("Agent sent data before the ready handshake.", "PROTOCOL_MISMATCH");
+      log.error("packet.rejected", packet, {
+        stage: "before_ready",
+        code: "PROTOCOL_MISMATCH",
+      });
+      this.disconnect(
+        "Agent sent data before the ready handshake.",
+        "PROTOCOL_MISMATCH",
+      );
       return;
     }
     if (packet.kind === "response" && typeof packet.requestId === "string") {
@@ -160,11 +245,19 @@ export class AgentTransport {
         return;
       }
       if (!responseMatchesRequest(pending.request, packet)) {
-        log.error("response.rejected", packet, { method: pending.request.method, code: "PROTOCOL_MISMATCH" });
-        this.disconnect("Agent response does not match its request contract.", "PROTOCOL_MISMATCH");
+        log.error("response.rejected", packet, {
+          method: pending.request.method,
+          code: "PROTOCOL_MISMATCH",
+        });
+        this.disconnect(
+          "Agent response does not match its request contract.",
+          "PROTOCOL_MISMATCH",
+        );
         return;
       }
-      log.debug("response.validated", packet, { method: pending.request.method });
+      log.debug("response.validated", packet, {
+        method: pending.request.method,
+      });
       // The result was checked against the method retained in the pending record.
       this.complete(packet.requestId, packet as RuntimeResponse);
       return;
@@ -175,7 +268,10 @@ export class AgentTransport {
       return;
     }
     log.error("event.rejected", packet, { code: "PROTOCOL_MISMATCH" });
-    this.disconnect("Invalid Agent event or control packet.", "PROTOCOL_MISMATCH");
+    this.disconnect(
+      "Invalid Agent event or control packet.",
+      "PROTOCOL_MISMATCH",
+    );
   }
 
   dispose(): void {
