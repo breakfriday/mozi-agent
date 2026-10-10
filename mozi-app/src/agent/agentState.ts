@@ -13,10 +13,23 @@ export function initialAgentState(sessionId: string | null = null): AgentState {
   };
 }
 
-function upsert<T>(items: T[], item: T, id: (item: T) => string): T[] {
-  return items.some((existing) => id(existing) === id(item))
-    ? items.map((existing) => id(existing) === id(item) ? item : existing)
-    : [...items, item];
+function upsert<T>(
+  items: readonly T[],
+  item: T,
+  getId: (item: T) => string,
+): T[] {
+  const itemId = getId(item);
+  const index = items.findIndex(existing => getId(existing) === itemId);
+
+  // 不存在：追加到末尾
+  if (index === -1) {
+    return [...items, item];
+  }
+
+  // 存在：浅拷贝数组，再替换对应位置
+  const next = [...items];
+  next[index] = item;
+  return next;
 }
 
 export function installAgentSnapshot(state: AgentState, snapshot: SessionSnapshot): AgentState {
