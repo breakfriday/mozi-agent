@@ -1,8 +1,10 @@
+import { THINKING_LEVELS, type ModelSelection } from "../../../../../../shared/agent";
 import registerBailian from "@aiwayds/pi-bailian-token-plan";
 import {
   DefaultResourceLoader,
   SettingsManager,
   type ProviderConfig,
+  type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 
 export const BAILIAN_PROVIDER = "bailian-tp";
@@ -102,4 +104,27 @@ export async function loadBailianProvider(
   } finally {
     result.runtime.invalidate();
   }
+}
+
+type RuntimeModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
+
+export function supportsBailianWebTools(model: RuntimeModel): boolean {
+  return model.provider === BAILIAN_PROVIDER && model.api === BAILIAN_API;
+}
+
+/** Bind tools to a session without changing the shared provider catalog. */
+export function withBailianWebTools(model: RuntimeModel, selection: ModelSelection): RuntimeModel {
+  if (!supportsBailianWebTools(model)) return model;
+  const toolsFor = (thinking: boolean) => [
+    ...(selection.webSearch !== false ? [{ type: "web_search" }] : []),
+    ...(thinking && selection.webExtractor !== false ? [{ type: "web_extractor" }] : []),
+  ];
+  return {
+    ...model,
+    samplingParams: { ...model.samplingParams, tools: toolsFor(selection.thinkingLevel !== "off") },
+    samplingParamsByThinkingLevel: Object.fromEntries(THINKING_LEVELS.map(level => [level, {
+      ...model.samplingParamsByThinkingLevel?.[level],
+      tools: toolsFor(level !== "off"),
+    }])),
+  };
 }

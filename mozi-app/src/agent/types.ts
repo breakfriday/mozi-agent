@@ -16,6 +16,7 @@ export type PendingSubmission = {
 };
 
 export type AgentState = {
+  usage?: import("../../../shared/agent").UsageMonitorView;
   sessions: SessionSummary[];
   sessionsLoading: boolean;
   sessionsError: AppError | null;

@@ -1,4 +1,4 @@
-import { AGENT_MAX_MESSAGE_BYTES } from "../../../../../shared/agent";
+import { AGENT_MAX_MESSAGE_BYTES, buildUsageMonitor, type ModelCallView } from "../../../../../shared/agent";
 import type { MessageView, RunView } from "../../../../../shared/agent";
 import { failure } from "../errors";
 import type { MessageLink, SessionRecord } from "../models";
@@ -89,6 +89,17 @@ export class SessionState {
     this.ensureCapacity({ bytes: size.bytes - entry.bytes, nodes: size.nodes - entry.nodes });
     entry.value.responseModelId = responseModelId;
     this.refreshMessage(entry);
+  }
+  reportUsage(call: ModelCallView) {
+    const previous = this.record.snapshot.usage;
+    const usage = buildUsageMonitor([...(previous?.calls ?? []), call]);
+    const before = previous ? measure(previous) : { bytes: 0, nodes: 0 };
+    const after = measure(usage);
+    const growth = { bytes: after.bytes - before.bytes + (previous ? 0 : 9), nodes: after.nodes - before.nodes };
+    this.ensureCapacity(growth);
+    this.record.snapshot.usage = usage;
+    this.grow(growth);
+    return { call, total: usage.total, runTotal: usage.runs.find(run => run.runId === call.runId)!.total };
   }
   completeMessage(entry: MessageEntry, content: MessageView["content"], status: MessageView["status"] = "completed"): void {
     const next = { ...entry.value, content, status };

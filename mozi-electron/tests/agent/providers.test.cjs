@@ -62,6 +62,7 @@ test('real Pi loads the pinned extension model catalog without credentials or am
   const bailian = providers.find(item => item.id === 'bailian-tp');
   assert.ok(bailian); assert.equal(bailian.source, 'extension'); assert.equal(bailian.configured, false);
   assert.equal(bailian.models.length, 8);
+  assert.ok(bailian.models.every(model => model.supportsWebTools === true));
   assert.ok(bailian.models.some(model => model.id === 'deepseek-v4-pro'));
   for (const model of bailian.models) {
     assert.deepEqual(Array.from(model.thinkingLevels), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], model.id);
@@ -297,6 +298,29 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
     } finally { next.dispose(); }
   }
   assert.equal(requests.length, 3 + thinkingLevels.length);
+  const { withBailianWebTools } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/providers/bailian.ts'));
+  const sharedModel = runtime.getModel('bailian-tp', 'model');
+  const original = JSON.stringify(sharedModel);
+  for (const thinkingLevel of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+    for (const webSearch of [false, true]) for (const webExtractor of [false, true]) {
+      const model = withBailianWebTools(sharedModel, { providerId: 'bailian-tp', modelId: 'model', thinkingLevel, webSearch, webExtractor });
+      const next = await new PiSessionFactory(f.config).create(manager,
+        { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
+        { runtime, model, version: 'fixture', thinkingLevel });
+      try {
+        await next.prompt('Check selected tools.');
+        const body = requests.at(-1).body;
+        assert.deepEqual(body.tools, [
+          ...(webSearch ? [{ type: 'web_search' }] : []),
+          ...(webExtractor && thinkingLevel !== 'off' ? [{ type: 'web_extractor' }] : []),
+        ], JSON.stringify({ thinkingLevel, webSearch, webExtractor }));
+        assert.equal(body.reasoning.effort, thinkingLevel === 'off' ? 'none' : thinkingLevel);
+        assert.equal(body.enable_thinking, thinkingLevel === 'off' ? undefined : true);
+      } finally { next.dispose(); }
+    }
+  }
+  assert.equal(JSON.stringify(sharedModel), original, 'session switches never mutate shared models');
+
 });
 
 
@@ -359,4 +383,104 @@ test('response model evidence comes only from HTTP chunks, survives native histo
   }
   const native = readFileSync(descriptor.locator, 'utf8');
   assert.equal(native.split('\n').filter(line => line.includes('mozi.provider-response-model')).length, 2);
+});
+
+test('real Responses usage survives reopening without counting assistant history or tool events twice', async t => {
+  const f = await fixture(t);
+  const { createServer } = require('node:http');
+  const server = createServer(async (req, res) => {
+    let text = ''; for await (const chunk of req) text += chunk;
+    const body = JSON.parse(text);
+    assert.equal(text.includes('mozi.model-call-usage'), false, 'metrics never enter model context');
+    respondWithResponses(res, body.reasoning.effort, body.reasoning.effort !== 'none');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
+  const adapter = new PiAdapter(f.config);
+  await adapter.saveProvider({ ...custom('usage'), api: 'openai-responses', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, models: [{ ...custom().models[0], reasoning: true }] });
+  const descriptor = await adapter.createSession();
+  const completed = [];
+  for (const thinkingLevel of ['medium', 'off']) {
+    const prepared = await adapter.prepareModel({ providerId: 'usage', modelId: 'model', thinkingLevel });
+    const session = await prepared.openSession(descriptor);
+    const events = [];
+    try { await session.execute({ runId: thinkingLevel, clientMessageId: thinkingLevel, content: [{ type: 'text', text: 'fixture query' }] }, event => events.push(event)); }
+    finally { session.dispose(); }
+    const usage = events.filter(event => event.type === 'usage.update');
+    assert.equal(usage.length, 2);
+    assert.equal(usage[0].call.status, 'running');
+    assert.equal(usage[1].call.status, 'completed');
+    assert.deepEqual(JSON.parse(JSON.stringify(usage[1].call.usage)), { input: 16, cacheRead: 4, cacheWrite: 0, output: 10, reasoning: thinkingLevel === 'off' ? 0 : 3, totalTokens: 30 });
+    assert.equal(usage[1].call.thinkingLevel, thinkingLevel);
+    assert.equal(usage[1].call.webSearch, 1);
+    assert.equal(usage[1].call.webExtractor, thinkingLevel === 'off' ? 0 : 1);
+    assert.equal(usage[1].call.webSearchSource, 'provider');
+    assert.equal(usage[1].call.webExtractorSource, 'provider');
+    assert.deepEqual(Array.from(usage[1].call.steps, step => step.type), thinkingLevel === 'off'
+      ? ['web_search', 'message'] : ['reasoning', 'web_search', 'web_extractor', 'message']);
+    assert.ok(usage[1].call.steps.find(step => step.type === 'web_search').queries.length);
+    assert.ok(usage[1].call.steps.find(step => step.type === 'web_search').sources.length);
+    if (thinkingLevel !== 'off') assert.ok(usage[1].call.steps.find(step => step.type === 'web_extractor').urls.length);
+    completed.push(usage[1].call);
+  }
+  const reopened = new PiAdapter(f.config);
+  assert.deepEqual(JSON.parse(JSON.stringify(await reopened.readUsage(descriptor))), JSON.parse(JSON.stringify(completed)));
+  assert.equal((await reopened.readHistory(descriptor)).filter(message => message.role === 'assistant').length, 2);
+});
+
+test('usage and response observers do not change Responses payloads or consume streamed answers', async () => {
+  const { pathToFileURL } = require('node:url');
+  const { streamSimple } = await import(pathToFileURL(path.resolve(__dirname, '../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js')));
+  const load = createLoader();
+  const { observeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/usage-monitor.ts'));
+  const { observeResponseModels } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
+  const model = { id: 'qwen-fixture', provider: 'fixture', api: 'openai-responses', baseUrl: 'https://fixture.invalid/v1',
+    name: 'Fixture', reasoning: true, input: ['text'], contextWindow: 262144, maxTokens: 65536,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsDeveloperRole: false },
+    samplingParams: { tools: [{ type: 'web_search' }, { type: 'web_extractor' }] },
+    samplingParamsByThinkingLevel: { medium: { enable_thinking: true } } };
+  const context = { systemPrompt: 'fixture system', messages: [{ role: 'user', content: 'fixture query', timestamp: 1 }] };
+  const requests = [], outputs = [], records = [];
+  for (const monitored of [false, true]) {
+    const agent = { streamFunction: streamSimple };
+    const responseObserver = monitored ? observeResponseModels(agent) : undefined;
+    const usageObserver = monitored ? observeUsage(agent, 'r', call => records.push(JSON.parse(JSON.stringify(call)))) : undefined;
+    const stream = await agent.streamFunction(model, context, { apiKey: 'fixture-only', reasoning: 'medium', maxRetries: 0,
+      fetch: async (url, init) => {
+        requests.push(JSON.parse(init.body));
+        let body = '';
+        respondWithResponses({ writeHead() {}, write(chunk) { body += chunk; }, end() {} }, 'same', true);
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      } });
+    const deltas = [];
+    for await (const event of stream) if (event.type === 'text_delta' || event.type === 'thinking_delta') deltas.push([event.type, event.delta]);
+    const message = await stream.result();
+    outputs.push({ deltas, content: message.content, usage: message.usage, stopReason: message.stopReason });
+    usageObserver?.dispose(); responseObserver?.dispose();
+  }
+  assert.deepEqual(requests[1], requests[0], 'monitoring must leave all request parameters and model context unchanged');
+  assert.deepEqual(outputs[1], outputs[0], 'result observers must not consume the answer stream');
+  assert.equal(outputs[1].stopReason, 'stop');
+  assert.ok(outputs[1].deltas.some(([type, delta]) => type === 'text_delta' && delta.includes('search fixture answer')));
+  assert.equal(records.at(-1).status, 'completed');
+  assert.equal(records.at(-1).steps.length, 4);
+});
+
+
+test('session web tool choices reach prepared bindings and leave other sessions at their defaults', async t => {
+  const f = await fixture(t);
+  await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-plan-key' });
+  const selection = { providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview', thinkingLevel: 'high', webSearch: false, webExtractor: false };
+  const disabled = await f.manager.prepare(selection);
+  const defaults = await f.manager.prepare({ providerId: selection.providerId, modelId: selection.modelId });
+  assert.equal(JSON.stringify(disabled.model.samplingParamsByThinkingLevel.high.tools), '[]');
+  assert.equal(JSON.stringify(defaults.model.samplingParamsByThinkingLevel.high.tools), '[{"type":"web_search"},{"type":"web_extractor"}]');
+  assert.equal(JSON.stringify(disabled.model.samplingParamsByThinkingLevel.high.tools), '[]');
+  assert.equal(disabled.runtime, defaults.runtime);
+  assert.notEqual(disabled.model, defaults.model);
+  assert.equal(disabled.model.id, selection.modelId);
+  const { isModelSelection } = f.load(path.resolve(__dirname, '../../../shared/agent/validation.ts'));
+  assert.equal(isModelSelection(selection), true);
+  assert.equal(isModelSelection({ ...selection, webSearch: 'false' }), false);
 });

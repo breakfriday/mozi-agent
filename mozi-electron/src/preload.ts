@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { ElectronApi, WindowState } from "../../shared/electron-api";
+import type { ElectronApi, WindowState, TokenMonitorTarget } from "../../shared/electron-api";
 import type { MoziApi } from "../../shared/mozi-api";
 import { createAgentPreloadApi } from "./preload/agent";
 import { createAgentLogger } from "../../shared/agent/logging";
@@ -7,6 +7,7 @@ import { createAgentLogger } from "../../shared/agent/logging";
 const electronApi = {
   app: { quit: () => ipcRenderer.send("app:quit") },
   window: {
+    openTokenMonitor: (target: TokenMonitorTarget) => ipcRenderer.invoke("window:open-token-monitor", target) as Promise<boolean>,
     minimize: () => ipcRenderer.send("window:minimize"),
     close: () => ipcRenderer.send("window:close"),
     openDevTools: () => ipcRenderer.invoke("window:open-devtools") as Promise<boolean>,

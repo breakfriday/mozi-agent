@@ -411,6 +411,35 @@ function ThinkingControls({ model, value, disabled, onChange }: {
   );
 }
 
+function WebToolControls({ model, value, disabled, onChange }: {
+  model?: ProviderModelView;
+  value?: ModelSelection;
+  disabled?: boolean;
+  onChange(model: ModelSelection): void;
+}) {
+  if (!model?.supportsWebTools || !value) return null;
+  const thinking = (value.thinkingLevel ?? thinkingLevelFor(model)) !== "off";
+  return (
+    <div className={styles.thinking}>
+      <label className={styles.thinkingSwitch}>
+        <Switch size="small" aria-label="联网搜索" checked={value.webSearch !== false}
+          disabled={disabled} onChange={webSearch => onChange({ ...value, webSearch })} />
+        <span>联网搜索</span>
+      </label>
+      <label className={styles.thinkingSwitch}>
+        <Switch size="small" aria-label="网页提取" checked={thinking && value.webExtractor !== false}
+          disabled={disabled || !thinking} onChange={webExtractor => onChange({ ...value, webExtractor })} />
+        <span>网页提取</span>
+      </label>
+      <span className={styles.hint}>{thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
+    </div>
+  );
+}
+
+function webToolPreferences(model: ProviderModelView, value?: ModelSelection) {
+  return model.supportsWebTools ? { webSearch: value?.webSearch, webExtractor: value?.webExtractor } : {};
+}
+
 function ModelChoices({
   providers,
   loaded,
@@ -443,7 +472,7 @@ function ModelChoices({
           }))}
           onChange={(id) => {
             const model = providers.find((item) => item.id === id)?.models[0];
-            if (model) onChange({ providerId: id, modelId: model.id, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel) });
+            if (model) onChange({ providerId: id, modelId: model.id, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel), ...webToolPreferences(model, value) });
           }}
         />
         <Select
@@ -461,12 +490,18 @@ function ModelChoices({
           }
           onChange={(modelId) => {
             const model = provider?.models.find(item => item.id === modelId);
-            if (provider && model) onChange({ providerId: provider.id, modelId, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel) });
+            if (provider && model) onChange({ providerId: provider.id, modelId, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel), ...webToolPreferences(model, value) });
           }}
         />
       </div>
       <ThinkingControls
         key={`${value?.providerId}/${value?.modelId}`}
+        model={provider?.models.find(item => item.id === value?.modelId)}
+        value={value}
+        disabled={disabled || !provider?.configured}
+        onChange={onChange}
+      />
+      <WebToolControls
         model={provider?.models.find(item => item.id === value?.modelId)}
         value={value}
         disabled={disabled || !provider?.configured}

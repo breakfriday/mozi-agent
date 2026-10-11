@@ -5,6 +5,7 @@ import { PiEventMapper } from "./event-mapper";
 import { observeResponseModels, RESPONSE_MODEL_ENTRY } from "./response-model";
 import { titleFromFirstMessage } from "../../domain/session-title";
 import { displayParts } from "./event-mapper";
+import { observeUsage, USAGE_ENTRY } from "./usage-monitor";
 
 /** Owns the SDK session, event subscription and cancellation for one execution. */
 export class PiExecution implements RuntimeSession {
@@ -16,6 +17,10 @@ export class PiExecution implements RuntimeSession {
     if (this.cancelled) return;
     const mapper = new PiEventMapper();
     const responseModels = observeResponseModels(this.session.agent);
+    const usage = observeUsage(this.session.agent, input.runId, call => {
+      this.manager.appendCustomEntry(USAGE_ENTRY, call);
+      emit({ type: "usage.update", call });
+    });
     const pending = new Map<object, string>();
     const persistEvidence = () => {
       if (!pending.size) return;
@@ -76,8 +81,9 @@ export class PiExecution implements RuntimeSession {
       publishTitle();
       persistEvidence();
       if (observerError) throw observerError;
+      if (usage.error) throw usage.error;
       if (mapper.lastFailure && !this.cancelled) throw failure("INTERNAL_ERROR", mapper.lastFailure);
-    } finally { unsubscribe(); responseModels.dispose(); }
+    } finally { unsubscribe(); usage.dispose(); responseModels.dispose(); }
   }
   cancel(): Promise<void> {
     this.cancelled = true;

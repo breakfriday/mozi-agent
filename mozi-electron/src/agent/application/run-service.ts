@@ -43,7 +43,8 @@ export class RunService {
     if (accepted) return accepted;
     const latest = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
     if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId
-      || selection?.thinkingLevel !== latest?.thinkingLevel) {
+      || selection?.thinkingLevel !== latest?.thinkingLevel
+      || selection?.webSearch !== latest?.webSearch || selection?.webExtractor !== latest?.webExtractor) {
       throw failure("SESSION_BUSY", "会话模型已变化，请重新发送。");
     }
     return this.accept(input, prepared);
@@ -117,7 +118,7 @@ export class RunService {
         this.events.publish(state, run.id, { type: "run.updated", data: { run } });
         this.events.publish(state, run.id, { type: "run.started", data: {} });
         await execution.session!.execute({ runId: run.id, clientMessageId: input.clientMessageId, content: input.content },
-          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
+          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "usage.update" || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
       }
       if (execution.cancelled) outcome = { status: "cancelled" };
     } catch (error) {
@@ -145,6 +146,11 @@ export class RunService {
   }
 
   private output(state: SessionState, run: RunView, event: RuntimeEvent): void {
+    if (event.type === "usage.update") {
+      if (event.call.runId !== run.id) throw failure("PROTOCOL_MISMATCH", "用量记录与当前任务不匹配。");
+      this.events.publish(state, run.id, { type: "usage.updated", data: state.reportUsage(event.call) });
+      return;
+    }
     if (event.type === "session.title") {
       this.sessions.updateAutomaticTitle(run.sessionId, event.title, run.id);
       return;

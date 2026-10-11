@@ -95,7 +95,7 @@ test('v4 upgrades in place and model choices survive reopening', t => {
   old.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES ('s', 'pi', '/native', '/tmp', 'original', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); PRAGMA user_version=4;");
   old.close();
   const repository = new SqliteMetadataRepository(filename);
-  const model = { providerId: 'bailian-tp', modelId: 'model', thinkingLevel: 'off' };
+  const model = { providerId: 'bailian-tp', modelId: 'model', thinkingLevel: 'off', webSearch: false, webExtractor: true };
   assert.equal(repository.listSessions()[0].session.title, 'original');
   repository.setDefaultModel(model);
   repository.saveSession({ ...metadata(), session: { ...metadata().session, model } });

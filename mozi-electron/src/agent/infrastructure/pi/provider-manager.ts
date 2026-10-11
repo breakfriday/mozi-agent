@@ -2,10 +2,10 @@ import { ModelRuntime, type ProviderConfig, type CreateModelRuntimeOptions } fro
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { isParamsFor, type ModelSelection, type ProviderSaveInput, type ProviderView } from "../../../../../shared/agent";
+import { isParamsFor, THINKING_LEVELS, type ThinkingLevel, type ModelSelection, type ProviderSaveInput, type ProviderView } from "../../../../../shared/agent";
 import { failure } from "../../application/errors";
 import type { PiConfig } from "./session-factory";
-import { BAILIAN_ENDPOINT, BAILIAN_PROVIDER, loadBailianProvider } from "./providers/bailian";
+import { BAILIAN_API, BAILIAN_ENDPOINT, BAILIAN_PROVIDER, loadBailianProvider, supportsBailianWebTools, withBailianWebTools } from "./providers/bailian";
 
 type SavedProvider = Omit<ProviderSaveInput, "providerId" | "apiKey">;
 type Configuration = { providers: Record<string, SavedProvider> };
@@ -13,7 +13,22 @@ type CredentialStore = NonNullable<CreateModelRuntimeOptions["credentials"]>;
 type Credential = NonNullable<Awaited<ReturnType<CredentialStore["read"]>>>;
 type Credentials = Record<string, Credential>;
 type Snapshot = { runtime: ModelRuntime; version: string; config: Configuration; builtinIds: Set<string>; activate(): void };
-export type PiModelBinding = { runtime: ModelRuntime; model: NonNullable<ReturnType<ModelRuntime["getModel"]>>; version: string };
+export type PiModelBinding = { runtime: ModelRuntime; model: NonNullable<ReturnType<ModelRuntime["getModel"]>>; version: string; thinkingLevel?: ThinkingLevel };
+
+function thinkingLevels(model: PiModelBinding["model"]): ThinkingLevel[] {
+  if (!model.reasoning) return ["off"];
+  const levels = THINKING_LEVELS.filter(level => model.thinkingLevelMap?.[level] !== null
+    && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
+  const compat = model.compat && "thinkingFormat" in model.compat ? model.compat : undefined;
+  // This Qwen compatibility path sends only enable_thinking, without an effort or budget.
+  if (model.api === "openai-completions" && compat?.thinkingFormat === "qwen"
+    && compat.supportsReasoningEffort === false && !compat.supportsThinkingTokenBudget
+    && !compat.thinkingTokenBudgetField && !model.samplingParamsByThinkingLevel) {
+    const enabled = levels.includes("medium") ? "medium" : levels.find(level => level !== "off");
+    return levels.filter(level => level === "off" || level === enabled);
+  }
+  return levels;
+}
 
 function readJson<T>(filename: string, fallback: T): T {
   if (!existsSync(filename)) return fallback;
@@ -120,9 +135,11 @@ export class PiProviderManager {
     if (process.env.BAILIAN_TP_API_KEY) await runtime.setRuntimeApiKey(BAILIAN_PROVIDER, process.env.BAILIAN_TP_API_KEY);
     for (const [id, saved] of Object.entries(config.providers)) {
       if (id === BAILIAN_PROVIDER && ((saved.baseUrl && saved.baseUrl !== BAILIAN_ENDPOINT)
-        || (saved.api && saved.api !== "openai-completions"))) {
+        || (saved.api && saved.api !== BAILIAN_API && saved.api !== "openai-completions"))) {
         throw failure("INVALID_ARGUMENT", "Token Plan provider 必须使用专属套餐入口。");
       }
+      // Upgrade legacy settings in memory; reads never rewrite the user's config file.
+      if (id === BAILIAN_PROVIDER) saved.api = BAILIAN_API;
       const baseModels = runtime.getModels(id);
       const models = saved.models?.map(item => {
         const base = baseModels.find(model => model.id === item.id);
@@ -144,7 +161,7 @@ export class PiProviderManager {
       if (credential.type === "api_key" && credential.key && runtime.getProvider(id)) await runtime.setRuntimeApiKey(id, credential.key);
     }
     // Never let inherited Pi models.json override the subscription endpoint or per-model URLs.
-    if (runtime.getModels(BAILIAN_PROVIDER).some(model => model.baseUrl !== BAILIAN_ENDPOINT || model.api !== "openai-completions")) {
+    if (runtime.getModels(BAILIAN_PROVIDER).some(model => model.baseUrl !== BAILIAN_ENDPOINT || model.api !== BAILIAN_API)) {
       throw failure("INVALID_ARGUMENT", "Pi 配置覆盖了 Token Plan 专属入口，请移除冲突配置。");
     }
     await runtime.refresh({ allowNetwork: false });
@@ -164,7 +181,7 @@ export class PiProviderManager {
         endpointLocked: provider.id === BAILIAN_PROVIDER,
         removable: !builtinIds.has(provider.id) && provider.id !== BAILIAN_PROVIDER,
         models: models.map(model => ({ id: model.id, name: model.name, contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens, reasoning: model.reasoning, vision: model.input.includes("image") })),
+          maxTokens: model.maxTokens, reasoning: model.reasoning, vision: model.input.includes("image"), supportsWebTools: supportsBailianWebTools(model), thinkingLevels: thinkingLevels(model) })),
         customModels: saved?.models ?? [],
       }];
     }).sort((a, b) => Number(b.id === BAILIAN_PROVIDER) - Number(a.id === BAILIAN_PROVIDER) || Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
@@ -216,6 +233,9 @@ export class PiProviderManager {
     const model = runtime.getModel(selection.providerId, selection.modelId);
     if (!model) throw failure("INVALID_ARGUMENT", "所选 provider 不支持此模型，请重新选择。");
     if (!runtime.hasConfiguredAuth(selection.providerId)) throw failure("INVALID_ARGUMENT", "请先配置此 provider 的 API Key。");
-    return { runtime, model, version };
+    if (selection.thinkingLevel !== undefined && !thinkingLevels(model).includes(selection.thinkingLevel)) {
+      throw failure("INVALID_ARGUMENT", "所选模型不支持此思考等级，请重新选择。");
+    }
+    return { runtime, model: withBailianWebTools(model, selection), version, thinkingLevel: selection.thinkingLevel };
   }
 }

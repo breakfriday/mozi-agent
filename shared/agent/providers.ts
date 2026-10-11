@@ -1,7 +1,14 @@
 /** Provider identities include the service/channel, not just a model vendor. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-export type ModelSelection = { providerId: string; modelId: string; thinkingLevel?: ThinkingLevel };
+export type ModelSelection = {
+  providerId: string;
+  modelId: string;
+  thinkingLevel?: ThinkingLevel;
+  /** Omitted web tool preferences preserve the provider default (enabled). */
+  webSearch?: boolean;
+  webExtractor?: boolean;
+};
 export const PROVIDER_APIS = ["openai-completions", "openai-responses", "anthropic-messages"] as const;
 export type ProviderApi = (typeof PROVIDER_APIS)[number];
 export type ProviderModel = {
@@ -15,6 +22,8 @@ export type ProviderModel = {
 export type ProviderModelView = ProviderModel & {
   /** Effective choices exposed by the adapter; a single enabled level means on/off only. */
   thinkingLevels?: ThinkingLevel[];
+  /** Server search/extraction controls; extraction requires thinking enabled. */
+  supportsWebTools?: boolean;
 };
 export type ProviderView = {
   id: string;

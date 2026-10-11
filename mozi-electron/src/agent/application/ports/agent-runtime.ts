@@ -1,4 +1,4 @@
-import type { InputPart } from "../../../../../shared/agent";
+import type { InputPart, ModelCallView } from "../../../../../shared/agent";
 
 /** Application-owned port. Only the Pi infrastructure imports SDK types. */
 export interface RuntimeSessionDescriptor {
@@ -21,6 +21,7 @@ export interface RuntimeContentPart {
   text: string;
 }
 export type RuntimeEvent =
+  | { type: "usage.update"; call: ModelCallView }
   | { type: "session.title"; title: string }
   | { type: "message.model"; ordinal: number; responseModelId: string }
   | { type: "message.start"; ordinal: number }
@@ -44,6 +45,7 @@ export interface RuntimeSession {
   dispose(): void;
 }
 export interface AgentRuntime {
+  readUsage?(descriptor: RuntimeSessionDescriptor): Promise<ModelCallView[]>;
   setSessionName(descriptor: RuntimeSessionDescriptor, name: string): void;
   createSession(): Promise<RuntimeSessionDescriptor>;
   listSessions(): Promise<RuntimeSessionInfo[]>;

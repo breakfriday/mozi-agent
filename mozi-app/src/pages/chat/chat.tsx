@@ -19,6 +19,10 @@ import { ModelControls } from "./ModelControls";
 import { SessionList } from "./SessionList";
 import { Reasoning, ReasoningRoot, ReasoningTrigger, ReasoningContent, ReasoningText } from "@/components/assistant-ui/elements/reasoning.aui";
 import styles from "./chat.module.css";
+import { useState } from "react";
+import { RunUsageSummary, TokenMonitorButton } from "../angetTokenMonitor/UsageButtons";
+import { bridgeApi } from "@/runtime/bridge";
+import { createPageUrl } from "@/runtime/pageUrl";
 
 const suggestions = [
   "检查播放器是否异常",
@@ -27,7 +31,7 @@ const suggestions = [
 ];
 const groupReasoning = groupPartByType({ reasoning: ["group-reasoning"] });
 
-function UserMessage({ messageKey }: { messageKey: string }) {
+function UserMessage({ messageKey, onUsage }: { messageKey: string; onUsage: (runId: string) => void }) {
   const clientMessageId = messageKey.startsWith("client:") ? messageKey.slice("client:".length) : undefined;
   const submission = useAgentStore((state) => clientMessageId ? state.pendingSubmissions[clientMessageId] : undefined);
   const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing"
@@ -49,6 +53,7 @@ function UserMessage({ messageKey }: { messageKey: string }) {
           <span>{statusText}</span>
           {canRetry && <button type="button" disabled={busy} onClick={() => void agentActions.retry(submission.clientMessageId)}>重试原提交</button>}
         </div>}
+        <RunUsageSummary messageId={messageKey} onOpen={onUsage} />
       </div>
       <span className={styles.avatar} aria-label="你">
         <UserOutlined />
@@ -57,7 +62,7 @@ function UserMessage({ messageKey }: { messageKey: string }) {
   );
 }
 
-function AssistantMessage({ responseModelId }: { responseModelId?: string }) {
+function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseModelId?: string; messageKey: string; onUsage: (runId: string) => void }) {
   return (
     <MessagePrimitive.Root className={styles.assistantMessage}>
       <MoziIcon />
@@ -102,12 +107,13 @@ function AssistantMessage({ responseModelId }: { responseModelId?: string }) {
         >
           <span className={styles.messageStatus}>已停止生成</span>
         </AuiIf>
+        <RunUsageSummary messageId={messageKey} onOpen={onUsage} />
       </div>
     </MessagePrimitive.Root>
   );
 }
 
-function ChatThread() {
+function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
   const runtime = useAgentStore((state) => state.runtime);
   const error = useAgentStore((state) => state.error);
   const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing");
@@ -138,7 +144,7 @@ function ChatThread() {
         <div className={styles.messages}>
           <ThreadPrimitive.Messages>
             {({ message }) =>
-              message.role === "user" ? <UserMessage messageKey={message.id} /> : <AssistantMessage responseModelId={typeof message.metadata.custom.responseModelId === "string" ? message.metadata.custom.responseModelId : undefined} />
+              message.role === "user" ? <UserMessage messageKey={message.id} onUsage={onUsage} /> : <AssistantMessage messageKey={message.id} onUsage={onUsage} responseModelId={typeof message.metadata.custom.responseModelId === "string" ? message.metadata.custom.responseModelId : undefined} />
             }
           </ThreadPrimitive.Messages>
         </div>
@@ -195,6 +201,19 @@ function ChatThread() {
 
 export function ChatPage() {
   const sessionId = useAgentStore((state) => state.sessionId ?? state.localSessionId);
+  const [monitorError, setMonitorError] = useState<string | null>(null);
+  const openUsage = async (runId?: string) => {
+    const currentSession = useAgentStore.getState().sessionId;
+    if (!currentSession) { setMonitorError("发送消息创建会话后，即可查看用量。"); return; }
+    setMonitorError(null);
+    try {
+      if (bridgeApi.available) {
+        if (!await bridgeApi.window.openTokenMonitor({ sessionId: currentSession, runId })) setMonitorError("无法打开用量窗口，请重启桌面应用后重试。");
+      } else {
+        window.open(createPageUrl("/angetTokenMonitor", { sessionId: currentSession, ...(runId ? { runId } : {}) }), "_blank", "noopener,noreferrer");
+      }
+    } catch { setMonitorError("打开用量窗口失败，请重试。"); }
+  };
   const title = useAgentStore((state) => state.sessions.find((session) => session.sessionId === state.sessionId)?.title ?? "新会话");
   const syncing = useAgentStore((state) => state.syncStatus === "syncing");
   const syncFailed = useAgentStore((state) => state.syncStatus === "error");
@@ -206,9 +225,11 @@ export function ChatPage() {
           <h1 title={title}>{title}</h1>
           {syncing && <span role="status">正在加载会话…</span>}
           {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
+          <TokenMonitorButton onOpen={() => openUsage()} />
         </header>
+        {monitorError && <p role="alert">{monitorError}</p>}
         <ModelControls />
-        <ChatThread key={sessionId} />
+        <ChatThread key={sessionId} onUsage={openUsage} />
       </div>
     </section>
   );

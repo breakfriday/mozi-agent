@@ -7,6 +7,8 @@ import type { PiConfig } from "./session-factory";
 import { displayParts } from "./event-mapper";
 import { RESPONSE_MODEL_ENTRY, validResponseModel } from "./response-model";
 import { EMPTY_SESSION_TITLE, titleFromFirstMessage } from "../../domain/session-title";
+import { isModelCallView, type ModelCallView } from "../../../../../shared/agent";
+import { normalizeUsage, USAGE_ENTRY } from "./usage-monitor";
 
 /** Native identity and history stay within the Pi integration boundary. */
 export class PiNativeHistory {
@@ -90,5 +92,47 @@ export class PiNativeHistory {
       }
     }
     return messages;
+  }
+  async readUsage(descriptor: RuntimeSessionDescriptor): Promise<ModelCallView[]> {
+    // Consumption includes all recorded branches, even if no longer in the current context.
+    const entries = this.open(descriptor).getEntries();
+    const calls = new Map<string, ModelCallView>();
+    const monitoredRuns = new Set<string>();
+    const responseModels = new Map<string, string>();
+    for (const entry of entries) {
+      if (entry.type === "custom" && entry.customType === RESPONSE_MODEL_ENTRY) {
+        const data = entry.data as { nativeEntryId?: unknown; responseModelId?: unknown } | undefined;
+        if (typeof data?.nativeEntryId === "string" && validResponseModel(data.responseModelId)) responseModels.set(data.nativeEntryId, data.responseModelId);
+      }
+      if (entry.type !== "custom" || entry.customType !== USAGE_ENTRY || !isModelCallView(entry.data)) continue;
+      const call = entry.data;
+      calls.set(call.id, call.status === "running" ? { ...call, status: "interrupted" } : call);
+      if (call.runId) monitoredRuns.add(call.runId);
+    }
+    let runId: string | undefined, thinkingLevel: string | undefined;
+    let seenUser = false;
+    for (const entry of entries) {
+      if (entry.type === "thinking_level_change") thinkingLevel = entry.thinkingLevel;
+      if (entry.type === "custom" && entry.customType === "mozi.run") {
+        const data = entry.data as { runId?: unknown } | undefined;
+        runId = typeof data?.runId === "string" ? data.runId : undefined; seenUser = false;
+      }
+      if (entry.type !== "message") continue;
+      if (entry.message.role === "user") {
+        if (seenUser) runId = undefined;
+        seenUser = true;
+      }
+      if (entry.message.role !== "assistant" || (runId && monitoredRuns.has(runId))) continue;
+      const message = entry.message;
+      const usage = normalizeUsage(message.usage);
+      const call: ModelCallView = { id: `native:${entry.id}`, nativeEntryId: entry.id,
+        ...(runId ? { runId } : {}), provider: message.provider, model: message.model,
+        ...(responseModels.has(entry.id) ? { responseModelId: responseModels.get(entry.id) } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}), startedAt: entry.timestamp,
+        status: message.stopReason === "error" ? "failed" : message.stopReason === "aborted" ? "cancelled" : "completed",
+        ...(usage ? { usage } : {}) };
+      calls.set(call.id, call);
+    }
+    return [...calls.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   }
 }

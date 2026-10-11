@@ -12,6 +12,7 @@ import type {
 
 import { PROVIDER_APIS, THINKING_LEVELS } from "./providers";
 import type { ModelSelection, ProviderModel, ProviderModelView, ProviderView, ModelSettings, ThinkingLevel } from "./providers";
+import type { ModelCallView, TokenUsage, UsageTotals, UsageMonitorView, ServerStepView } from "./usage";
 
 type Guard<T> = (value: unknown) => value is T;
 
@@ -89,11 +90,12 @@ export const isAppError = object<AppError>({
 });
 
 const thinkingLevel = oneOf(...THINKING_LEVELS);
-export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id, thinkingLevel: optional(thinkingLevel) });
+export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id, thinkingLevel: optional(thinkingLevel), webSearch: optional(boolean), webExtractor: optional(boolean) });
 const positive: Guard<number> = (value): value is number => sequence(value) && value > 0 && value <= 100_000_000;
 const providerModelShape = { id, name: id, contextWindow: positive, maxTokens: positive, reasoning: boolean, vision: boolean };
 const providerModel = object<ProviderModel>(providerModelShape);
 const providerModelView = object<ProviderModelView>({ ...providerModelShape,
+  supportsWebTools: optional(boolean),
   thinkingLevels: optional((value): value is ThinkingLevel[] => array(thinkingLevel)(value) && value.length > 0 && new Set(value).size === value.length),
 });
 const providerView = object<ProviderView>({
@@ -136,7 +138,33 @@ const approvalView = object<ApprovalView>({
   createdAt: date, resolvedAt: optional(date),
 });
 const sessionSummary = object<SessionSummary>({ sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
+const tokenFields = { input: sequence, output: sequence, cacheRead: sequence, cacheWrite: sequence,
+  totalTokens: sequence, reasoning: optional(sequence) };
+const tokenUsage = object<TokenUsage>(tokenFields);
+const stepText: Guard<string> = (value): value is string => string(value) && value.length <= 2048;
+const stepUrl: Guard<string> = (value): value is string => {
+  if (!stepText(value)) return false;
+  try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password; }
+  catch { return false; }
+};
+const stepList = (guard: Guard<string>): Guard<string[]> => (value): value is string[] => array(guard)(value) && value.length <= 32;
+const serverStep = object<ServerStepView>({ id, type: oneOf("reasoning", "message", "web_search", "web_extractor"),
+  status: oneOf("running", "completed", "failed", "incomplete", "unknown"), observed: oneOf("stream", "final"),
+  queries: optional(stepList(stepText)), sources: optional(stepList(stepUrl)), urls: optional(stepList(stepUrl)) });
+export const isModelCallView = object<ModelCallView>({ id, runId: optional(id), provider: id, model: id,
+  responseModelId: optional(id), thinkingLevel: optional(id), startedAt: date, durationMs: optional(sequence),
+  status: oneOf("running", "completed", "failed", "cancelled", "interrupted"), usage: optional(tokenUsage),
+  webSearch: optional(sequence), webExtractor: optional(sequence), nativeEntryId: optional(id),
+  webSearchSource: optional(oneOf("provider", "events")), webExtractorSource: optional(oneOf("provider", "events")),
+  steps: optional((value): value is ServerStepView[] => array(serverStep)(value) && value.length <= 100),
+  stepsTruncated: optional(boolean) });
+const usageTotals = object<UsageTotals>({ ...tokenFields, calls: sequence, reportedCalls: sequence,
+  pendingCalls: sequence, unknownCalls: sequence, reasoningCalls: sequence,
+  webSearch: optional(sequence), webExtractor: optional(sequence) });
+const usageMonitor = object<UsageMonitorView>({ calls: array(isModelCallView), total: usageTotals,
+  runs: array(object<{ runId: string; total: UsageTotals }>({ runId: id, total: usageTotals })) });
 const snapshot = object<SessionSnapshot>({
+  usage: optional(usageMonitor),
   session: sessionSummary, lastSeq: sequence, messages: array(messageView), tools: array(toolView),
   runs: array(runView), approvals: array(approvalView),
 });
@@ -274,6 +302,7 @@ export function responseMatchesRequest(request: AgentRequest, value: unknown): b
 
 type EventData<T extends EventPayload["type"]> = Extract<EventPayload, { type: T }>["data"];
 const eventValidators = {
+  "usage.updated": object<EventData<"usage.updated">>({ call: isModelCallView, total: usageTotals, runTotal: usageTotals }),
   "session.updated": object<EventData<"session.updated">>({ session: sessionSummary }),
   "run.started": object<EventData<"run.started">>({}),
   "run.updated": object<EventData<"run.updated">>({ run: runView }),
@@ -304,6 +333,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
   if (!eventValidators[value.type as EventPayload["type"]](value.data)) return false;
   const event = value as AgentEvent;
   switch (event.type) {
+    case "usage.updated": return event.data.call.runId === event.runId;
     case "session.updated": return event.data.session.sessionId === event.sessionId;
     case "run.updated": return event.data.run.id === event.runId && event.data.run.sessionId === event.sessionId;
     case "message.accepted": return event.data.message.sessionId === event.sessionId

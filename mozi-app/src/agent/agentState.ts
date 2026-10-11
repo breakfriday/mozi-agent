@@ -55,6 +55,7 @@ export function installAgentSnapshot(
   return reconcileMessages(
     {
       ...state,
+      usage: snapshot.usage,
       modelSelection: snapshot.session.model ?? null,
       sessionId: snapshot.session.sessionId,
       messages: snapshot.messages,
@@ -81,6 +82,15 @@ export function applyAgentEvent(
 ): AgentState {
   const next = { ...state, lastSeq: event.seq };
   switch (event.type) {
+    case "usage.updated": {
+      const { call, total, runTotal } = event.data;
+      next.usage = {
+        calls: upsert(state.usage?.calls ?? [], call, item => item.id),
+        total,
+        runs: upsert(state.usage?.runs ?? [], { runId: event.runId, total: runTotal }, item => item.runId),
+      };
+      break;
+    }
     case "session.updated":
       next.sessions = upsert(
         state.sessions,

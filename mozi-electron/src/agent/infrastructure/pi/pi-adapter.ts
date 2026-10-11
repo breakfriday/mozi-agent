@@ -27,6 +27,7 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
   createSession(): Promise<RuntimeSessionDescriptor> { return this.history.createSession(); }
   listSessions(): Promise<RuntimeSessionInfo[]> { return this.history.listSessions(); }
   readHistory(descriptor: RuntimeSessionDescriptor): Promise<RuntimeHistoryMessage[]> { return this.history.readHistory(descriptor); }
+  readUsage(descriptor: RuntimeSessionDescriptor) { return this.history.readUsage(descriptor); }
   async openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession> {
     return this.openExecution(descriptor);
   }

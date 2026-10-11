@@ -1,4 +1,4 @@
-import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor } from "../../../../shared/agent";
+import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor, buildUsageMonitor } from "../../../../shared/agent";
 import type { ModelSelection, ParamsOf, ResultOf, SessionSnapshot } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import type { MetadataStore } from "./ports/metadata-store";
@@ -60,6 +60,7 @@ export class SessionService {
       this.control.assertAvailable();
       this.assertExists(sessionId);
       const { record, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
+      if (this.runtime.readUsage) record.snapshot.usage = buildUsageMonitor(await this.runtime.readUsage(metadata.descriptor));
       record.snapshot.lastSeq = this.events.sequence(sessionId);
       this.assertSnapshot(record.snapshot);
       this.control.write(() => this.repository.saveLinks(sessionId, confirmedLinks));
@@ -79,7 +80,8 @@ export class SessionService {
       if (existing) {
         this.assertExists(existing.sessionId);
         if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId
-          || existing.model?.thinkingLevel !== input.model?.thinkingLevel) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
+          || existing.model?.thinkingLevel !== input.model?.thinkingLevel
+          || existing.model?.webSearch !== input.model?.webSearch || existing.model?.webExtractor !== input.model?.webExtractor) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
         return { sessionId: existing.sessionId };
       }
       const model = input.model ?? this.models.defaultSelection();

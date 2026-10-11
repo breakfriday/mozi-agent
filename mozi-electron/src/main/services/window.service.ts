@@ -1,8 +1,8 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, shell } from "electron";
 import path from "node:path";
 
 import type { BrowserWindowConstructorOptions, WebContents } from "electron";
-import type { WindowState } from "../../../../shared/electron-api";
+import type { WindowState, TokenMonitorTarget } from "../../../../shared/electron-api";
 import type { RendererEntry } from "../../env_config.types";
 
 export const MAIN_WINDOW_CHANNEL_ID = "main_window";
@@ -22,6 +22,32 @@ export interface WindowCreatePayload {
 
 export class WindowService {
   private readonly windowMap = new Map<string, BrowserWindow>();
+
+  openTokenMonitor(entry: RendererEntry, target: TokenMonitorTarget): BrowserWindow {
+    const channel = `token-monitor:${target.sessionId}`;
+    const query = new URLSearchParams({ sessionId: target.sessionId, ...(target.runId ? { runId: target.runId } : {}) });
+    const route = `/angetTokenMonitor?${query}`;
+    const destination: RendererEntry = entry.type === "file" ? { ...entry, hash: route }
+      : { type: "url", url: new URL(`angetTokenMonitor?${query}`, entry.url.endsWith("/") ? entry.url : `${entry.url}/`).href };
+    const existing = this.getWindow(channel);
+    const win = this.createWindow(channel, destination, {
+      title: "Agent Token Monitor", width: 1180, height: 860, minWidth: 760, minHeight: 540, bgColor: "#141414",
+    });
+    if (!existing) {
+      win.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+          const link = new URL(url);
+          if (["https:", "http:"].includes(link.protocol) && !link.username && !link.password) void shell.openExternal(link.href).catch(() => {});
+        } catch { /* Ignore invalid source URLs. */ }
+        return { action: "deny" };
+      });
+    } else if (destination.type === "url" ? win.webContents.getURL() !== destination.url : !win.webContents.getURL() || new URL(win.webContents.getURL()).hash.slice(1) !== route) {
+      // Reloading a different scope also releases the old window's Agent subscription.
+      const loading = destination.type === "url" ? win.loadURL(destination.url) : win.loadFile(destination.filePath, { hash: destination.hash });
+      void loading.catch(error => console.error("Failed to navigate token monitor:", error));
+    }
+    return win;
+  }
 
   createMainWindow(entry: RendererEntry): BrowserWindow {
     return this.createWindow(MAIN_WINDOW_CHANNEL_ID, entry, {

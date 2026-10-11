@@ -122,6 +122,7 @@ export type RuntimeRequest = Extract<AgentRequest, { method: RuntimeMethod }>;
 export type RuntimeResponse = { [M in RuntimeMethod]: ResponseFor<M> }[RuntimeMethod];
 
 export type EventPayload =
+  | { type: "usage.updated"; data: { call: import("./usage").ModelCallView; total: import("./usage").UsageTotals; runTotal: import("./usage").UsageTotals } }
   | { type: "session.updated"; data: { session: SessionSummary } }
   | { type: "run.started"; data: Record<string, never> }
   | { type: "run.updated"; data: { run: RunView } }

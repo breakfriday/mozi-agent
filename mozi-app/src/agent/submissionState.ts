@@ -2,7 +2,7 @@ import type { MessageView } from "../../../shared/agent";
 import type { AgentMessage, AgentState, PendingSubmission } from "./types";
 
 export const submissionKey = (clientMessageId: string) => `client:${clientMessageId}`;
-const messageKey = (message: MessageView) => message.role === "user" && message.clientMessageId
+export const messageKey = (message: MessageView) => message.role === "user" && message.clientMessageId
   ? submissionKey(message.clientMessageId) : `message:${message.id}`;
 
 /** A retry updates one record; a new clientMessageId appends one stable display slot. */

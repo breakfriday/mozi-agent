@@ -21,10 +21,10 @@ async function installBridge(page: Page) {
             { ...base, id: "toggle-only", name: "仅支持思考开关", reasoning: true, thinkingLevels: ["off", "medium"] },
           ] },
         { id: "bailian-tp", name: "百炼 Token Plan", source: "extension", configured: true,
-          baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", api: "openai-completions",
+          baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", api: "openai-responses",
           endpointLocked: true, removable: false, customModels: [], models: [
-            { ...base, id: "qwen3.8-max-preview", name: "qwen3.8-max-preview", reasoning: true, thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
-            { ...base, id: "deepseek-v4-pro", name: "deepseek-v4-pro", reasoning: true, thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+            { ...base, id: "qwen3.8-max-preview", name: "qwen3.8-max-preview", reasoning: true, supportsWebTools: true, thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+            { ...base, id: "deepseek-v4-pro", name: "deepseek-v4-pro", reasoning: true, supportsWebTools: true, thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
           ] },
       ],
     };
@@ -167,4 +167,50 @@ test("model capabilities govern the switch and selectable levels; defaults stay 
   await expect(chat(page).getByText("自动", { exact: true })).toBeVisible();
   await expect.poll(() => latestLevel(page)).toBe("medium");
   await toggle.click(); await expect.poll(() => latestLevel(page)).toBe("off");
+});
+
+
+test("web tools are independent of effort, persist and lock during runs", async ({ page }) => {
+  await installBridge(page);
+  await page.goto("/mozi_app/chat");
+  const search = chat(page).getByRole("switch", { name: "联网搜索" });
+  const extractor = chat(page).getByRole("switch", { name: "网页提取" });
+  const thinking = chat(page).getByRole("switch", { name: "深度思考" });
+  await expect(search).toHaveCount(0);
+  await chat(page).getByRole("combobox", { name: "服务提供商" }).click();
+  await page.locator(".ant-select-dropdown:visible").getByText("百炼 Token Plan", { exact: true }).click();
+  await expect(search).toBeChecked(); await expect(extractor).toBeChecked();
+  await search.click(); await expect(search).not.toBeChecked(); await expect(extractor).toBeChecked();
+  await thinking.click(); await expect(extractor).toBeDisabled(); await expect(extractor).not.toBeChecked();
+  await expect(search).toBeEnabled(); await expect(search).not.toBeChecked();
+  await thinking.click(); await expect(extractor).toBeChecked();
+  await extractor.click(); await expect(extractor).not.toBeChecked();
+  await page.reload(); await expect(search).not.toBeChecked(); await expect(extractor).not.toBeChecked();
+  await chat(page).getByRole("combobox", { name: "思考等级" }).click();
+  await page.locator(".ant-select-dropdown:visible").getByText("高 · high", { exact: true }).click();
+  await expect(search).not.toBeChecked(); await expect(extractor).not.toBeChecked();
+  await chat(page).getByRole("combobox", { name: "模型", exact: true }).click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option-content").filter({ hasText: /^deepseek-v4-pro$/ }).click();
+  await expect(search).not.toBeChecked(); await expect(extractor).not.toBeChecked();
+  await chat(page).getByRole("textbox", { name: "消息内容" }).fill("不联网回答");
+  await chat(page).getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(search).toBeDisabled(); await expect(extractor).toBeDisabled();
+  expect(await page.evaluate(() => (window as unknown as { thinkingFixture: { submitted: ModelSelection[] } }).thinkingFixture.submitted.at(-1)))
+    .toMatchObject({ thinkingLevel: "high", webSearch: false, webExtractor: false });
+  await page.evaluate(() => (window as unknown as { thinkingFixture: { finish(): void } }).thinkingFixture.finish());
+  await expect(search).toBeEnabled();
+  await page.getByRole("button", { name: "模型服务设置", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "模型服务设置", exact: true });
+  await dialog.getByRole("combobox", { name: "服务提供商" }).click();
+  await page.locator(".ant-select-dropdown:visible").getByText("百炼 Token Plan", { exact: true }).click();
+  await dialog.getByRole("switch", { name: "网页提取" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("thinking-default")!).webExtractor)).toBe(false);
+  await dialog.locator("button.ant-modal-close").click();
+  await expect(dialog).not.toBeVisible();
+  await expect(search).not.toBeChecked();
+  await page.screenshot({ path: "/tmp/mozi-web-tool-controls.png" });
+  await page.setViewportSize({ width: 430, height: 850 });
+  await expect(search).toBeVisible(); await expect(extractor).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "/tmp/mozi-web-tool-controls-mobile.png" });
 });

@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AngetTokenMonitorRouteImport } from './routes/angetTokenMonitor'
 import { Route as ChatRouteImport } from './routes/chat'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AngetTokenMonitorRoute = AngetTokenMonitorRouteImport.update({
+  id: '/angetTokenMonitor',
+  path: '/angetTokenMonitor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
@@ -25,27 +31,31 @@ const ChatRoute = ChatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/chat'
+  fullPaths: '/' | '/angetTokenMonitor' | '/chat'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/chat'
-  id: '__root__' | '/' | '/chat'
+  to: '/' | '/angetTokenMonitor' | '/chat'
+  id: '__root__' | '/' | '/angetTokenMonitor' | '/chat'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AngetTokenMonitorRoute: typeof AngetTokenMonitorRoute
   ChatRoute: typeof ChatRoute
 }
 
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/angetTokenMonitor': {
+      id: '/angetTokenMonitor'
+      path: '/angetTokenMonitor'
+      fullPath: '/angetTokenMonitor'
+      preLoaderRoute: typeof AngetTokenMonitorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/chat': {
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AngetTokenMonitorRoute: AngetTokenMonitorRoute,
   ChatRoute: ChatRoute,
 }
 export const routeTree = rootRouteImport

@@ -61,7 +61,7 @@ if (started) {
       const rendererEntry = resolveRendererEntry();
       const trayService = new TrayService(windowService, rendererEntry);
 
-      registerWindowIpc(windowService, () => trayService.quitApplication());
+      registerWindowIpc(windowService, () => trayService.quitApplication(), rendererEntry);
 
       // ========== Agent 初始化与启动：开始 ==========
       const agentIpc = registerAgentIpc(windowService, rendererEntry);

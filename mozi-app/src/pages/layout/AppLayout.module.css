@@ -153,6 +153,9 @@
   background: var(--app-surface-background);
 }
 
+.appShell[data-monitor="true"] .mainLayout { grid-template-columns: minmax(0, 1fr); }
+.appShell[data-monitor="true"] .content { padding-left: 8px; }
+
 @media (max-width: 767px) {
   .mainLayout {
     grid-template-columns: 52px minmax(0, 1fr);

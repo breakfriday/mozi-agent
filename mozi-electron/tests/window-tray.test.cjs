@@ -51,6 +51,7 @@ function setup(platform = "linux", packaged = false) {
       this.sent = [];
       this.webContents = Object.assign(new EventEmitter(), {
         mainFrame: {},
+        getURL: () => this.loaded?.url ?? `file://${this.loaded?.filePath}#${this.loaded?.hash ?? ''}`,
         isDestroyed: () => this.destroyed,
         send: (channel, state) => this.sent.push({ channel, state }),
         setWindowOpenHandler: (handler) => { this.openHandler = handler; },
@@ -103,6 +104,7 @@ function setup(platform = "linux", packaged = false) {
 
   const electron = {
     app, BrowserWindow, Tray, ipcMain, ipcRenderer,
+    shell: { openExternal: async () => {} },
     contextBridge: { exposeInMainWorld: (key, value) => { exposed[key] = value; } },
     Menu: { buildFromTemplate: (items) => items },
     nativeImage: {
@@ -121,7 +123,7 @@ function setup(platform = "linux", packaged = false) {
     });
     const module = { exports: {} };
     vm.runInNewContext(outputText, {
-      module, exports: module.exports, console, URL, TextEncoder, setTimeout, clearTimeout,
+      module, exports: module.exports, console, URL, URLSearchParams, TextEncoder, setTimeout, clearTimeout,
       crypto: require("node:crypto").webcrypto,
       __dirname: path.join(projectDir, ".vite/build"),
       process: mainProcess,
@@ -162,7 +164,7 @@ function setup(platform = "linux", packaged = false) {
   return {
     app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers, mainProcess, agentLifecycle,
     startMain,
-    registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication()),
+    registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication(), entry),
     loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
   };
 }
@@ -187,6 +189,37 @@ test("window service loads URL/file entries and retains mozi window settings", (
   assert.equal(local.loaded.filePath, "/renderer/index.html");
   assert.equal(local.loaded.hash, "/chat");
   assert.equal(local.options.frame, false);
+});
+
+test("token monitor windows reuse each session, retarget scopes, and close independently", () => {
+  const { windowService, windows, registerIpc, handlers } = setup();
+  registerIpc();
+  const main = windowService.createMainWindow(entry);
+  const event = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const open = handlers.get("window:open-token-monitor");
+  assert.equal(open(event, { sessionId: 's', runId: 'r' }), true);
+  const monitor = windows[1];
+  assert.equal(monitor.loaded.url, 'http://localhost:5173/mozi_app/angetTokenMonitor?sessionId=s&runId=r');
+  assert.equal(monitor.options.width, 1180);
+  monitor.minimize();
+  assert.equal(open(event, { sessionId: 's' }), true);
+  assert.equal(windows.length, 2);
+  assert.equal(monitor.minimized, false);
+  assert.equal(monitor.focused, true);
+  assert.equal(monitor.loaded.url, 'http://localhost:5173/mozi_app/angetTokenMonitor?sessionId=s');
+  // A selection changed inside the renderer must not prevent chat from retargeting it.
+  monitor.loaded.url += '&runId=other';
+  open(event, { sessionId: 's' });
+  assert.equal(monitor.loaded.url, 'http://localhost:5173/mozi_app/angetTokenMonitor?sessionId=s');
+  assert.equal(open({ ...event, senderFrame: {} }, { sessionId: 's2' }), false);
+  for (const target of [null, [], { sessionId: '' }, { sessionId: 's', runId: 7 }]) assert.equal(open(event, target), false);
+  monitor.close();
+  assert.equal(main.isDestroyed(), false);
+  open(event, { sessionId: 's' });
+  assert.notEqual(windows.at(-1), monitor);
+  const fileMonitor = windowService.openTokenMonitor({ type: 'file', filePath: '/renderer/index.html', hash: '/chat' }, { sessionId: 'file-session', runId: 'run-id' });
+  assert.equal(fileMonitor.loaded.filePath, '/renderer/index.html');
+  assert.equal(fileMonitor.loaded.hash, '/angetTokenMonitor?sessionId=file-session&runId=run-id');
 });
 
 test("window service reuses, restores, and cleans up windows by channel", () => {
@@ -425,10 +458,12 @@ test("preload wraps window notifications, filters payloads, and removes listener
   assert.equal(ipcRenderer.listenerCount("window:state-changed"), 0);
   await api.window.setFullScreen(false);
   await api.window.getState();
+  await api.window.openTokenMonitor({ sessionId: "s", runId: "r" });
   api.window.minimize();
   api.window.close();
   assert.deepEqual(calls, [
     ["window:set-full-screen", false], ["window:get-state"],
+    ["window:open-token-monitor", { sessionId: "s", runId: "r" }],
     ["window:minimize"], ["window:close"],
   ]);
 });

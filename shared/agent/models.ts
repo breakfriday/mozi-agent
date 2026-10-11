@@ -105,6 +105,7 @@ export type SessionSummary = {
 };
 
 export type SessionSnapshot = {
+  usage?: import("./usage").UsageMonitorView;
   session: SessionSummary;
   lastSeq: number;
   messages: MessageView[];

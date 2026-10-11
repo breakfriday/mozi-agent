@@ -30,16 +30,18 @@ export function AppLayout() {
   const appTheme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
   const selectedPath = location.pathname.replace(/\/+$/, "") || "/";
+  const monitor = selectedPath === "/angetTokenMonitor";
 
   return (
     <div
       className={styles.appShell}
       data-collapsed={menuCollapsed}
       data-desktop={bridgeApi.available}
+      data-monitor={monitor}
     >
       <header className={styles.header}>
         <div className={styles.brand}>
-          <Button
+          {!monitor && <Button
             type="text"
             icon={menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={() => setCollapsed((value) => !value)}
@@ -49,8 +51,8 @@ export function AppLayout() {
             aria-expanded={!menuCollapsed}
             aria-controls="app-menu"
             disabled={isCompact}
-          />
-          <span className={styles.brandName}>Mozi</span>
+          />}
+          <span className={styles.brandName}>{monitor ? "Mozi · 用量监控" : "Mozi"}</span>
         </div>
         <div className={styles.headerActions}>
           <Button
@@ -67,7 +69,7 @@ export function AppLayout() {
         </div>
       </header>
       <div className={styles.mainLayout}>
-        <aside className={styles.sideBar}>
+        {!monitor && <aside className={styles.sideBar}>
           <nav id="app-menu" className={styles.menu} aria-label="主导航">
             {menuItems.map((item) => (
               <Tooltip
@@ -89,7 +91,7 @@ export function AppLayout() {
               </Tooltip>
             ))}
           </nav>
-        </aside>
+        </aside>}
         <main className={styles.content}>
           <div className={styles.contentInner}>
             <Outlet />

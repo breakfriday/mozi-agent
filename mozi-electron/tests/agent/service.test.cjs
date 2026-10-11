@@ -514,8 +514,8 @@ test('deleting during history loading cannot resurrect a cached session or accep
 
 test('provider defaults, session choices and accepted Runs persist independently', async t => {
   let version = 'configuration-one'; const opened = [];
-  const a = { providerId: 'first', modelId: 'same-model', thinkingLevel: 'off' };
-  const b = { providerId: 'second', modelId: 'same-model', thinkingLevel: 'high' };
+  const a = { providerId: 'first', modelId: 'same-model', thinkingLevel: 'off', webSearch: false, webExtractor: true };
+  const b = { providerId: 'second', modelId: 'same-model', thinkingLevel: 'high', webSearch: true, webExtractor: false };
   const f = await fixture(t, runtime => ({
     listProviders: async () => [], saveProvider: async () => {}, removeProvider: async () => {},
     prepareModel: async selection => {
@@ -567,6 +567,9 @@ test('session creation deduplication compares the requested model, not a later d
   assert.deepEqual(await f.call('session.create', { ...request, model: { modelId: a.modelId, providerId: a.providerId } }), explicit);
   await assert.rejects(f.call('session.create', { ...request, model: b }), e => e.code === 'SUBMISSION_CONFLICT');
   await assert.rejects(f.call('session.create', { ...request, model: { ...a, thinkingLevel: 'off' } }), e => e.code === 'SUBMISSION_CONFLICT');
+  for (const field of ['webSearch', 'webExtractor']) {
+    await assert.rejects(f.call('session.create', { ...request, model: { ...a, [field]: false } }), e => e.code === 'SUBMISSION_CONFLICT');
+  }
 });
 
 test('provider-reported model travels through events and snapshots independently of the selected model', async t => {
@@ -637,4 +640,30 @@ test('legacy placeholder titles refresh while SQLite-only names migrate to nativ
   f.runtime.setSessionName(f.nativeSessions[1].descriptor, '从 Pi 修改的名称');
   const again = await reopen(t, f);
   assert.equal((await again.call('session.list', {})).items.find(s => s.sessionId === 's2').title, '从 Pi 修改的名称');
+});
+
+test('usage updates survive cancellation and restart without double counting', async t => {
+  const f = await fixture(t);
+  const calls = new Map();
+  f.runtime.readUsage = async () => [...calls.values()];
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'usage' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  const start = { id: 'generation', runId, model: 'model', provider: 'fixture', status: 'running', startedAt: new Date().toISOString() };
+  const send = call => { calls.set(call.id, call); f.executions[0].emit({ type: 'usage.update', call }); };
+  send(start);
+  assert.equal((await f.call('session.snapshot', { sessionId })).usage.total.pendingCalls, 1);
+  const cancellation = f.call('run.cancel', { sessionId, runId });
+  const final = { ...start, status: 'cancelled', durationMs: 50, usage: { input: 100, cacheRead: 20, cacheWrite: 0, output: 40, reasoning: 30, totalTokens: 160 } };
+  send(final); send(final);
+  await cancellation; await tick();
+  const snapshot = await f.call('session.snapshot', { sessionId });
+  assert.equal(snapshot.usage.calls.length, 1);
+  assert.equal(snapshot.usage.total.totalTokens, 160);
+  assert.equal(snapshot.usage.runs[0].total.totalTokens, 160);
+  assert.equal(snapshot.runs[0].status, 'cancelled');
+  await f.service.close();
+  const restored = await reopen(t, f);
+  const recovered = await restored.call('session.snapshot', { sessionId });
+  assert.deepEqual(recovered.usage, snapshot.usage);
+  assert.deepEqual(f.fatal, []);
 });
