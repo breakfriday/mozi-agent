@@ -249,6 +249,14 @@ export function registerAgentIpc(
       windowId: client.sender.id,
     });
     const response = await transport.request(request);
+    if (request.method === "session.delete" && isResponseFor("session.delete", response) && response.ok) {
+      windowService.closeWindow(`token-monitor:${request.params.sessionId}`);
+      for (const subscriber of clients.values()) {
+        for (const [id, sessionId] of subscriber.subscriptions) {
+          if (sessionId === request.params.sessionId) subscriber.subscriptions.delete(id);
+        }
+      }
+    }
     if (
       request.method === "session.list" &&
       isResponseFor("session.list", response) &&

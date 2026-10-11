@@ -47,6 +47,8 @@ export interface RuntimeSession {
 export interface AgentRuntime {
   readUsage?(descriptor: RuntimeSessionDescriptor): Promise<ModelCallView[]>;
   setSessionName(descriptor: RuntimeSessionDescriptor, name: string): void;
+  /** Synchronous: no new execution may acquire the file during deletion. */
+  deleteSession(descriptor: RuntimeSessionDescriptor): void;
   createSession(): Promise<RuntimeSessionDescriptor>;
   listSessions(): Promise<RuntimeSessionInfo[]>;
   openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession>;

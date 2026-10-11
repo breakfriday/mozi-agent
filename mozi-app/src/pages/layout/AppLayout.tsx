@@ -38,6 +38,7 @@ export function AppLayout() {
       data-collapsed={menuCollapsed}
       data-desktop={bridgeApi.available}
       data-monitor={monitor}
+      data-chat={selectedPath === "/chat"}
     >
       <header className={styles.header}>
         <div className={styles.brand}>

@@ -27,7 +27,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     try {
       this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 3 && version !== 4 && version !== 5 && version !== 6) {
+      if (version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7) {
         if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
         this.db.exec("PRAGMA foreign_keys=OFF;");
         // Authorized development reset; native session files are never deleted.
@@ -40,10 +40,10 @@ export class SqliteMetadataRepository implements MetadataStore {
           this.db.exec("PRAGMA user_version=3;");
         });
       }
-      if (version !== 4 && version !== 5 && version !== 6) this.transaction(() => {
+      if (version !== 4 && version !== 5 && version !== 6 && version !== 7) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; PRAGMA user_version=4;");
       });
-      if (version !== 5 && version !== 6) this.transaction(() => {
+      if (version !== 5 && version !== 6 && version !== 7) this.transaction(() => {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model_config_version TEXT;
@@ -51,8 +51,13 @@ export class SqliteMetadataRepository implements MetadataStore {
           CREATE TABLE model_settings (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL);
           PRAGMA user_version=5;`);
       });
-      if (version !== 6) this.transaction(() => {
+      if (version !== 6 && version !== 7) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN title_source TEXT CHECK(title_source IN ('automatic', 'explicit')); PRAGMA user_version=6;");
+      });
+      if (version !== 7) this.transaction(() => {
+        this.db.exec(`CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS deleted_creations (operation_id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+          PRAGMA user_version=7;`);
       });
       this.db.exec("PRAGMA foreign_keys=ON;");
     } catch (error) { this.db.close(); throw error; }
@@ -82,11 +87,19 @@ export class SqliteMetadataRepository implements MetadataStore {
     }));
   }
   deletedSessionIds(): string[] {
-    return this.statement("SELECT id FROM sessions WHERE deleted_at IS NOT NULL").all().map(row => String(row.id));
+    return this.statement("SELECT id FROM sessions WHERE deleted_at IS NOT NULL UNION SELECT id FROM deleted_sessions").all().map(row => String(row.id));
   }
-  // Retain native history and deduplication records; tombstones prevent rediscovery.
+  // Keep only IDs for retry safety; remove titles, paths, inputs and usage associations.
   deleteSession(sessionId: string, deletedAt: string): void {
-    this.statement("UPDATE sessions SET deleted_at=? WHERE id=?").run(deletedAt, sessionId);
+    this.transaction(() => {
+      this.statement("INSERT OR IGNORE INTO deleted_sessions (id, deleted_at) VALUES (?, ?)").run(sessionId, deletedAt);
+      this.statement(`INSERT OR IGNORE INTO deleted_creations (operation_id, session_id)
+        SELECT operation_id, session_id FROM creations WHERE session_id=?`).run(sessionId);
+      this.statement("DELETE FROM message_links WHERE session_id=?").run(sessionId);
+      this.statement("DELETE FROM runs WHERE session_id=?").run(sessionId);
+      this.statement("DELETE FROM creations WHERE session_id=?").run(sessionId);
+      this.statement("DELETE FROM sessions WHERE id=?").run(sessionId);
+    });
   }
   saveSession({ descriptor, session, titleSource }: SessionMetadata): void {
     this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at, model, title_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -115,7 +128,11 @@ export class SqliteMetadataRepository implements MetadataStore {
   }
   findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection } | undefined {
     const row = this.statement("SELECT title, session_id, model FROM creations WHERE operation_id=?").get(operationId);
-    return row ? { title: String(row.title), sessionId: String(row.session_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}) } : undefined;
+    if (!row) {
+      const deleted = this.statement("SELECT session_id FROM deleted_creations WHERE operation_id=?").get(operationId);
+      return deleted ? { title: "", sessionId: String(deleted.session_id) } : undefined;
+    }
+    return { title: String(row.title), sessionId: String(row.session_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}) };
   }
   create(operationId: string, metadata: SessionMetadata, model?: ModelSelection): void {
     this.transaction(() => {

@@ -120,7 +120,7 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
   const errorText = error?.code === "RUNTIME_UNAVAILABLE" ? "Agent 后台尚未连接，请稍后检查连接。" : error?.message;
   return (
     <ThreadPrimitive.Root className={styles.thread}>
-      <ThreadPrimitive.Viewport className={styles.viewport}>
+      <ThreadPrimitive.Viewport className={styles.viewport} role="region" aria-label="聊天消息">
         <AuiIf condition={(s) => s.thread.isEmpty}>
           <div className={styles.welcome}>
             <MoziIcon animated />

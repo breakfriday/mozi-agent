@@ -1,5 +1,5 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, writeFileSync, lstatSync, realpathSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../application/ports/agent-runtime";
 import { failure } from "../../application/errors";
@@ -34,6 +34,33 @@ export class PiNativeHistory {
     const manager = SessionManager.open(descriptor.locator, this.sessionDir, descriptor.cwd);
     if (manager.getSessionId() !== descriptor.sessionId) throw failure("INTERNAL_ERROR", "Pi 会话身份与应用记录不一致。");
     return manager;
+  }
+  deleteSession(descriptor: RuntimeSessionDescriptor): void {
+    if (this.active.has(descriptor.sessionId)) throw failure("SESSION_BUSY", "会话正在执行，请先停止任务再删除。");
+    if (descriptor.engine !== "pi") throw failure("UNSUPPORTED_CAPABILITY", "当前适配器不支持此会话引擎。");
+    const inside = (root: string, target: string) => {
+      const relative = path.relative(root, target);
+      return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    };
+    const locator = path.resolve(descriptor.locator);
+    if (!inside(path.resolve(this.sessionDir), locator) || path.extname(locator) !== ".jsonl") {
+      throw failure("PERMISSION_DENIED", "只能永久删除本应用管理的 Pi 会话文件。");
+    }
+    try {
+      const stat = lstatSync(locator, { throwIfNoEntry: false });
+      // A previous attempt may have removed the file before metadata committed.
+      if (!stat) return;
+      if (!stat.isFile() || stat.isSymbolicLink()
+        || !inside(realpathSync(this.sessionDir), realpathSync(locator))) {
+        throw failure("PERMISSION_DENIED", "会话文件路径不安全，未执行永久删除。");
+      }
+      this.open(descriptor); // Verify native session identity before unlinking.
+      unlinkSync(locator);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error
+        && ["PERMISSION_DENIED", "INTERNAL_ERROR"].includes(String(error.code))) throw error;
+      throw failure("INTERNAL_ERROR", "无法删除 Pi 会话文件，会话记录已保留，请检查文件权限后重试。");
+    }
   }
   acquire(descriptor: RuntimeSessionDescriptor): SessionManager {
     if (this.active.has(descriptor.sessionId)) throw failure("SESSION_BUSY", "会话正在执行。");

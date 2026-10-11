@@ -102,7 +102,10 @@
 html,
 body,
 #root {
+  width: 100%;
   height: 100%;
+  /* The desktop shell owns the viewport; pages provide their own scroll areas. */
+  overflow: hidden;
 }
 body {
   margin: 0;

@@ -30,13 +30,13 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 7);
   assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name),
-    ['creations', 'message_links', 'model_settings', 'runs', 'sessions']);
+    ['creations', 'deleted_creations', 'deleted_sessions', 'message_links', 'model_settings', 'runs', 'sessions']);
   assert.equal(db.prepare('PRAGMA table_info(sessions)').all().some(column => ['record', 'last_seq', 'file_path'].includes(column.name)), false);
   db.close();
 });
-test('v6 reopens without resetting metadata; unknown versions are never discarded', t => {
+test('v7 reopens without resetting metadata; unknown versions are never discarded', t => {
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
   const reopened = new SqliteMetadataRepository(filename);
@@ -119,4 +119,36 @@ test('v5 title migration preserves existing metadata and records title provenanc
   upgraded.saveSession({ ...upgraded.listSessions()[0], titleSource: 'automatic' }); upgraded.close();
   const reopened = new SqliteMetadataRepository(filename);
   assert.equal(reopened.listSessions()[0].titleSource, 'automatic'); reopened.close();
+});
+
+
+test('permanent deletion removes session content and relationships while retaining only retry IDs', t => {
+  const filename = file(t), repository = new SqliteMetadataRepository(filename);
+  repository.create('create-private', metadata());
+  const run = { id: 'r', sessionId: 's', userMessageId: 'm', status: 'completed', createdAt: metadata().session.createdAt, updatedAt: metadata().session.updatedAt };
+  repository.accept({ run, clientMessageId: 'c', contentHash: 'hash', pendingContent: [{ type: 'text', text: 'private input' }] },
+    { messageId: 'm', runId: 'r', role: 'user', ordinal: 0 });
+  repository.deleteSession('s', new Date().toISOString());
+  repository.deleteSession('s', new Date().toISOString());
+  repository.close();
+  const db = new DatabaseSync(filename);
+  for (const table of ['sessions', 'runs', 'message_links', 'creations']) {
+    assert.equal(db.prepare(`SELECT count(*) as n FROM ${table}`).get().n, 0, table);
+  }
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.equal(db.prepare('SELECT session_id FROM deleted_creations').get().session_id, 's');
+  db.close();
+});
+
+test('v6 upgrade preserves previously soft-deleted sessions without purging historical files', t => {
+  const filename = file(t), repository = new SqliteMetadataRepository(filename);
+  repository.create('legacy', metadata()); repository.close();
+  const old = new DatabaseSync(filename);
+  old.exec("DROP TABLE deleted_creations; DROP TABLE deleted_sessions; UPDATE sessions SET deleted_at='2026-01-01'; PRAGMA user_version=6;");
+  old.close();
+  const migrated = new SqliteMetadataRepository(filename);
+  assert.equal(migrated.listSessions().length, 0);
+  assert.deepEqual(Array.from(migrated.deletedSessionIds()), ['s']);
+  assert.equal(migrated.findCreation('legacy').sessionId, 's');
+  migrated.close();
 });

@@ -3,6 +3,8 @@
   grid-template-rows: 40px minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
   background: var(--app-header-background);
   color: var(--app-text-color);
 }
@@ -152,6 +154,8 @@
   border-radius: 10px;
   background: var(--app-surface-background);
 }
+
+.appShell[data-chat="true"] .contentInner { overflow: hidden; }
 
 .appShell[data-monitor="true"] .mainLayout { grid-template-columns: minmax(0, 1fr); }
 .appShell[data-monitor="true"] .content { padding-left: 8px; }

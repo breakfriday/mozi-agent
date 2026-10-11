@@ -31,6 +31,11 @@ async function fixture(t, catalogFactory) {
       histories.set(descriptor.sessionId, []); return descriptor;
     },
     async listSessions() { return structuredClone(nativeSessions); },
+    deleteSession(descriptor) {
+      const index = nativeSessions.findIndex(s => s.descriptor.sessionId === descriptor.sessionId);
+      if (index >= 0) nativeSessions.splice(index, 1);
+      histories.delete(descriptor.sessionId);
+    },
     setSessionName(descriptor, name) {
       Object.assign(nativeSessions.find(s => s.descriptor.sessionId === descriptor.sessionId), { name, title: name });
     },
@@ -479,7 +484,7 @@ test('rename updates snapshots and survives native discovery; deleted sessions n
   recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, () => {});
   await recovered.initialize();
   assert.equal(recovered.sessions.list({}).items.length, 0);
-  assert.equal(f.nativeSessions.length, 1, 'native history remains owned by the runtime');
+  assert.equal(f.nativeSessions.length, 0, 'native history is permanently deleted');
   await recovered.close();
 });
 
@@ -666,4 +671,40 @@ test('usage updates survive cancellation and restart without double counting', a
   const recovered = await restored.call('session.snapshot', { sessionId });
   assert.deepEqual(recovered.usage, snapshot.usage);
   assert.deepEqual(f.fatal, []);
+});
+
+
+test('native deletion failures retain the session and its database records for retry', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'delete-failure' });
+  const remove = f.runtime.deleteSession;
+  f.runtime.deleteSession = () => { throw { code: 'INTERNAL_ERROR', message: 'Cannot unlink file' }; };
+  await assert.rejects(f.call('session.delete', { sessionId }), e => e.code === 'INTERNAL_ERROR');
+  assert.equal(f.service.sessions.list({}).items[0].sessionId, sessionId);
+  assert.equal(f.repository.findCreation('delete-failure').sessionId, sessionId);
+  assert.equal(f.nativeSessions.length, 1);
+  assert.equal(f.fatal.length, 0);
+  f.runtime.deleteSession = remove;
+  await f.call('session.delete', { sessionId });
+  assert.equal(f.nativeSessions.length, 0);
+});
+
+
+test('deleting during usage loading cannot restore cache or write orphaned links', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'loading-usage-delete' });
+  await f.service.close();
+  let release;
+  f.runtime.readUsage = () => new Promise(resolve => { release = resolve; });
+  const failures = [];
+  const recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, e => failures.push(e));
+  await recovered.initialize();
+  const pending = recovered.sessions.snapshot({ sessionId });
+  await tick();
+  recovered.sessions.delete({ sessionId });
+  release([]);
+  await assert.rejects(pending, e => e.code === 'SESSION_NOT_FOUND');
+  assert.equal(recovered.sessions.peek(sessionId), undefined);
+  assert.equal(failures.length, 0);
+  await recovered.close();
 });

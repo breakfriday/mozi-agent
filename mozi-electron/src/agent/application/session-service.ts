@@ -61,6 +61,8 @@ export class SessionService {
       this.assertExists(sessionId);
       const { record, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
       if (this.runtime.readUsage) record.snapshot.usage = buildUsageMonitor(await this.runtime.readUsage(metadata.descriptor));
+      this.control.assertAvailable();
+      this.assertExists(sessionId);
       record.snapshot.lastSeq = this.events.sequence(sessionId);
       this.assertSnapshot(record.snapshot);
       this.control.write(() => this.repository.saveLinks(sessionId, confirmedLinks));
@@ -165,6 +167,7 @@ export class SessionService {
       ["accepted", "running", "waiting_approval", "cancelling"].includes(run.status))) {
       throw failure("SESSION_BUSY", "会话仍有任务运行，请先停止任务再删除。");
     }
+    this.runtime.deleteSession(this.catalog.get(input.sessionId)!.descriptor);
     this.control.write(() => this.repository.deleteSession(input.sessionId, now()));
     this.catalog.delete(input.sessionId);
     this.sessions.delete(input.sessionId);

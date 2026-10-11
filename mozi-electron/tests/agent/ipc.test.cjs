@@ -14,6 +14,7 @@ function setup(t, allow = () => true, rendererEntry = entry) {
   const load = createLoader({ electron: { ipcMain } });
   const { registerAgentIpc } = load(path.resolve(__dirname, "../../src/main/agent-ipc.ts"));
   const windows = new Set();
+  const closedWindows = [];
   function window() {
     const sender = Object.assign(new EventEmitter(), {
       mainFrame: { url: entry.url }, sent: [], destroyed: false,
@@ -22,7 +23,7 @@ function setup(t, allow = () => true, rendererEntry = entry) {
     });
     windows.add(sender); return sender;
   }
-  const router = registerAgentIpc({ getWindowForWebContents: (sender) => windows.has(sender) ? {} : undefined }, rendererEntry, undefined, allow);
+  const router = registerAgentIpc({ closeWindow: id => closedWindows.push(id), getWindowForWebContents: (sender) => windows.has(sender) ? {} : undefined }, rendererEntry, undefined, allow);
   t.after(() => router.dispose());
   let count = 0;
   function call(sender, method, params = {}, options = {}) {
@@ -42,7 +43,7 @@ function setup(t, allow = () => true, rendererEntry = entry) {
     child.reply = (requestId, result) => child.onMessage({ protocolVersion: 1, kind: "response", requestId, ok: true, result });
     return child;
   }
-  return { router, window, call, connect, load, handlers };
+  return { closedWindows, router, window, call, connect, load, handlers };
 }
 const events = (sender) => sender.sent.filter((item) => item.channel === "mozi:agent:event");
 
@@ -200,4 +201,24 @@ test("bridge → preload → Main → runtime preserves errors and event-before-
   assert.equal((await api.getRuntimeState()).state, "ready"); assert.equal(logs.length, before);
   logging.configureAgentLogging({ enabled: true }, () => { throw new Error("log sink failed"); });
   assert.equal((await api.getRuntimeState()).state, "ready");
+});
+
+
+test("only successful deletion closes its monitor and removes subscriptions", async t => {
+  const { window, call, connect, closedWindows } = setup(t);
+  const sender = window(), monitor = window(), child = connect();
+  await call(monitor, "session.subscribe", { sessionId: "s" });
+  await call(monitor, "session.subscribe", { sessionId: "other" });
+  const failed = call(sender, "session.delete", { sessionId: "s" });
+  child.onMessage({ protocolVersion: 1, kind: "response", requestId: child.sent.at(-1).requestId,
+    ok: false, error: { code: "SESSION_BUSY", message: "Still running" } });
+  assert.equal((await failed).ok, false);
+  assert.deepEqual(closedWindows, []);
+  child.emit("s"); assert.equal(events(monitor).length, 1);
+  const success = call(sender, "session.delete", { sessionId: "s" });
+  child.reply(child.sent.at(-1).requestId, { sessionId: "s" });
+  assert.equal((await success).ok, true);
+  assert.deepEqual(closedWindows, ['token-monitor:s']);
+  child.emit("s", 2); assert.equal(events(monitor).length, 1);
+  child.emit("other"); assert.equal(events(monitor).length, 2);
 });
