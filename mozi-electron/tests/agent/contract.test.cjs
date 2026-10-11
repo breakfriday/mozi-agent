@@ -8,6 +8,18 @@ const request = (method, params) => ({ protocolVersion: 1, kind: "request", requ
 const event = (type, data) => ({ protocolVersion: 1, kind: "event", sessionId: "session", runId: "run", seq: 1, type, data });
 const timestamp = "2026-10-05T00:00:00.000Z";
 
+test("thinking levels are validated throughout model selection", () => {
+  for (const thinkingLevel of contract.THINKING_LEVELS) {
+    const model = { providerId: 'bailian-tp', modelId: 'qwen', thinkingLevel };
+    assert.equal(contract.isAgentRequest(request('session.setModel', { sessionId: 's', model })), true);
+    assert.equal(contract.isAgentRequest(request('model.setDefault', { model })), true);
+    assert.equal(contract.isAgentRequest(request('session.create', { clientOperationId: 'c', model })), true);
+  }
+  for (const thinkingLevel of ['ultra', '', true, 3, null]) {
+    assert.equal(contract.isAgentRequest(request('session.setModel', { sessionId: 's', model: { providerId: 'p', modelId: 'm', thinkingLevel } })), false);
+  }
+});
+
 test("every public method has matching parameter and result validation", () => {
   const cases = {
     "model.settings": [{}, { providers: [] }],

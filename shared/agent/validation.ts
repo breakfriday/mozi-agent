@@ -10,8 +10,8 @@ import type {
   RuntimeNotice, RuntimeShutdown,
 } from "./protocol";
 
-import { PROVIDER_APIS } from "./providers";
-import type { ModelSelection, ProviderModel, ProviderView, ModelSettings } from "./providers";
+import { PROVIDER_APIS, THINKING_LEVELS } from "./providers";
+import type { ModelSelection, ProviderModel, ProviderModelView, ProviderView, ModelSettings, ThinkingLevel } from "./providers";
 
 type Guard<T> = (value: unknown) => value is T;
 
@@ -88,13 +88,18 @@ export const isAppError = object<AppError>({
   message: string,
 });
 
-export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id });
+const thinkingLevel = oneOf(...THINKING_LEVELS);
+export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id, thinkingLevel: optional(thinkingLevel) });
 const positive: Guard<number> = (value): value is number => sequence(value) && value > 0 && value <= 100_000_000;
-const providerModel = object<ProviderModel>({ id, name: id, contextWindow: positive, maxTokens: positive, reasoning: boolean, vision: boolean });
+const providerModelShape = { id, name: id, contextWindow: positive, maxTokens: positive, reasoning: boolean, vision: boolean };
+const providerModel = object<ProviderModel>(providerModelShape);
+const providerModelView = object<ProviderModelView>({ ...providerModelShape,
+  thinkingLevels: optional((value): value is ThinkingLevel[] => array(thinkingLevel)(value) && value.length > 0 && new Set(value).size === value.length),
+});
 const providerView = object<ProviderView>({
   id, name: string, source: oneOf("builtin", "extension", "configured", "custom"), configured: boolean,
   baseUrl: string, api: string, endpointLocked: boolean, removable: boolean,
-  models: array(providerModel), customModels: array(providerModel),
+  models: array(providerModelView), customModels: array(providerModel),
 });
 const modelSettings = object<ModelSettings>({ providers: array(providerView), defaultModel: optional(isModelSelection) });
 const providerId: Guard<string> = (value): value is string => id(value) && /^[a-z0-9][a-z0-9._-]*$/.test(value)

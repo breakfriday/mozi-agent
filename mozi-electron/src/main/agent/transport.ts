@@ -175,7 +175,9 @@ export class AgentTransport {
         startedAt: Date.now(),
       });
       try {
-        log.debug("request.send", request, { generation: this.generation });
+        log.debug("request.send.postMessage", request, {
+          generation: this.generation,
+        });
         this.connection!.postMessage(request);
       } catch {
         this.disconnect("Could not send request to Agent runtime.");
@@ -255,15 +257,15 @@ export class AgentTransport {
         );
         return;
       }
-      log.debug("response.validated", packet, {
-        method: pending.request.method,
-      });
+      // log.debug("response.validated", packet, {
+      //   method: pending.request.method,
+      // });
       // The result was checked against the method retained in the pending record.
       this.complete(packet.requestId, packet as RuntimeResponse);
       return;
     }
     if (isAgentEvent(packet)) {
-      //  log.debug("event.validated", packet);
+      log.debug("event.dispatch.tolistener", packet);
       //  通知事件订阅者；当前由 agent-ipc.ts 接收并转发给有权限且已订阅会话的窗口。
       for (const listener of this.eventListeners) listener(packet);
       return;

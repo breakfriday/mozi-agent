@@ -78,7 +78,8 @@ export class SessionService {
       const existing = this.repository.findCreation(input.clientOperationId);
       if (existing) {
         this.assertExists(existing.sessionId);
-        if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
+        if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId
+          || existing.model?.thinkingLevel !== input.model?.thinkingLevel) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
         return { sessionId: existing.sessionId };
       }
       const model = input.model ?? this.models.defaultSelection();
@@ -108,7 +109,7 @@ export class SessionService {
     await this.models.prepare(input.model);
     this.control.assertAvailable(); this.assertExists(input.sessionId);
     if (this.repository.unfinishedRuns().some(run => run.sessionId === input.sessionId)) {
-      throw failure("SESSION_BUSY", "请先停止当前任务，再切换 provider 或模型。");
+      throw failure("SESSION_BUSY", "请先停止当前任务，再修改模型或思考设置。");
     }
     return { session: this.bindModel(input.sessionId, input.model) };
   }

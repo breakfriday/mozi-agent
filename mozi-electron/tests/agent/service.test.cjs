@@ -514,8 +514,8 @@ test('deleting during history loading cannot resurrect a cached session or accep
 
 test('provider defaults, session choices and accepted Runs persist independently', async t => {
   let version = 'configuration-one'; const opened = [];
-  const a = { providerId: 'first', modelId: 'same-model' };
-  const b = { providerId: 'second', modelId: 'same-model' };
+  const a = { providerId: 'first', modelId: 'same-model', thinkingLevel: 'off' };
+  const b = { providerId: 'second', modelId: 'same-model', thinkingLevel: 'high' };
   const f = await fixture(t, runtime => ({
     listProviders: async () => [], saveProvider: async () => {}, removeProvider: async () => {},
     prepareModel: async selection => {
@@ -534,6 +534,7 @@ test('provider defaults, session choices and accepted Runs persist independently
   const accepted = await f.call('run.start', input(sessionId));
   version = 'configuration-two';
   await assert.rejects(f.call('session.setModel', { sessionId, model: b }), e => e.code === 'SESSION_BUSY');
+  await assert.rejects(f.call('session.setModel', { sessionId, model: { ...a, thinkingLevel: 'medium' } }), e => e.code === 'SESSION_BUSY');
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ selection: a, version: 'configuration-one' }]);
   const run = await f.call('run.get', { sessionId, runId: accepted.runId });
@@ -565,6 +566,7 @@ test('session creation deduplication compares the requested model, not a later d
   await f.call('session.setModel', { sessionId: explicit.sessionId, model: b });
   assert.deepEqual(await f.call('session.create', { ...request, model: { modelId: a.modelId, providerId: a.providerId } }), explicit);
   await assert.rejects(f.call('session.create', { ...request, model: b }), e => e.code === 'SUBMISSION_CONFLICT');
+  await assert.rejects(f.call('session.create', { ...request, model: { ...a, thinkingLevel: 'off' } }), e => e.code === 'SUBMISSION_CONFLICT');
 });
 
 test('provider-reported model travels through events and snapshots independently of the selected model', async t => {

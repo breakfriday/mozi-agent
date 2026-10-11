@@ -22,6 +22,40 @@ const custom = (name = 'custom', apiKey = 'fixture-only-key') => ({ providerId: 
   models: [{ id: 'model', name: 'A Model', contextWindow: 32768, maxTokens: 4096, reasoning: false, vision: false }],
 });
 
+function respondWithResponses(res, id, thinking = true) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  const send = event => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  const response = { id: `resp_${id}`, model: 'server-responses-model', status: 'in_progress', output: [] };
+  send({ type: 'response.created', response });
+  if (thinking) {
+    const item = { id: `rs_${id}`, type: 'reasoning', summary: [], content: [{ type: 'reasoning_text', text: 'fixture thinking' }] };
+    send({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
+    send({ type: 'response.reasoning_text.delta', output_index: 0, delta: 'fixture thinking' });
+    send({ type: 'response.output_item.done', output_index: 0, item });
+    response.output.push(item);
+  }
+  for (const [index, item] of [
+    { id: `ws_${id}`, type: 'web_search_call', status: 'completed', action: { type: 'search', queries: ['fixture query'], sources: [{ type: 'url', url: 'https://example.com/source' }] } },
+    ...(thinking ? [{ id: `we_${id}`, type: 'web_extractor_call', status: 'completed', urls: ['https://example.com/source'], goal: 'Read the source', output: 'fixture evidence' }] : []),
+  ].entries()) {
+    send({ type: 'response.output_item.added', output_index: index + 1, item: { ...item, status: 'in_progress' } });
+    send({ type: 'response.output_item.done', output_index: index + 1, item });
+    response.output.push(item);
+  }
+  const message = { id: `msg_${id}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'search fixture answer', annotations: [] }] };
+  send({ type: 'response.output_item.added', output_index: 3, item: { ...message, status: 'in_progress', content: [] } });
+  send({ type: 'response.content_part.added', output_index: 3, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } });
+  send({ type: 'response.output_text.delta', output_index: 3, content_index: 0, delta: 'search fixture answer' });
+  send({ type: 'response.output_item.done', output_index: 3, item: message });
+  response.output.push(message);
+  send({ type: 'response.completed', response: { ...response, status: 'completed', usage: {
+    input_tokens: 20, input_tokens_details: { cached_tokens: 4 }, output_tokens: 10,
+    output_tokens_details: { reasoning_tokens: thinking ? 3 : 0 }, total_tokens: 30,
+    x_tools: { web_search: { count: 1 }, web_extractor: { count: thinking ? 1 : 0 } },
+  } } });
+  res.end();
+}
+
 test('real Pi loads the pinned extension model catalog without credentials or ambient extensions', async t => {
   const f = await fixture(t);
   const providers = await f.manager.listProviders();
@@ -29,7 +63,11 @@ test('real Pi loads the pinned extension model catalog without credentials or am
   assert.ok(bailian); assert.equal(bailian.source, 'extension'); assert.equal(bailian.configured, false);
   assert.equal(bailian.models.length, 8);
   assert.ok(bailian.models.some(model => model.id === 'deepseek-v4-pro'));
+  for (const model of bailian.models) {
+    assert.deepEqual(Array.from(model.thinkingLevels), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], model.id);
+  }
   assert.equal(bailian.endpointLocked, true);
+  assert.equal(bailian.api, 'openai-responses');
   const { isApiResultFor } = f.load(path.resolve(__dirname, '../../../shared/agent'));
   assert.equal(isApiResultFor('model.settings', { ok: true, result: { providers } }), true, 'entire catalog crosses the shared contract');
   assert.equal(existsSync(path.join(f.config.piDir, 'auth.json')), false);
@@ -58,17 +96,60 @@ test('custom provider/key persist privately, are not returned, and edits do not 
   assert.equal(readFileSync(path.join(f.root, 'providers/auth.json'), 'utf8').includes('replacement-secret'), false);
 });
 
-test('Token Plan refuses endpoint overrides and retains package model compatibility when adding models', async t => {
+test('Token Plan refuses endpoint overrides and uses Responses defaults when adding models', async t => {
   const f = await fixture(t);
   await assert.rejects(f.manager.saveProvider({ providerId: 'bailian-tp', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }), e => e.code === 'INVALID_ARGUMENT');
-  await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-plan-key', models: custom().models });
+  await assert.rejects(f.manager.saveProvider({ providerId: 'bailian-tp', api: 'anthropic-messages' }), e => e.code === 'INVALID_ARGUMENT');
+  await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-plan-key', models: [
+    ...custom().models,
+    { ...custom().models[0], id: 'unverified-reasoner', reasoning: true },
+    { ...custom().models[0], id: 'qwen3.8-max', reasoning: true },
+  ] });
   const configured = (await f.manager.listProviders()).find(p => p.id === 'bailian-tp');
-  assert.equal(configured.models.length, 9); assert.equal(configured.configured, true);
+  assert.equal(configured.models.length, 10); assert.equal(configured.configured, true);
   const prepared = await f.manager.prepare({ providerId: 'bailian-tp', modelId: 'model' });
   assert.equal(prepared.model.baseUrl, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1');
-  assert.equal(prepared.model.compat.thinkingFormat, 'qwen');
+  assert.equal(prepared.model.api, 'openai-responses');
   assert.equal(prepared.model.compat.supportsDeveloperRole, false);
+  assert.equal(prepared.model.compat.thinkingFormat, undefined);
+  assert.equal(prepared.model.compat.supportsReasoningEffort, undefined, 'Chat Completions compatibility is not used by Responses');
+  assert.equal(prepared.model.thinkingLevelMap.xhigh, 'xhigh');
+  assert.equal(prepared.model.thinkingLevelMap.max, 'max');
+  assert.deepEqual(JSON.parse(JSON.stringify(prepared.model.samplingParams.tools)), [{ type: 'web_search' }, { type: 'web_extractor' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(prepared.model.samplingParamsByThinkingLevel.off.tools)), [{ type: 'web_search' }]);
+  assert.equal(prepared.model.samplingParams.enable_search, undefined);
+  assert.equal(prepared.model.samplingParams.search_options, undefined);
+  for (const { id: modelId } of configured.models.filter(model => model.reasoning)) {
+    for (const thinkingLevel of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+      const binding = await f.manager.prepare({ providerId: 'bailian-tp', modelId, thinkingLevel });
+      assert.equal(binding.thinkingLevel, thinkingLevel);
+      assert.equal(binding.model.api, 'openai-responses');
+    }
+  }
+  assert.deepEqual(Array.from(configured.models.find(model => model.id === 'unverified-reasoner').thinkingLevels), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  await assert.rejects(f.manager.prepare({ providerId: 'bailian-tp', modelId: 'model', thinkingLevel: 'medium' }), e => e.code === 'INVALID_ARGUMENT');
   await assert.rejects(f.manager.removeProvider('bailian-tp'), e => e.code === 'INVALID_ARGUMENT');
+});
+
+test('legacy Token Plan settings upgrade to Responses without rewriting files on read or changing model IDs', async t => {
+  const f = await fixture(t);
+  const filename = path.join(f.root, 'providers/models.json');
+  const contents = JSON.stringify({ providers: { 'bailian-tp': {
+    api: 'openai-completions', baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    models: [{ ...custom().models[0], id: 'qwen3.8-max-preview', reasoning: true, maxTokens: 2048 }],
+  } } });
+  writeFileSync(filename, contents);
+  writeFileSync(path.join(f.root, 'providers/auth.json'), JSON.stringify({ 'bailian-tp': { type: 'api_key', key: 'fixture-only-key' } }));
+  assert.equal((await f.manager.listProviders()).find(p => p.id === 'bailian-tp').api, 'openai-responses');
+  const binding = await f.manager.prepare({ providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview', thinkingLevel: 'off' });
+  assert.equal(binding.model.id, 'qwen3.8-max-preview');
+  assert.equal(binding.model.api, 'openai-responses');
+  assert.equal(binding.model.maxTokens, 2048);
+  assert.equal(readFileSync(filename, 'utf8'), contents);
+  await f.manager.saveProvider({ providerId: 'bailian-tp', api: 'openai-responses' });
+  const reopened = new f.PiProviderManager(f.config);
+  assert.equal((await reopened.prepare({ providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview' })).model.api, 'openai-responses');
+  assert.equal(JSON.parse(readFileSync(filename, 'utf8')).providers['bailian-tp'].api, 'openai-responses');
 });
 
 test('external Pi configuration is read without rewriting it; plan registration keeps its dedicated endpoint', async t => {
@@ -100,12 +181,13 @@ test('real Pi sessions send through the selected provider, preserve history, and
   const base = `http://127.0.0.1:${server.address().port}`;
   const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
   const adapter = new PiAdapter(f.config);
-  await adapter.saveProvider({ ...custom('first', 'first-key'), baseUrl: `${base}/first/v1` });
-  await adapter.saveProvider({ ...custom('second', 'second-key'), baseUrl: `${base}/second/v1` });
+  const reasoningModels = custom().models.map(model => ({ ...model, reasoning: true }));
+  await adapter.saveProvider({ ...custom('first', 'first-key'), models: reasoningModels, baseUrl: `${base}/first/v1` });
+  await adapter.saveProvider({ ...custom('second', 'second-key'), models: reasoningModels, baseUrl: `${base}/second/v1` });
   const descriptor = await adapter.createSession();
-  const prepared = await adapter.prepareModel({ providerId: 'first', modelId: 'model' });
+  const prepared = await adapter.prepareModel({ providerId: 'first', modelId: 'model', thinkingLevel: 'high' });
   await adapter.saveProvider({ providerId: 'first', baseUrl: `${base}/changed/v1`, apiKey: 'changed-key' });
-  for (const [index, selected] of [prepared, await adapter.prepareModel({ providerId: 'second', modelId: 'model' })].entries()) {
+  for (const [index, selected] of [prepared, await adapter.prepareModel({ providerId: 'second', modelId: 'model', thinkingLevel: 'off' })].entries()) {
     const session = await selected.openSession(descriptor);
     try { await session.execute({ runId: `run-${index}`, clientMessageId: `client-${index}`, content: [{ type: 'text', text: `hello ${index}` }] }, () => {}); }
     finally { session.dispose(); }
@@ -116,8 +198,105 @@ test('real Pi sessions send through the selected provider, preserve history, and
   assert.equal(requests[1].url, '/second/v1/chat/completions');
   assert.equal(requests[1].auth, 'Bearer second-key');
   assert.equal(requests[1].body.model, 'model');
+  assert.equal(requests[0].body.reasoning_effort, 'high');
+  assert.equal(requests[1].body.reasoning_effort, undefined, 'off overrides the previous native session thinking level');
+  assert.ok(requests.every(request => request.body.enable_search === undefined), 'other providers receive no Bailian search option');
   assert.ok(JSON.stringify(requests[1].body.messages).includes('hello 0'), 'switching provider retains native conversation history');
-  assert.equal((await adapter.readHistory(descriptor)).filter(m => m.role === 'assistant').length, 2);
+  const messageText = message => typeof message.content === 'string' ? message.content : message.content.filter(part => part.type === 'text').map(part => part.text).join('');
+  for (const [index, request] of requests.entries()) {
+    const messages = request.body.messages;
+    const currentUser = messages.findIndex(message => message.role === 'user' && messageText(message) === `hello ${index}`);
+    assert.ok(currentUser > 0);
+    assert.match(messageText(messages[currentUser - 1]), /本轮用户消息的本地时间：/);
+    assert.ok(messageText(messages[currentUser - 1]).includes(Intl.DateTimeFormat().resolvedOptions().timeZone));
+    assert.ok(messages.filter(message => message.role === 'system').every(message => !JSON.stringify(message.content).includes('本地时间')));
+  }
+  const history = await adapter.readHistory(descriptor);
+  assert.equal(history.filter(m => m.role === 'assistant').length, 2);
+  assert.deepEqual(Array.from(history.filter(m => m.role === 'user'), message => message.parts.map(part => part.text).join('')), ['hello 0', 'hello 1'], 'time context never changes displayed user messages');
+  const entries = readFileSync(descriptor.locator, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  const times = entries.filter(entry => entry.type === 'custom_message' && entry.customType === 'mozi.prompt-time');
+  assert.equal(times.length, 2, 'each prompt carries its own time context after reopening the session');
+  assert.ok(times.every(entry => entry.display === false));
+});
+
+test('Bailian model defaults reach real Pi requests with local tools disabled and follow provider switches', async t => {
+  const f = await fixture(t);
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-only-key' });
+  const { model: bailianModel } = await f.manager.prepare({ providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview' });
+  const { createServer } = require('node:http');
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    requests.push({ url: req.url, body: JSON.parse(body) });
+    if (req.url === '/v1/responses') return respondWithResponses(res, requests.length, requests.at(-1).body.reasoning?.effort !== 'none');
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const chunk = (delta, finish_reason = null) => ({ id: 'response', object: 'chat.completion.chunk', created: 1, model: 'model', choices: [{ index: 0, delta, finish_reason }] });
+    res.write(`data: ${JSON.stringify(chunk({ role: 'assistant', content: 'search fixture answer' }))}\n\n`);
+    res.write(`data: ${JSON.stringify(chunk({}, 'stop'))}\n\n`);
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const runtime = await sdk.ModelRuntime.create({
+    authPath: path.join(f.root, 'fixture-auth.json'), modelsPath: path.join(f.root, 'fixture-models.json'),
+    modelsStorePath: path.join(f.root, 'fixture-cache.json'), allowModelNetwork: false,
+  });
+  for (const provider of ['bailian-tp', 'other']) {
+    const model = provider === 'bailian-tp' ? bailianModel : {
+      name: 'Fixture', input: ['text'], contextWindow: 32000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+    runtime.registerProvider(provider, {
+      api: provider === 'bailian-tp' ? 'openai-responses' : 'openai-completions', baseUrl,
+      models: [{ ...model, id: 'model', baseUrl, reasoning: provider === 'bailian-tp', maxTokens: 1024 }],
+    });
+    await runtime.setRuntimeApiKey(provider, 'fixture-only-key');
+  }
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/session-factory.ts'));
+  const manager = sdk.SessionManager.inMemory(f.root);
+  const session = await new PiSessionFactory(f.config).create(manager,
+    { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
+    { runtime, model: runtime.getModel('bailian-tp', 'model'), version: 'fixture' });
+  t.after(() => session.dispose());
+  assert.equal(session.getActiveToolNames().length, 0);
+  await session.prompt('Search the web for the current release.');
+  await session.setModel(runtime.getModel('other', 'model'));
+  await session.prompt('Continue with the other provider.');
+  await session.setModel(runtime.getModel('bailian-tp', 'model'));
+  session.setThinkingLevel('medium');
+  await session.prompt('Search again.');
+  assert.equal(requests.length, 3);
+  const serverTools = [{ type: 'web_search' }, { type: 'web_extractor' }];
+  assert.deepEqual(requests.map(request => request.url), ['/v1/responses', '/v1/chat/completions', '/v1/responses']);
+  assert.deepEqual(requests.map(request => request.body.tools), [serverTools, undefined, serverTools]);
+  assert.ok(requests.every(request => request.body.enable_search === undefined && request.body.search_options === undefined));
+  assert.ok(JSON.stringify(requests[2].body.input).includes('Continue with the other provider.'), 'Responses keeps previous Chat Completions history');
+  assert.equal(requests[0].body.max_output_tokens, 1024);
+  assert.equal(requests[0].body.store, false);
+  assert.equal(session.getLastAssistantText(), 'search fixture answer');
+  assert.equal(session.messages.at(-1).stopReason, 'stop', 'server tools are handled remotely instead of entering the local tool loop');
+  assert.equal(session.messages.at(-1).usage.totalTokens, 30);
+  session.dispose();
+  const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'off', 'high', 'xhigh', 'max', 'off'];
+  for (const thinkingLevel of thinkingLevels) {
+    const next = await new PiSessionFactory(f.config).create(manager,
+      { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
+      { runtime, model: runtime.getModel('bailian-tp', 'model'), version: 'fixture', thinkingLevel });
+    try {
+      assert.equal(next.thinkingLevel, thinkingLevel);
+      await next.prompt(`Continue with thinking ${thinkingLevel}.`);
+      const body = requests.at(-1).body;
+      assert.equal(body.reasoning.effort, thinkingLevel === 'off' ? 'none' : thinkingLevel, thinkingLevel);
+      assert.deepEqual(body.tools, thinkingLevel === 'off' ? [{ type: 'web_search' }] : serverTools, 'web_extractor requires thinking, while web_search remains available when off');
+      assert.equal(body.enable_thinking, thinkingLevel === 'off' ? undefined : true, 'only thinking levels explicitly enable thinking');
+      for (const key of ['reasoning_effort', 'enable_search', 'search_options', 'max_tokens']) assert.equal(body[key], undefined, key);
+      assert.equal(next.messages.at(-1).content.some(part => part.type === 'thinking'), thinkingLevel !== 'off');
+    } finally { next.dispose(); }
+  }
+  assert.equal(requests.length, 3 + thinkingLevels.length);
 });
 
 

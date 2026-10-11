@@ -140,6 +140,7 @@ export function registerAgentIpc(
     return client;
   }
 
+  //从 Main 主进程，向指定窗口的渲染进程发送消息
   function send(client: Client, channel: string, payload: unknown): boolean {
     if (!trusted(client.sender, client.frame)) {
       release(client);
@@ -148,7 +149,9 @@ export function registerAgentIpc(
     try {
       client.sender.send(channel, payload);
       log.debug(
-        channel === AGENT_CHANNELS.event ? "event.forward" : "runtime.forward",
+        channel === AGENT_CHANNELS.event
+          ? "event.forward.sendwindow"
+          : "runtime.forward",
         payload,
         { windowId: client.sender.id },
       );
@@ -170,6 +173,8 @@ export function registerAgentIpc(
     for (const client of clients.values())
       send(client, AGENT_CHANNELS.runtime, notice);
   });
+
+  //Agent 子进程发来的业务事件
   const offEvent = transport.onEvent((event) => {
     let delivered = 0;
     for (const client of clients.values()) {
@@ -240,7 +245,9 @@ export function registerAgentIpc(
         sessionId: request.params.sessionId,
       });
     }
-    log.debug("request.forward", request, { windowId: client.sender.id });
+    log.debug("request.forward.transportRequest", request, {
+      windowId: client.sender.id,
+    });
     const response = await transport.request(request);
     if (
       request.method === "session.list" &&

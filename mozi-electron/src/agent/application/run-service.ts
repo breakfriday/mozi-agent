@@ -42,7 +42,8 @@ export class RunService {
     const accepted = this.duplicate(input);
     if (accepted) return accepted;
     const latest = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
-    if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId) {
+    if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId
+      || selection?.thinkingLevel !== latest?.thinkingLevel) {
       throw failure("SESSION_BUSY", "会话模型已变化，请重新发送。");
     }
     return this.accept(input, prepared);

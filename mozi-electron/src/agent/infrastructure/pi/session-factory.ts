@@ -63,10 +63,7 @@ export class PiSessionFactory {
       noThemes: true,
       noContextFiles: true,
       systemPrompt:
-        "你是 Mozi，一个嵌入桌面应用的智能助手。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。",
-      //
-      // systemPrompt:
-      //   "请准确回答用户问题。当前仅提供文本对话，没有执行工具。请准确回答用户的问题。",
+        "你是 Mozi，一个嵌入桌面应用的智能助手。请准确回答用户的问题；涉及实时信息时，以实际获取的信息为依据，无法核实时明确说明。 思考内容使用中文 ",
     });
     await loader.reload();
     const { session } = await createAgentSession({
@@ -74,6 +71,7 @@ export class PiSessionFactory {
       agentDir: piDir,
       modelRuntime,
       model,
+      thinkingLevel: binding?.thinkingLevel,
       sessionManager: manager,
       settingsManager: settings,
       resourceLoader: loader,
