@@ -10,7 +10,7 @@ export function observeModelCalls(agent: AgentSession["agent"], options: {
   runId: string;
   onCallUpdated: (call: ModelCallView) => void;
 }) {
-  const original = agent.streamFunction;
+  const baseStreamFn = agent.streamFunction;
   const evidence = new WeakMap<object, string>();
   const pending = new Map<string, () => void>();
   let observerError: unknown;
@@ -20,8 +20,8 @@ export function observeModelCalls(agent: AgentSession["agent"], options: {
     catch (error) { observerError ??= error; }
   };
 
-  const wrapped: typeof original = async (model, context, streamOptions) => {
-    if (disposed) return original.call(agent, model, context, streamOptions);
+  const observedStreamFn: typeof baseStreamFn = async (model, context, streamOptions) => {
+    if (disposed) return baseStreamFn.call(agent, model, context, streamOptions);
     const start = Date.now();
     const call: ModelCallView = {
       id: randomUUID(), runId: options.runId, provider: model.provider, model: model.id,
@@ -58,7 +58,7 @@ export function observeModelCalls(agent: AgentSession["agent"], options: {
     publish(call);
 
     try {
-      const stream = await original.call(agent, model, context, {
+      const stream = await baseStreamFn.call(agent, model, context, {
         ...streamOptions,
         // Pi calls this with parsed provider events BEFORE normalizing them.
         // Observe only; preserve the original SDK callback and its await semantics.
@@ -82,14 +82,14 @@ export function observeModelCalls(agent: AgentSession["agent"], options: {
     }
   };
 
-  agent.streamFunction = wrapped;
+  agent.streamFunction = observedStreamFn;
   return {
     getResponseModel: (message: object) => evidence.get(message),
     get error() { return observerError; },
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (agent.streamFunction === wrapped) agent.streamFunction = original;
+      if (agent.streamFunction === observedStreamFn) agent.streamFunction = baseStreamFn;
       for (const interrupt of pending.values()) interrupt();
     },
   };

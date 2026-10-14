@@ -1,59 +1,59 @@
 import type { ModelCallView, TokenUsage } from "../../../../../shared/agent";
 
 export const USAGE_ENTRY = "mozi.model-call-usage";
-const record = (value: unknown): Record<string, unknown> | undefined =>
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 /** Zero-initialized SDK usage is not evidence that an unsuccessful request was free. */
-export function normalizeUsage(value: unknown, reported = false, reasoningReported = false): TokenUsage | undefined {
-  const usage = record(value);
-  if (!usage || !["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every(key => count(usage[key]))) return;
-  if (!reported && usage.totalTokens === 0) return;
+export function normalizeUsage(value: unknown, usageReported = false, reasoningReported = false): TokenUsage | undefined {
+  const usage = asRecord(value);
+  if (!usage || !["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every(key => isNonNegativeSafeInteger(usage[key]))) return;
+  if (!usageReported && usage.totalTokens === 0) return;
   const result: TokenUsage = { input: usage.input as number, output: usage.output as number,
     cacheRead: usage.cacheRead as number, cacheWrite: usage.cacheWrite as number, totalTokens: usage.totalTokens as number };
-  if (count(usage.reasoning) && (reasoningReported || usage.reasoning > 0)) result.reasoning = usage.reasoning;
+  if (isNonNegativeSafeInteger(usage.reasoning) && (reasoningReported || usage.reasoning > 0)) result.reasoning = usage.reasoning;
   return result;
 }
 
 export type ModelCallMessage = { usage?: unknown; stopReason?: string };
 type CallUsage = Pick<ModelCallView, "usage" | "status" | "durationMs" | "webSearch" | "webSearchSource" | "webExtractor" | "webExtractorSource">;
 
-/** Per-call usage evidence and timing. No Pi hooks, persistence or event delivery. */
-export class UsageTracker {
-  private reported = false;
+/** Collects per-call usage evidence, then finalizes statistics. Owns no Pi hooks or event delivery. */
+export class UsageCollector {
+  private usageReported = false;
   private reasoningReported = false;
-  private webSearch?: number;
-  private webExtractor?: number;
+  private webSearchCount?: number;
+  private webExtractorCount?: number;
 
   constructor(private readonly startedAt: number) {}
 
-  observe(data: unknown): void {
-    const event = record(data);
+  collect(providerEvent: unknown): void {
+    const event = asRecord(providerEvent);
     if (!event) return;
-    const response = record(event.response);
-    const usage = record(response?.usage) ?? record(event.usage) ?? record(record(event.message)?.usage) ?? record(event.usageMetadata);
+    const response = asRecord(event.response);
+    const usage = asRecord(response?.usage) ?? asRecord(event.usage) ?? asRecord(asRecord(event.message)?.usage) ?? asRecord(event.usageMetadata);
     if (!usage) return;
-    this.reported = true;
-    const detail = record(usage.output_tokens_details) ?? record(usage.completion_tokens_details);
-    this.reasoningReported ||= count(detail?.reasoning_tokens) || count(usage.thoughtsTokenCount);
-    const tools = record(usage.x_tools);
-    const search = record(tools?.web_search)?.count, extractor = record(tools?.web_extractor)?.count;
-    if (count(search)) this.webSearch = search;
-    if (count(extractor)) this.webExtractor = extractor;
+    this.usageReported = true;
+    const detail = asRecord(usage.output_tokens_details) ?? asRecord(usage.completion_tokens_details);
+    this.reasoningReported ||= isNonNegativeSafeInteger(detail?.reasoning_tokens) || isNonNegativeSafeInteger(usage.thoughtsTokenCount);
+    const tools = asRecord(usage.x_tools);
+    const searchCount = asRecord(tools?.web_search)?.count, extractorCount = asRecord(tools?.web_extractor)?.count;
+    if (isNonNegativeSafeInteger(searchCount)) this.webSearchCount = searchCount;
+    if (isNonNegativeSafeInteger(extractorCount)) this.webExtractorCount = extractorCount;
   }
 
-  finish(message: ModelCallMessage | undefined, state: { cancelled?: boolean; interrupted?: boolean }): CallUsage {
+  finalize(message: ModelCallMessage | undefined, state: { cancelled?: boolean; interrupted?: boolean }): CallUsage {
     const result: CallUsage = {
       status: state.interrupted ? "interrupted"
         : message?.stopReason === "aborted" || state.cancelled ? "cancelled"
           : !message || message.stopReason === "error" ? "failed" : "completed",
       durationMs: Math.max(0, Date.now() - this.startedAt),
     };
-    const usage = normalizeUsage(message?.usage, this.reported, this.reasoningReported);
+    const usage = normalizeUsage(message?.usage, this.usageReported, this.reasoningReported);
     if (usage) result.usage = usage;
-    if (this.webSearch !== undefined) { result.webSearch = this.webSearch; result.webSearchSource = "provider"; }
-    if (this.webExtractor !== undefined) { result.webExtractor = this.webExtractor; result.webExtractorSource = "provider"; }
+    if (this.webSearchCount !== undefined) { result.webSearch = this.webSearchCount; result.webSearchSource = "provider"; }
+    if (this.webExtractorCount !== undefined) { result.webExtractor = this.webExtractorCount; result.webExtractorSource = "provider"; }
     return result;
   }
 }
