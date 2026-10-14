@@ -2,12 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/usage-monitor.ts'));
-const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call-observer.ts'));
+const { normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/usage-collector.ts'));
+const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/observer.ts'));
 const { buildUsageMonitor, isAgentEvent, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent'));
 const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
 const { SessionState } = load(path.resolve(__dirname, '../../src/agent/application/state/session-state.ts'));
-const { ServerStepsCollector } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/server-steps.ts'));
+const { ServerStepsCollector } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/server-steps-collector.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const tokens = { input: 60, cacheRead: 40, cacheWrite: 0, output: 30, reasoning: 20, totalTokens: 130 };
 const base = { id: 'call', runId: 'r', provider: 'fixture', model: 'requested', startedAt: '2026-10-11T00:00:00.000Z', status: 'running' };
@@ -154,7 +154,7 @@ test('invalid/missing token data remains unknown and reasoning is never added to
 
 test('legacy native usage coexists with new records and a crashed request remains unknown', async () => {
   const nativeLoad = require('../helpers/load-ts.cjs')({ '@earendil-works/pi-coding-agent': {} });
-  const { PiNativeHistory } = nativeLoad(path.resolve(__dirname, '../../src/agent/infrastructure/pi/native-history.ts'));
+  const { PiNativeHistory } = nativeLoad(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/native-history.ts'));
   const message = (id, usage) => ({ id, type: 'message', timestamp: base.startedAt,
     message: { role: 'assistant', provider: 'fixture', model: 'requested', stopReason: 'stop', usage } });
   const final = { ...base, status: 'completed', usage: tokens };

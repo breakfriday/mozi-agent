@@ -1,14 +1,14 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, writeFileSync, lstatSync, realpathSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../application/ports/agent-runtime";
-import { failure } from "../../application/errors";
-import type { PiConfig } from "./session-factory";
+import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../../application/ports/agent-runtime";
+import { failure } from "../../../application/errors";
+import type { PiConfig } from "../types";
 import { displayParts } from "./event-mapper";
-import { RESPONSE_MODEL_ENTRY, validResponseModel } from "./response-model";
-import { EMPTY_SESSION_TITLE, titleFromFirstMessage } from "../../domain/session-title";
-import { isModelCallView, type ModelCallView } from "../../../../../shared/agent";
-import { normalizeUsage, USAGE_ENTRY } from "./usage-monitor";
+import { RESPONSE_MODEL_ENTRY, validResponseModel } from "../model-call/response-model-collector";
+import { EMPTY_SESSION_TITLE, titleFromFirstMessage } from "../../../domain/session-title";
+import { isModelCallView, type ModelCallView } from "../../../../../../shared/agent";
+import { normalizeUsage, USAGE_ENTRY } from "../model-call/usage-collector";
 
 /** Native identity and history stay within the Pi integration boundary. */
 export class PiNativeHistory {

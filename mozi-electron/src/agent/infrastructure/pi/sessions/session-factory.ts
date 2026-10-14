@@ -9,18 +9,9 @@ import type {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
-import type { RuntimeSessionDescriptor } from "../../application/ports/agent-runtime";
-import type { PiModelBinding } from "./provider-manager";
-import { failure } from "../../application/errors";
-
-/** Pi-specific options; bootstrap configuration is structurally compatible. */
-export interface PiConfig {
-  dataDir: string;
-  cwd: string;
-  piDir: string;
-  provider?: string;
-  modelId?: string;
-}
+import type { RuntimeSessionDescriptor } from "../../../application/ports/agent-runtime";
+import type { PiConfig, PiModelBinding } from "../types";
+import { failure } from "../../../application/errors";
 
 /** SDK configuration/resource customization has a single assembly point. */
 export class PiSessionFactory {

@@ -1,7 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { ModelCallView } from "../../../../../shared/agent";
-import { ModelCallRecorder, type ModelCallEndState } from "./model-call-recorder";
-import type { ModelCallMessage } from "./usage-monitor";
+import type { ModelCallView } from "../../../../../../shared/agent";
+import { ModelCallRecorder, type ModelCallEndState } from "./recorder";
+import type { ModelCallMessage } from "./usage-collector";
 
 /** The only owner of Pi's streamFunction hook. Each invocation has isolated collection state. */
 export function observeModelCalls(agent: AgentSession["agent"], options: {

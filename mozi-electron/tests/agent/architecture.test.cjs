@@ -7,8 +7,8 @@ const root = path.resolve(__dirname, '../../src/agent');
 const load = require('../helpers/load-ts.cjs')();
 const { transitionRun, isTerminalRun } = load(path.join(root, 'domain/run/run-machine.ts'));
 const { AgentEventPublisher } = load(path.join(root, 'application/agent-event-publisher.ts'));
-const { PiEventMapper } = load(path.join(root, 'infrastructure/pi/event-mapper.ts'));
-const { PiExecution } = load(path.join(root, 'infrastructure/pi/execution.ts'));
+const { PiEventMapper } = load(path.join(root, 'infrastructure/pi/sessions/event-mapper.ts'));
+const { PiExecution } = load(path.join(root, 'infrastructure/pi/sessions/execution.ts'));
 
 function files(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

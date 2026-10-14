@@ -30,7 +30,7 @@ test('title events validate session identity and update the frontend list withou
 test('real Pi JSONL keeps explicit names and the live writer cursor through rename and further messages', async t => {
   const sdk = await import('@earendil-works/pi-coding-agent');
   const loadNative = createLoader({ '@earendil-works/pi-coding-agent': sdk });
-  const { PiNativeHistory } = loadNative(path.resolve(__dirname, '../../src/agent/infrastructure/pi/native-history.ts'));
+  const { PiNativeHistory } = loadNative(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/native-history.ts'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-title-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const history = new PiNativeHistory({ cwd: root, dataDir: root });

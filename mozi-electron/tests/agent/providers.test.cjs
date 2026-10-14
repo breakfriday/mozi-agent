@@ -9,7 +9,7 @@ async function fixture(t) {
   const packageLoad = createLoader();
   const extension = packageLoad(path.resolve(__dirname, '../../node_modules/@aiwayds/pi-bailian-token-plan/index.ts'));
   const load = createLoader({ '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
-  const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/provider-manager.ts'));
+  const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/providers/provider-manager.ts'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-provider-'));
   const config = { dataDir: root, cwd: root, piDir: path.join(root, 'external-pi') };
   mkdirSync(config.piDir);
@@ -256,7 +256,7 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
     });
     await runtime.setRuntimeApiKey(provider, 'fixture-only-key');
   }
-  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/session-factory.ts'));
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/session-factory.ts'));
   const manager = sdk.SessionManager.inMemory(f.root);
   const session = await new PiSessionFactory(f.config).create(manager,
     { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
@@ -433,7 +433,7 @@ test('model call observer does not change Responses payloads or consume streamed
   const { pathToFileURL } = require('node:url');
   const { streamSimple } = await import(pathToFileURL(path.resolve(__dirname, '../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js')));
   const load = createLoader();
-  const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call-observer.ts'));
+  const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/observer.ts'));
   const model = { id: 'qwen-fixture', provider: 'fixture', api: 'openai-responses', baseUrl: 'https://fixture.invalid/v1',
     name: 'Fixture', reasoning: true, input: ['text'], contextWindow: 262144, maxTokens: 65536,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsDeveloperRole: false },

@@ -2,10 +2,10 @@ import { ModelRuntime, type ProviderConfig, type CreateModelRuntimeOptions } fro
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { isParamsFor, THINKING_LEVELS, type ThinkingLevel, type ModelSelection, type ProviderSaveInput, type ProviderView } from "../../../../../shared/agent";
-import { failure } from "../../application/errors";
-import type { PiConfig } from "./session-factory";
-import { BAILIAN_API, BAILIAN_ENDPOINT, BAILIAN_PROVIDER, loadBailianProvider, supportsBailianWebTools, withBailianWebTools } from "./providers/bailian";
+import { isParamsFor, THINKING_LEVELS, type ThinkingLevel, type ModelSelection, type ProviderSaveInput, type ProviderView } from "../../../../../../shared/agent";
+import { failure } from "../../../application/errors";
+import type { PiConfig, PiModelBinding } from "../types";
+import { BAILIAN_API, BAILIAN_ENDPOINT, BAILIAN_PROVIDER, loadBailianProvider, supportsBailianWebTools, withBailianWebTools } from "./bailian";
 
 type SavedProvider = Omit<ProviderSaveInput, "providerId" | "apiKey">;
 type Configuration = { providers: Record<string, SavedProvider> };
@@ -13,7 +13,6 @@ type CredentialStore = NonNullable<CreateModelRuntimeOptions["credentials"]>;
 type Credential = NonNullable<Awaited<ReturnType<CredentialStore["read"]>>>;
 type Credentials = Record<string, Credential>;
 type Snapshot = { runtime: ModelRuntime; version: string; config: Configuration; builtinIds: Set<string>; activate(): void };
-export type PiModelBinding = { runtime: ModelRuntime; model: NonNullable<ReturnType<ModelRuntime["getModel"]>>; version: string; thinkingLevel?: ThinkingLevel };
 
 function thinkingLevels(model: PiModelBinding["model"]): ThinkingLevel[] {
   if (!model.reasoning) return ["off"];

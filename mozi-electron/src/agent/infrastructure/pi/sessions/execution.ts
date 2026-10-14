@@ -2,14 +2,13 @@ import type {
   AgentSession,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { RuntimeSession } from "../../application/ports/agent-runtime";
-import { failure } from "../../application/errors";
-import { PiEventMapper } from "./event-mapper";
-import { RESPONSE_MODEL_ENTRY } from "./response-model";
-import { titleFromFirstMessage } from "../../domain/session-title";
-import { displayParts } from "./event-mapper";
-import { USAGE_ENTRY } from "./usage-monitor";
-import { observeModelCalls } from "./model-call-observer";
+import type { RuntimeSession } from "../../../application/ports/agent-runtime";
+import { failure } from "../../../application/errors";
+import { PiEventMapper, displayParts } from "./event-mapper";
+import { RESPONSE_MODEL_ENTRY } from "../model-call/response-model-collector";
+import { titleFromFirstMessage } from "../../../domain/session-title";
+import { USAGE_ENTRY } from "../model-call/usage-collector";
+import { observeModelCalls } from "../model-call/observer";
 
 /** Owns the SDK session, event subscription and cancellation for one execution. */
 export class PiExecution implements RuntimeSession {

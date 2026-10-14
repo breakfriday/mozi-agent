@@ -1,4 +1,4 @@
-import type { ServerStepView } from "../../../../../shared/agent";
+import type { ServerStepView } from "../../../../../../shared/agent";
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;

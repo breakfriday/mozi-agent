@@ -1,4 +1,4 @@
-import type { ModelCallView, TokenUsage } from "../../../../../shared/agent";
+import type { ModelCallView, TokenUsage } from "../../../../../../shared/agent";
 
 export const USAGE_ENTRY = "mozi.model-call-usage";
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>

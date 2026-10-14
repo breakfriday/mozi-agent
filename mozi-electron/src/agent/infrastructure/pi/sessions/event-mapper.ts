@@ -1,5 +1,5 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { RuntimeContentPart, RuntimeEvent } from "../../application/ports/agent-runtime";
+import type { RuntimeContentPart, RuntimeEvent } from "../../../application/ports/agent-runtime";
 
 // Preserve native indices and expose only displayable text, never signatures or opaque data.
 export const displayParts = (content: unknown, includeReasoning = true): RuntimeContentPart[] => {

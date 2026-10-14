@@ -1,10 +1,11 @@
 import type { AgentRuntime, RuntimeHistoryMessage, RuntimeSession, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../application/ports/agent-runtime";
-import { PiNativeHistory } from "./native-history";
-import { PiSessionFactory, type PiConfig } from "./session-factory";
+import { PiNativeHistory } from "./sessions/native-history";
+import { PiSessionFactory } from "./sessions/session-factory";
+import type { PiConfig, PiModelBinding } from "./types";
 import type { ModelSelection, ProviderSaveInput } from "../../../../../shared/agent";
 import type { ModelCatalog, PreparedModel } from "../../application/ports/model-catalog";
-import { PiProviderManager, type PiModelBinding } from "./provider-manager";
-import { PiExecution } from "./execution";
+import { PiProviderManager } from "./providers/provider-manager";
+import { PiExecution } from "./sessions/execution";
 
 /** Application-facing runtime adapter; all SDK types stay inside this directory. */
 export class PiAdapter implements AgentRuntime, ModelCatalog {

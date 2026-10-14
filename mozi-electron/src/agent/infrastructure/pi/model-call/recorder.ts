@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { ModelCallView } from "../../../../../shared/agent";
-import { ResponseModelCollector } from "./response-model";
-import { UsageCollector, type ModelCallMessage } from "./usage-monitor";
-import { ServerStepsCollector } from "./server-steps";
+import type { ModelCallView } from "../../../../../../shared/agent";
+import { ResponseModelCollector } from "./response-model-collector";
+import { UsageCollector, type ModelCallMessage } from "./usage-collector";
+import { ServerStepsCollector } from "./server-steps-collector";
 
 export type ModelCallEndState = { cancelled?: boolean; interrupted?: boolean };
 
