@@ -19,11 +19,11 @@ export function responseModelFromEvent(api: string, data: unknown): string | und
 }
 
 /** Evidence for one model call; never falls back to the requested model. */
-export class ResponseModelTracker {
+export class ResponseModelCollector {
   private reported?: string;
   private conflict = false;
 
-  observe(api: string, data: unknown): void {
+  collect(api: string, data: unknown): void {
     const value = responseModelFromEvent(api, data);
     if (!value) return;
     if (this.reported && this.reported !== value) this.conflict = true;

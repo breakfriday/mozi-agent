@@ -7,26 +7,26 @@ const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infr
 const { buildUsageMonitor, isAgentEvent, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent'));
 const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
 const { SessionState } = load(path.resolve(__dirname, '../../src/agent/application/state/session-state.ts'));
-const { ServerSteps } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/server-steps.ts'));
+const { ServerStepsCollector } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/server-steps.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const tokens = { input: 60, cacheRead: 40, cacheWrite: 0, output: 30, reasoning: 20, totalTokens: 130 };
 const base = { id: 'call', runId: 'r', provider: 'fixture', model: 'requested', startedAt: '2026-10-11T00:00:00.000Z', status: 'running' };
 
 test('server steps preserve first observed order, deduplicate lifecycle events and retain only structured metadata', () => {
-  const steps = new ServerSteps();
-  const observe = (item, done = true) => steps.observe({ type: `response.output_item.${done ? 'done' : 'added'}`, item });
+  const steps = new ServerStepsCollector();
+  const collect = (item, done = true) => steps.collect({ type: `response.output_item.${done ? 'done' : 'added'}`, item });
   const search = { id: 'search', type: 'web_search_call', status: 'completed', action: {
     queries: ['合肥天气', '合肥历史天气', '合肥天气'], query: '合肥天气', sources: [
       { url: 'https://example.com/a' }, { url: 'https://example.com/b' }, { url: 'javascript:alert(1)' }, { url: 'https://key:secret@example.com/' },
     ] } };
-  observe({ id: 'r1', type: 'reasoning', text: 'private reasoning' }, false);
-  observe({ ...search, status: 'in_progress' }, false);
-  observe(search); observe(search);
-  observe({ id: 'r1', type: 'reasoning', text: 'private reasoning' });
-  observe({ id: 'extract', type: 'web_extractor_call', status: 'completed', urls: ['https://example.com/a', 'https://example.com/b'], output: 'private page body' });
-  observe({ id: 'r2', type: 'reasoning' });
-  steps.observe({ type: 'response.completed', response: { output: [search, { id: 'message', type: 'message', content: 'answer' }] } });
-  observe({ id: 'r1', type: 'reasoning' }, false);
+  collect({ id: 'r1', type: 'reasoning', text: 'private reasoning' }, false);
+  collect({ ...search, status: 'in_progress' }, false);
+  collect(search); collect(search);
+  collect({ id: 'r1', type: 'reasoning', text: 'private reasoning' });
+  collect({ id: 'extract', type: 'web_extractor_call', status: 'completed', urls: ['https://example.com/a', 'https://example.com/b'], output: 'private page body' });
+  collect({ id: 'r2', type: 'reasoning' });
+  steps.collect({ type: 'response.completed', response: { output: [search, { id: 'message', type: 'message', content: 'answer' }] } });
+  collect({ id: 'r1', type: 'reasoning' }, false);
   const result = plain(steps.steps);
   assert.deepEqual(result.map(item => item.id), ['r1', 'search', 'extract', 'r2', 'message']);
   assert.deepEqual(result[1].queries, ['合肥天气', '合肥历史天气']);
@@ -42,10 +42,10 @@ test('server steps preserve first observed order, deduplicate lifecycle events a
 });
 
 test('server step bounds do not truncate completed tool counts or infer absent tool usage', () => {
-  const steps = new ServerSteps();
-  steps.observe({ type: 'response.output_item.done', item: { type: 'web_search_call', status: 'completed' } });
+  const steps = new ServerStepsCollector();
+  steps.collect({ type: 'response.output_item.done', item: { type: 'web_search_call', status: 'completed' } });
   assert.equal(steps.count('web_search'), undefined, 'missing IDs cannot be counted reliably');
-  for (let index = 0; index < 105; index++) steps.observe({ type: 'response.output_item.done', item: {
+  for (let index = 0; index < 105; index++) steps.collect({ type: 'response.output_item.done', item: {
     id: `search-${index}`, type: 'web_search_call', status: 'completed', action: { queries: Array.from({ length: 40 }, (_, i) => `query ${i}`) },
   } });
   assert.equal(steps.steps.length, 100);
@@ -53,8 +53,8 @@ test('server step bounds do not truncate completed tool counts or infer absent t
   assert.equal(steps.count('web_search'), 105);
   assert.equal(steps.count('web_extractor'), undefined);
   assert.equal(steps.truncated, true);
-  const oversized = new ServerSteps();
-  oversized.observe({ type: 'response.output_item.done', item: { id: 'huge', type: 'web_search_call', status: 'completed',
+  const oversized = new ServerStepsCollector();
+  oversized.collect({ type: 'response.output_item.done', item: { id: 'huge', type: 'web_search_call', status: 'completed',
     action: { queries: Array.from({ length: 32 }, (_, i) => `${i}${'汉'.repeat(2000)}`) } } });
   assert.equal(oversized.truncated, true);
   assert.equal(oversized.count('web_search'), 1);

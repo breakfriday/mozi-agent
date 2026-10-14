@@ -5,11 +5,14 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 const types: Record<string, ServerStepView["type"]> = {
   reasoning: "reasoning", message: "message", web_search_call: "web_search", web_extractor_call: "web_extractor",
 };
+const encoder = new TextEncoder();
 
 /** Only structured metadata. Never store page bodies, reasoning text, or arbitrary tool output. */
-export class ServerSteps {
+export class ServerStepsCollector {
   private readonly items = new Map<string, ServerStepView>();
+  private readonly stepByteLengths = new Map<string, number>();
   private readonly completedTools = new Map<string, ServerStepView["type"]>();
+  private serializedStepsBytes = 2; // `[]`
   truncated = false;
 
   private strings(value: unknown, urls = false): string[] | undefined {
@@ -37,10 +40,10 @@ export class ServerSteps {
       || typeof item.id !== "string" || !item.id.trim() || item.id.length > 256) return;
     const type = types[item.type];
     // A completed output item implies completion for reasoning/message, whose status may be omitted.
-    const status: ServerStepView["status"] = item.status === "completed" ? "completed"
-      : item.status === "failed" ? "failed" : item.status === "incomplete" ? "incomplete"
-        : item.status === "in_progress" || !done ? "running"
-          : type === "reasoning" || type === "message" ? "completed" : "unknown";
+    let status: ServerStepView["status"];
+    if (item.status === "completed" || item.status === "failed" || item.status === "incomplete") status = item.status;
+    else if (item.status === "in_progress" || !done) status = "running";
+    else status = type === "reasoning" || type === "message" ? "completed" : "unknown";
     const previous = this.items.get(item.id);
     if (previous && previous.type !== type) return;
     if (status === "completed" && (type === "web_search" || type === "web_extractor")) this.completedTools.set(item.id, type);
@@ -59,23 +62,32 @@ export class ServerSteps {
       const urls = this.strings(item.urls, true);
       if (urls) step.urls = urls;
     }
-    const candidate = new Map(this.items); candidate.set(step.id, step);
-    if (new TextEncoder().encode(JSON.stringify([...candidate.values()])).byteLength > 64_000) {
+    const stepByteLength = encoder.encode(JSON.stringify(step)).byteLength;
+    const previousByteLength = this.stepByteLengths.get(step.id) ?? 0;
+    const separatorByteLength = previous ? 0 : this.items.size > 0 ? 1 : 0;
+    if (this.serializedStepsBytes - previousByteLength + stepByteLength + separatorByteLength > 64_000) {
       this.truncated = true;
       // Retain lifecycle progress even when large metadata does not fit.
-      if (previous) this.items.set(step.id, { ...previous, status: step.status });
+      if (previous) this.store({ ...previous, status: step.status });
       return;
     }
+    this.store(step, stepByteLength);
+  }
+
+  private store(step: ServerStepView, byteLength = encoder.encode(JSON.stringify(step)).byteLength) {
+    const previousByteLength = this.stepByteLengths.get(step.id) ?? 0;
+    const separatorByteLength = previousByteLength === 0 && this.items.size > 0 ? 1 : 0;
+    this.serializedStepsBytes += byteLength - previousByteLength + separatorByteLength;
+    this.stepByteLengths.set(step.id, byteLength);
     this.items.set(step.id, step);
   }
 
-  observe(data: unknown) {
+  collect(data: unknown) {
     const event = record(data);
     if (!event) return;
     if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
       this.accept(event.item, "stream", event.type === "response.output_item.done");
-    }
-    if (["response.completed", "response.incomplete", "response.failed"].includes(String(event.type))) {
+    } else if (event.type === "response.completed" || event.type === "response.incomplete" || event.type === "response.failed") {
       const output = record(event.response)?.output;
       if (Array.isArray(output)) for (const item of output) this.accept(item, "final", true);
     }

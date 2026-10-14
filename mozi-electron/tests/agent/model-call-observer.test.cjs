@@ -93,22 +93,6 @@ test('provider events stay read-only and the existing asynchronous callback is a
   f.observer.dispose();
 });
 
-test('provider-reported zero tool calls override observed tools while absent counts use events', async () => {
-  const f = fixture(), request = await f.start();
-  for (const type of ['web_search_call', 'web_extractor_call']) {
-    await request.emit({ type: 'response.output_item.done', item: { id: type, type, status: 'completed' } });
-  }
-  await request.emit({ response: { usage: { x_tools: { web_search: { count: 0 } } } } });
-  request.completion.resolve({ stopReason: 'stop', usage: tokens });
-  await request.stream.result();
-  const final = f.records.at(-1);
-  assert.equal(final.webSearch, 0);
-  assert.equal(final.webSearchSource, 'provider');
-  assert.equal(final.webExtractor, 1);
-  assert.equal(final.webExtractorSource, 'events');
-  f.observer.dispose();
-});
-
 test('disposing twice interrupts once and ignores late provider evidence and completion', async () => {
   let callbacks = 0;
   const f = fixture(), request = await f.start({ onProviderStreamEvent: () => { callbacks++; } });

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { responseModelFromEvent, ResponseModelTracker } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
+const { responseModelFromEvent, ResponseModelCollector } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
 
 test('extracts only provider response model fields for supported protocols', () => {
   assert.equal(responseModelFromEvent('openai-completions', { model: 'bailian-reported' }), 'bailian-reported');
@@ -18,10 +18,10 @@ test('extracts only provider response model fields for supported protocols', () 
 });
 
 test('model evidence stays unknown after a conflict even when the first name appears again', () => {
-  const tracker = new ResponseModelTracker();
-  tracker.observe('openai-responses', { response: { model: 'first' } });
-  assert.equal(tracker.result(), 'first');
-  tracker.observe('openai-responses', { response: { model: 'second' } });
-  tracker.observe('openai-responses', { response: { model: 'first' } });
-  assert.equal(tracker.result(), undefined);
+  const collector = new ResponseModelCollector();
+  collector.collect('openai-responses', { response: { model: 'first' } });
+  assert.equal(collector.result(), 'first');
+  collector.collect('openai-responses', { response: { model: 'second' } });
+  collector.collect('openai-responses', { response: { model: 'first' } });
+  assert.equal(collector.result(), undefined);
 });
