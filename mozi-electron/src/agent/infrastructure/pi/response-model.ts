@@ -1,5 +1,3 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
-
 export const RESPONSE_MODEL_ENTRY = "mozi.provider-response-model";
 
 export function validResponseModel(value: unknown): value is string {
@@ -20,34 +18,19 @@ export function responseModelFromEvent(api: string, data: unknown): string | und
   return validResponseModel(value) ? value : undefined;
 }
 
-/** Separate evidence per SDK request, including retries and background requests. */
-export function observeResponseModels(agent: AgentSession["agent"]) {
-  const original = agent.streamFunction;
-  const evidence = new WeakMap<object, string>();
-  const wrapped: typeof original = async (model, context, options) => {
-    let reported: string | undefined;
-    let conflict = false;
-    let settled = false;
-    const stream = await original.call(agent, model, context, { ...options,
-      onProviderStreamEvent: async (data, responseModel) => {
-        if (!settled) {
-          const value = responseModelFromEvent(responseModel.api, data);
-          if (value) {
-            if (reported && reported !== value) conflict = true;
-            reported = value;
-          }
-        }
-        await options?.onProviderStreamEvent?.(data, responseModel);
-      },
-    });
-    // Register before agent-core awaits result(), so evidence is ready at message_end.
-    void stream.result().then(message => {
-      settled = true;
-      if (reported && !conflict) evidence.set(message, reported);
-    }).catch(() => { settled = true; });
-    return stream;
-  };
-  agent.streamFunction = wrapped;
-  return { get: (message: object) => evidence.get(message),
-    dispose() { if (agent.streamFunction === wrapped) agent.streamFunction = original; } };
+/** Evidence for one model call; never falls back to the requested model. */
+export class ResponseModelTracker {
+  private reported?: string;
+  private conflict = false;
+
+  observe(api: string, data: unknown): void {
+    const value = responseModelFromEvent(api, data);
+    if (!value) return;
+    if (this.reported && this.reported !== value) this.conflict = true;
+    this.reported = value;
+  }
+
+  result(): string | undefined {
+    return this.conflict ? undefined : this.reported;
+  }
 }

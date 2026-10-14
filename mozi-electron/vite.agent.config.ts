@@ -6,6 +6,8 @@ import { builtinModules } from "node:module";
 export default defineConfig({
   build: {
     target: "node22",
+    sourcemap: true,
+    minify: false,
     // The standalone Agent tests share this directory with Main and preload.
     emptyOutDir: false,
     lib: { entry: "src/agent/entry.ts", formats: ["es"], fileName: () => "agent.mjs" },

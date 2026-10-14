@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { responseModelFromEvent, observeResponseModels } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
+const { responseModelFromEvent, ResponseModelTracker } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
 
 test('extracts only provider response model fields for supported protocols', () => {
   assert.equal(responseModelFromEvent('openai-completions', { model: 'bailian-reported' }), 'bailian-reported');
@@ -17,21 +17,11 @@ test('extracts only provider response model fields for supported protocols', () 
   assert.equal(responseModelFromEvent('openai-completions', { choices: [{ delta: { content: 'I am model X' } }] }), undefined);
 });
 
-test('each retry has its own evidence and normalized SDK model fields are never a fallback', async () => {
-  let attempt = 0, callbacks = 0;
-  const agent = { streamFunction: async (model, context, options) => {
-    const current = attempt++;
-    if (current === 0) await options.onProviderStreamEvent({ model: 'failed-attempt-model' }, model);
-    const message = { model: 'configured-model', responseModel: 'normalized-field-must-not-be-trusted' };
-    return { result: async () => message };
-  } };
-  const original = agent.streamFunction;
-  const observer = observeResponseModels(agent);
-  for (const expected of ['failed-attempt-model', undefined]) {
-    const stream = await agent.streamFunction({ api: 'openai-completions', id: 'configured-model' }, {}, { onProviderStreamEvent: async () => { callbacks++; } });
-    const message = await stream.result();
-    assert.equal(observer.get(message), expected);
-  }
-  assert.equal(callbacks, 1);
-  observer.dispose(); assert.equal(agent.streamFunction, original);
+test('model evidence stays unknown after a conflict even when the first name appears again', () => {
+  const tracker = new ResponseModelTracker();
+  tracker.observe('openai-responses', { response: { model: 'first' } });
+  assert.equal(tracker.result(), 'first');
+  tracker.observe('openai-responses', { response: { model: 'second' } });
+  tracker.observe('openai-responses', { response: { model: 'first' } });
+  assert.equal(tracker.result(), undefined);
 });

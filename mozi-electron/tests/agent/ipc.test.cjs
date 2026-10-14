@@ -183,11 +183,11 @@ test("bridge → preload → Main → runtime preserves errors and event-before-
   assert.equal(accepted.runId, "run"); assert.equal(accepted.ok, undefined);
   assert.equal(received.length, 1); assert.equal(received[0].privileged, undefined);
   for (const [scope, action] of [
-    ["preload", "request.send"], ["main", "request.received"], ["main", "request.forward"], ["transport", "request.send"],
-    ["transport", "response.validated"], ["main", "response.return"], ["preload", "response.validated"],
+    ["preload", "request.send"], ["main", "request.received"], ["main", "request.forward.transportRequest"], ["transport", "request.send.postMessage"],
+    ["transport", "response.return"], ["main", "response.return"], ["preload", "response.validated"],
   ]) assert.equal(logs.some((record) => record.scope === scope && record.action === action && record.requestId === request.requestId), true, `${scope}: ${action}`);
   assert.equal(logs.some((record) => record.scope === "renderer" && record.action === "request.send" && record.clientMessageId === "client" && record.payload.includes("hello")), true);
-  for (const [scope, action] of [["transport", "event.validated"], ["main", "event.forward"], ["preload", "event.validated"], ["renderer", "listener.delivered"]]) {
+  for (const [scope, action] of [["transport", "event.dispatch.tolistener"], ["main", "event.forward.sendwindow"], ["preload", "event.validated"], ["renderer", "listener.delivered"]]) {
     assert.equal(logs.some((record) => record.scope === scope && record.action === action && record.sessionId === "s" && record.runId === "run" && record.seq === 1), true, `${scope}: ${action}`);
   }
   assert.equal(logs.some((record) => record.action === "subscription.added" && record.sessionId === "s"), true);

@@ -16,6 +16,7 @@ export class AgentProcessManager {
   private readonly offState: () => void;
   constructor(private readonly transport: AgentTransport, private readonly options: {
     entry: string; dataDir: string; startupMs?: number; shutdownMs?: number; killWaitMs?: number; restartMs?: number;
+    debug?: { port: number; breakOnStart: boolean; disableStartupTimeout: boolean };
   }) {
     this.offState = transport.onState((notice) => {
       if (notice.state === "ready") { clearTimeout(this.startupTimer); log.info("process.ready"); }
@@ -27,6 +28,8 @@ export class AgentProcessManager {
       const child = utilityProcess.fork(this.options.entry, [], {
         serviceName: "Mozi Agent", stdio: "inherit",
         env: { ...process.env, MOZI_AGENT_DATA_DIR: this.options.dataDir },
+        execArgv: this.options.debug
+          ? [`--${this.options.debug.breakOnStart ? "inspect-brk" : "inspect"}=127.0.0.1:${this.options.debug.port}`] : [],
       });
       this.child = child;
       child.once("spawn", () => log.info("process.spawned"));
@@ -38,7 +41,8 @@ export class AgentProcessManager {
         if (!this.stopping) this.scheduleRestart();
       });
       this.transport.connect(utilityProcessConnection(child));
-      this.startupTimer = setTimeout(() => {
+      // A debugger may pause initialization indefinitely, including before ready.
+      if (!this.options.debug?.disableStartupTimeout) this.startupTimer = setTimeout(() => {
         if (this.child !== child || this.transport.getState().state === "ready") return;
         this.transport.disconnect("Agent 启动超时。");
         this.killChild(child);

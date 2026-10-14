@@ -3,6 +3,7 @@ import started from "electron-squirrel-startup";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import rendererConfig from "../dual-electron.config.cjs";
+import debugConfig from "../devDeug/config.json";
 import type { RendererEntry } from "./env_config.types";
 import { TrayService } from "./main/services/tray.service";
 import { WindowService } from "./main/services/window.service";
@@ -68,6 +69,9 @@ if (started) {
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
         dataDir: path.join(app.getPath("userData"), "agent"),
+        debug: !app.isPackaged && (process.env.MOZI_AGENT_DEBUG === "inspect" || process.env.MOZI_AGENT_DEBUG === "inspect-brk")
+          ? { ...debugConfig.agent, breakOnStart: process.env.MOZI_AGENT_DEBUG === "inspect-brk" || debugConfig.agent.breakOnStart }
+          : undefined,
       });
       stopAgent = () => agentProcess.stop();
       disposeAgentIpc = () => agentIpc.dispose();

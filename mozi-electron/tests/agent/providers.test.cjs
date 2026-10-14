@@ -429,12 +429,11 @@ test('real Responses usage survives reopening without counting assistant history
   assert.equal((await reopened.readHistory(descriptor)).filter(message => message.role === 'assistant').length, 2);
 });
 
-test('usage and response observers do not change Responses payloads or consume streamed answers', async () => {
+test('model call observer does not change Responses payloads or consume streamed answers', async () => {
   const { pathToFileURL } = require('node:url');
   const { streamSimple } = await import(pathToFileURL(path.resolve(__dirname, '../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js')));
   const load = createLoader();
-  const { observeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/usage-monitor.ts'));
-  const { observeResponseModels } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/response-model.ts'));
+  const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call-observer.ts'));
   const model = { id: 'qwen-fixture', provider: 'fixture', api: 'openai-responses', baseUrl: 'https://fixture.invalid/v1',
     name: 'Fixture', reasoning: true, input: ['text'], contextWindow: 262144, maxTokens: 65536,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsDeveloperRole: false },
@@ -444,8 +443,9 @@ test('usage and response observers do not change Responses payloads or consume s
   const requests = [], outputs = [], records = [];
   for (const monitored of [false, true]) {
     const agent = { streamFunction: streamSimple };
-    const responseObserver = monitored ? observeResponseModels(agent) : undefined;
-    const usageObserver = monitored ? observeUsage(agent, 'r', call => records.push(JSON.parse(JSON.stringify(call)))) : undefined;
+    const observer = monitored ? observeModelCalls(agent, {
+      runId: 'r', onCallUpdated: call => records.push(JSON.parse(JSON.stringify(call))),
+    }) : undefined;
     const stream = await agent.streamFunction(model, context, { apiKey: 'fixture-only', reasoning: 'medium', maxRetries: 0,
       fetch: async (url, init) => {
         requests.push(JSON.parse(init.body));
@@ -457,7 +457,11 @@ test('usage and response observers do not change Responses payloads or consume s
     for await (const event of stream) if (event.type === 'text_delta' || event.type === 'thinking_delta') deltas.push([event.type, event.delta]);
     const message = await stream.result();
     outputs.push({ deltas, content: message.content, usage: message.usage, stopReason: message.stopReason });
-    usageObserver?.dispose(); responseObserver?.dispose();
+    if (observer) {
+      assert.equal(observer.getResponseModel(message), records.at(-1).responseModelId);
+      assert.equal(observer.getResponseModel(message), 'server-responses-model');
+    }
+    observer?.dispose();
   }
   assert.deepEqual(requests[1], requests[0], 'monitoring must leave all request parameters and model context unchanged');
   assert.deepEqual(outputs[1], outputs[0], 'result observers must not consume the answer stream');

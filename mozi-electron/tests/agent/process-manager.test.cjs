@@ -4,15 +4,16 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const createLoader = require('../helpers/load-ts.cjs');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-function setup(t) {
+function setup(t, options = {}) {
   const children = [];
   const load = createLoader({ 'node:process': { kill: (pid, signal) => {
     assert.equal(signal, 'SIGKILL');
     const child = children.find(child => child.pid === pid);
     child.killed++;
     if (!child.delayExit) child.emit('exit', 1);
-  } }, electron: { utilityProcess: { fork: () => {
+  } }, electron: { utilityProcess: { fork: (_entry, _args, forkOptions) => {
     const child = new EventEmitter(); child.sent = []; child.killed = 0; child.pid = children.length + 100;
+    child.forkOptions = forkOptions;
     child.postMessage = packet => { child.sent.push(packet); if (packet.action === 'shutdown') child.emit('exit', 0); };
     child.kill = () => { child.killed++; child.emit('exit', 1); return true; };
     children.push(child); return child;
@@ -20,13 +21,14 @@ function setup(t) {
   const { AgentTransport } = load(path.resolve(__dirname, '../../src/main/agent/transport.ts'));
   const { AgentProcessManager } = load(path.resolve(__dirname, '../../src/main/agent/process-manager.ts'));
   const transport = new AgentTransport();
-  const manager = new AgentProcessManager(transport, { entry: 'agent.mjs', dataDir: '/tmp/test', startupMs: 10, shutdownMs: 10, restartMs: 1 });
+  const manager = new AgentProcessManager(transport, { entry: 'agent.mjs', dataDir: '/tmp/test', startupMs: 10, shutdownMs: 10, restartMs: 1, ...options });
   t.after(() => manager.stop());
   return { children, transport, manager };
 }
 test('process manager waits for ready, starts once, and graceful stop does not restart', async t => {
   const { children, transport, manager } = setup(t);
   manager.start(); manager.start(); assert.equal(children.length, 1);
+  assert.deepEqual(Array.from(children[0].forkOptions.execArgv), []);
   assert.equal(transport.getState().state, 'unavailable');
   children[0].emit('message', { protocolVersion: 1, kind: 'runtime', state: 'ready' });
   assert.equal(transport.getState().state, 'ready');
@@ -39,6 +41,31 @@ test('startup timeout kills the child and retries are bounded', async t => {
   const { children, manager } = setup(t); manager.start();
   await pause(120);
   assert.equal(children.length, 4); assert.ok(children.every(child => child.killed === 1));
+});
+for (const debug of ['inspect', 'inspect-brk']) {
+  test(`${debug} opens a separate inspector and permits pausing before ready`, async t => {
+    const { children, transport, manager } = setup(t, {
+      debug: { port: 19330, breakOnStart: debug === 'inspect-brk', disableStartupTimeout: true },
+    });
+    manager.start();
+    assert.deepEqual(Array.from(children[0].forkOptions.execArgv), [`--${debug}=127.0.0.1:19330`]);
+    await pause(35);
+    assert.equal(children.length, 1);
+    assert.equal(children[0].killed, 0);
+    children[0].emit('message', { protocolVersion: 1, kind: 'runtime', state: 'ready' });
+    assert.equal(transport.getState().state, 'ready');
+    await manager.stop();
+    assert.equal(children[0].sent[0].action, 'shutdown');
+  });
+}
+test('debug configuration can retain the startup timeout', async t => {
+  const { children, manager } = setup(t, {
+    debug: { port: 19330, breakOnStart: false, disableStartupTimeout: false },
+  });
+  manager.start();
+  await pause(120);
+  assert.equal(children.length, 4);
+  assert.ok(children.every(child => child.killed === 1));
 });
 test('shutdown timeout sends SIGKILL but waits for exit before resolving', async t => {
   const { children, manager } = setup(t); manager.start();

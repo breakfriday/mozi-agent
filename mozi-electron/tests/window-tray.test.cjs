@@ -152,6 +152,7 @@ function setup(platform = "linux", packaged = false) {
   const startMain = () => load("src/main.ts", {
     "electron-squirrel-startup": false,
     "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
+    "../devDeug/config.json": require("../devDeug/config.json"),
     "./main/services/window.service": windowModule,
     "./main/services/tray.service": trayModule,
     "./main/window-ipc": ipcModule,

@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { observeUsage, normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/usage-monitor.ts'));
+const { normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/usage-monitor.ts'));
+const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call-observer.ts'));
 const { buildUsageMonitor, isAgentEvent, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent'));
 const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
 const { SessionState } = load(path.resolve(__dirname, '../../src/agent/application/state/session-state.ts'));
@@ -68,7 +69,7 @@ test('usage observer counts unique completed server tool events when provider us
     await options.onProviderStreamEvent({ type: 'response.completed', response: { output: [item] } }, model);
     return { result: async () => ({ stopReason: 'stop', usage: tokens }) };
   } };
-  const observer = observeUsage(agent, 'r', call => records.push(plain(call)));
+  const observer = observeModelCalls(agent, { runId: 'r', onCallUpdated: call => records.push(plain(call)) });
   const stream = await agent.streamFunction({ api: 'openai-responses', id: 'm', provider: 'p' }, {});
   await stream.result(); observer.dispose();
   assert.equal(records.at(-1).webSearch, 1);
@@ -95,7 +96,7 @@ test('usage observer keeps retries separate, records zero reasoning only when re
       usage: attempt === 0 ? tokens : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0 } }) };
   } };
   const original = agent.streamFunction;
-  const observer = observeUsage(agent, 'r', call => records.push(plain(call)));
+  const observer = observeModelCalls(agent, { runId: 'r', onCallUpdated: call => records.push(plain(call)) });
   for (let i = 0; i < 3; i++) {
     const stream = await agent.streamFunction({ api: 'openai-responses', id: 'requested', provider: 'fixture' }, {}, { reasoning: i === 0 ? 'high' : undefined });
     await stream.result();

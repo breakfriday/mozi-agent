@@ -1,0 +1,11 @@
+{
+  "main": {
+    "port": 5858,
+    "breakOnStart": false
+  },
+  "agent": {
+    "port": 9230,
+    "breakOnStart": false,
+    "disableStartupTimeout": true
+  }
+}

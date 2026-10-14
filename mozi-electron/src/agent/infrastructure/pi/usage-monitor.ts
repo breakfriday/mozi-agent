@@ -1,8 +1,4 @@
-import { randomUUID } from "node:crypto";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelCallView, TokenUsage } from "../../../../../shared/agent";
-import { responseModelFromEvent } from "./response-model";
-import { ServerSteps } from "./server-steps";
 
 export const USAGE_ENTRY = "mozi.model-call-usage";
 const record = (value: unknown): Record<string, unknown> | undefined =>
@@ -20,77 +16,44 @@ export function normalizeUsage(value: unknown, reported = false, reasoningReport
   return result;
 }
 
-/** One record per SDK generation, including retry attempts; no prompt, key or reasoning text. */
-export function observeUsage(agent: AgentSession["agent"], runId: string, publish: (call: ModelCallView) => void) {
-  const original = agent.streamFunction;
-  const pending = new Map<string, ModelCallView>();
-  let observerError: unknown;
-  const send = (call: ModelCallView) => {
-    try { publish(structuredClone(call)); } catch (error) { observerError ??= error; }
-  };
-  const wrapped: typeof original = async (model, context, options) => {
-    const start = Date.now();
-    const call: ModelCallView = { id: randomUUID(), runId, provider: model.provider, model: model.id,
-      thinkingLevel: options?.reasoning ?? "off", startedAt: new Date(start).toISOString(), status: "running" };
-    pending.set(call.id, call); send(call);
-    let reported = false, reasoningReported = false, modelConflict = false, settled = false;
-    const serverSteps = new ServerSteps();
-    const finish = (message?: { usage?: unknown; stopReason?: string }) => {
-      if (settled) return;
-      settled = true;
-      call.status = message?.stopReason === "aborted" || options?.signal?.aborted ? "cancelled"
-        : !message || message.stopReason === "error" ? "failed" : "completed";
-      call.durationMs = Math.max(0, Date.now() - start);
-      const usage = normalizeUsage(message?.usage, reported, reasoningReported);
-      if (usage) call.usage = usage;
-      if (modelConflict) delete call.responseModelId;
-      for (const [field, source, type] of [["webSearch", "webSearchSource", "web_search"], ["webExtractor", "webExtractorSource", "web_extractor"]] as const) {
-        if (call[field] === undefined && serverSteps.count(type) !== undefined) {
-          call[field] = serverSteps.count(type); call[source] = "events";
-        }
-      }
-      if (serverSteps.steps.length) call.steps = serverSteps.steps;
-      if (serverSteps.truncated) call.stepsTruncated = true;
-      pending.delete(call.id); send(call);
+export type ModelCallMessage = { usage?: unknown; stopReason?: string };
+type CallUsage = Pick<ModelCallView, "usage" | "status" | "durationMs" | "webSearch" | "webSearchSource" | "webExtractor" | "webExtractorSource">;
+
+/** Per-call usage evidence and timing. No Pi hooks, persistence or event delivery. */
+export class UsageTracker {
+  private reported = false;
+  private reasoningReported = false;
+  private webSearch?: number;
+  private webExtractor?: number;
+
+  constructor(private readonly startedAt: number) {}
+
+  observe(data: unknown): void {
+    const event = record(data);
+    if (!event) return;
+    const response = record(event.response);
+    const usage = record(response?.usage) ?? record(event.usage) ?? record(record(event.message)?.usage) ?? record(event.usageMetadata);
+    if (!usage) return;
+    this.reported = true;
+    const detail = record(usage.output_tokens_details) ?? record(usage.completion_tokens_details);
+    this.reasoningReported ||= count(detail?.reasoning_tokens) || count(usage.thoughtsTokenCount);
+    const tools = record(usage.x_tools);
+    const search = record(tools?.web_search)?.count, extractor = record(tools?.web_extractor)?.count;
+    if (count(search)) this.webSearch = search;
+    if (count(extractor)) this.webExtractor = extractor;
+  }
+
+  finish(message: ModelCallMessage | undefined, state: { cancelled?: boolean; interrupted?: boolean }): CallUsage {
+    const result: CallUsage = {
+      status: state.interrupted ? "interrupted"
+        : message?.stopReason === "aborted" || state.cancelled ? "cancelled"
+          : !message || message.stopReason === "error" ? "failed" : "completed",
+      durationMs: Math.max(0, Date.now() - this.startedAt),
     };
-    try {
-      const stream = await original.call(agent, model, context, { ...options,
-        onProviderStreamEvent: async (data, responseModel) => {
-          const event = record(data);
-          if (!settled && event) {
-            serverSteps.observe(event);
-            const response = record(event.response);
-            const rawUsage = record(response?.usage) ?? record(event.usage) ?? record(record(event.message)?.usage) ?? record(event.usageMetadata);
-            if (rawUsage) {
-              reported = true;
-              const detail = record(rawUsage.output_tokens_details) ?? record(rawUsage.completion_tokens_details);
-              reasoningReported ||= count(detail?.reasoning_tokens) || count(rawUsage.thoughtsTokenCount);
-              const tools = record(rawUsage.x_tools);
-              const search = record(tools?.web_search)?.count, extractor = record(tools?.web_extractor)?.count;
-              if (count(search)) { call.webSearch = search; call.webSearchSource = "provider"; }
-              if (count(extractor)) { call.webExtractor = extractor; call.webExtractorSource = "provider"; }
-            }
-            const actual = responseModelFromEvent(responseModel.api, data);
-            if (actual) {
-              if (call.responseModelId && call.responseModelId !== actual) modelConflict = true;
-              call.responseModelId = actual;
-            }
-          }
-          await options?.onProviderStreamEvent?.(data, responseModel);
-        },
-      });
-      void stream.result().then(finish, () => finish());
-      return stream;
-    } catch (error) { finish(); throw error; }
-  };
-  agent.streamFunction = wrapped;
-  return {
-    get error() { return observerError; },
-    dispose() {
-      if (agent.streamFunction === wrapped) agent.streamFunction = original;
-      for (const call of pending.values()) send({ ...call, status: "interrupted",
-        durationMs: Math.max(0, Date.now() - Date.parse(call.startedAt)) });
-      pending.clear();
-    },
-  };
+    const usage = normalizeUsage(message?.usage, this.reported, this.reasoningReported);
+    if (usage) result.usage = usage;
+    if (this.webSearch !== undefined) { result.webSearch = this.webSearch; result.webSearchSource = "provider"; }
+    if (this.webExtractor !== undefined) { result.webExtractor = this.webExtractor; result.webExtractorSource = "provider"; }
+    return result;
+  }
 }
