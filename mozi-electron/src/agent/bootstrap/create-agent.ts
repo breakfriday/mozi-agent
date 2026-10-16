@@ -1,9 +1,9 @@
 import path from "node:path";
 import type { RuntimePacket } from "../../../../shared/agent";
 import type { AgentConfig } from "./config";
-import { AgentApplication } from "../application/agent-application";
-import { PiAdapter } from "../infrastructure/pi/pi-adapter";
-import { SqliteMetadataRepository } from "../infrastructure/sqlite/metadata-repository";
+import { AgentApplication } from "../agent";
+import { PiAdapter } from "../runtime/pi/pi-adapter";
+import { SqliteMetadataRepository } from "../storage/sqlite/metadata-repository";
 import { AgentController } from "../transport/agent-controller";
 import { IpcServer } from "../transport/ipc-server";
 

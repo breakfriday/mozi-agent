@@ -8,10 +8,10 @@ const createLoader = require('../helpers/load-ts.cjs');
 async function fixture(t, fsOverride) {
   const sdk = await import('@earendil-works/pi-coding-agent');
   const load = createLoader({ '@earendil-works/pi-coding-agent': sdk, ...(fsOverride ? { 'node:fs': fsOverride } : {}) });
-  const { PiNativeHistory } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/native-history.ts'));
+  const { PiSessionStore } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-store.ts'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mozi-delete-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const history = new PiNativeHistory({ cwd: root, dataDir: root });
+  const history = new PiSessionStore({ cwd: root, dataDir: root });
   return { root, history, descriptor: await history.createSession() };
 }
 

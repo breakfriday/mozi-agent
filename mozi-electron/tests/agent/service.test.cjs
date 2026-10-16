@@ -5,8 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const load = require('../helpers/load-ts.cjs')();
-const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/metadata-repository.ts'));
-const { AgentApplication } = load(path.resolve(__dirname, '../../src/agent/application/agent-application.ts'));
+const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/storage/sqlite/metadata-repository.ts'));
+const { AgentApplication } = load(path.resolve(__dirname, '../../src/agent/agent.ts'));
 const { AgentController } = load(path.resolve(__dirname, '../../src/agent/transport/agent-controller.ts'));
 function createApplication(...args) {
   const application = new AgentApplication(...args);
@@ -16,7 +16,7 @@ function createApplication(...args) {
 }
 const { IpcServer } = load(path.resolve(__dirname, '../../src/agent/transport/ipc-server.ts'));
 const { isAgentEvent, responseMatchesRequest } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
-const { titleFromFirstMessage } = load(path.resolve(__dirname, '../../src/agent/domain/session-title.ts'));
+const { titleFromFirstMessage } = load(path.resolve(__dirname, '../../src/agent/sessions/session-title.ts'));
 const tick = () => new Promise(setImmediate);
 async function fixture(t, catalogFactory) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'mozi-service-'));

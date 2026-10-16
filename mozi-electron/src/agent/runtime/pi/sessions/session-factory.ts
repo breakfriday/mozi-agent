@@ -1,0 +1,74 @@
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRuntime,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSession,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import path from "node:path";
+import type { RuntimeSessionDescriptor } from "../../agent-runtime";
+import type { PiConfig, PiModelBinding } from "../types";
+import { failure } from "../../../errors";
+
+/** SDK configuration/resource customization has a single assembly point. */
+export class PiSessionFactory {
+  private modelRuntime?: Promise<ModelRuntime>;
+  constructor(private readonly config: PiConfig) {}
+  async create(
+    manager: SessionManager,
+    descriptor: RuntimeSessionDescriptor,
+    binding?: PiModelBinding,
+  ): Promise<AgentSession> {
+    const { piDir, provider, modelId } = this.config;
+    if (!binding)
+      this.modelRuntime ??= ModelRuntime.create({
+        authPath: path.join(piDir, "auth.json"),
+        modelsPath: path.join(piDir, "models.json"),
+        modelsStorePath: path.join(this.config.dataDir, "models-cache.json"),
+        allowModelNetwork: false,
+      });
+    const modelRuntime = binding?.runtime ?? (await this.modelRuntime!);
+    const model =
+      binding?.model ??
+      (provider && modelId
+        ? modelRuntime.getModel(provider, modelId)
+        : undefined);
+    if (provider && !model)
+      throw failure(
+        "INVALID_ARGUMENT",
+        `未找到配置的模型 ${provider}/${modelId}，请检查 Pi models.json。`,
+      );
+    const settings = SettingsManager.inMemory(
+      SettingsManager.create(descriptor.cwd, piDir).getSettings(),
+    );
+    const loader = new DefaultResourceLoader({
+      cwd: descriptor.cwd,
+      agentDir: piDir,
+      settingsManager: settings,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPrompt:
+        "你是 Mozi，一个嵌入桌面应用的智能助手。请准确回答用户的问题；涉及实时信息时，以实际获取的信息为依据，无法核实时明确说明。 思考内容使用中文 ",
+    });
+    await loader.reload();
+    const { session } = await createAgentSession({
+      cwd: descriptor.cwd,
+      agentDir: piDir,
+      modelRuntime,
+      model,
+      thinkingLevel: binding?.thinkingLevel,
+      sessionManager: manager,
+      settingsManager: settings,
+      resourceLoader: loader,
+      noTools: "all",
+      tools: [],
+    });
+    return session;
+  }
+}

@@ -5,8 +5,8 @@ const { mkdtempSync, rmSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/metadata-repository.ts'));
-const { contentHash } = load(path.resolve(__dirname, '../../src/agent/application/models.ts'));
+const { SqliteMetadataRepository } = load(path.resolve(__dirname, '../../src/agent/storage/sqlite/metadata-repository.ts'));
+const { contentHash } = load(path.resolve(__dirname, '../../src/agent/runs/submission.ts'));
 function file(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-repository-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -68,7 +68,7 @@ test('submission digest preserves content order but ignores object property orde
 
 test('v3 migration preserves sessions and creation deduplication; deletions survive reopening', t => {
   const filename = file(t);
-  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/schema.ts'));
+  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/storage/sqlite/schema.ts'));
   const old = new DatabaseSync(filename);
   old.exec(AGENT_SCHEMA_V3);
   old.exec("INSERT INTO sessions VALUES ('s', 'pi', '/native', '/tmp', 'original', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); INSERT INTO creations VALUES ('operation', 'original', 's'); PRAGMA user_version=3;");
@@ -89,7 +89,7 @@ test('v3 migration preserves sessions and creation deduplication; deletions surv
 
 test('v4 upgrades in place and model choices survive reopening', t => {
   const filename = file(t);
-  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/infrastructure/sqlite/schema.ts'));
+  const { AGENT_SCHEMA_V3 } = load(path.resolve(__dirname, '../../src/agent/storage/sqlite/schema.ts'));
   const old = new DatabaseSync(filename);
   old.exec(AGENT_SCHEMA_V3);
   old.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at) VALUES ('s', 'pi', '/native', '/tmp', 'original', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); PRAGMA user_version=4;");

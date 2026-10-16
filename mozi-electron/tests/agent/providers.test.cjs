@@ -9,7 +9,7 @@ async function fixture(t) {
   const packageLoad = createLoader();
   const extension = packageLoad(path.resolve(__dirname, '../../node_modules/@aiwayds/pi-bailian-token-plan/index.ts'));
   const load = createLoader({ '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
-  const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/providers/provider-manager.ts'));
+  const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/provider-manager.ts'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-provider-'));
   const config = { dataDir: root, cwd: root, piDir: path.join(root, 'external-pi') };
   mkdirSync(config.piDir);
@@ -180,7 +180,7 @@ test('real Pi sessions send through the selected provider, preserve history, and
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
+  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/pi-adapter.ts'));
   const adapter = new PiAdapter(f.config);
   const reasoningModels = custom().models.map(model => ({ ...model, reasoning: true }));
   await adapter.saveProvider({ ...custom('first', 'first-key'), models: reasoningModels, baseUrl: `${base}/first/v1` });
@@ -256,7 +256,7 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
     });
     await runtime.setRuntimeApiKey(provider, 'fixture-only-key');
   }
-  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/session-factory.ts'));
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
   const manager = sdk.SessionManager.inMemory(f.root);
   const session = await new PiSessionFactory(f.config).create(manager,
     { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
@@ -298,7 +298,7 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
     } finally { next.dispose(); }
   }
   assert.equal(requests.length, 3 + thinkingLevels.length);
-  const { withBailianWebTools } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/providers/bailian.ts'));
+  const { withBailianWebTools } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian.ts'));
   const sharedModel = runtime.getModel('bailian-tp', 'model');
   const original = JSON.stringify(sharedModel);
   for (const thinkingLevel of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
@@ -363,7 +363,7 @@ test('response model evidence comes only from HTTP chunks, survives native histo
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
+  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/pi-adapter.ts'));
   const adapter = new PiAdapter(f.config);
   await adapter.saveProvider({ ...custom('fixture'), baseUrl: `http://127.0.0.1:${server.address().port}/v1` });
   const descriptor = await adapter.createSession();
@@ -396,7 +396,7 @@ test('real Responses usage survives reopening without counting assistant history
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/pi-adapter.ts'));
+  const { PiAdapter } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/pi-adapter.ts'));
   const adapter = new PiAdapter(f.config);
   await adapter.saveProvider({ ...custom('usage'), api: 'openai-responses', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, models: [{ ...custom().models[0], reasoning: true }] });
   const descriptor = await adapter.createSession();
@@ -433,7 +433,7 @@ test('model call observer does not change Responses payloads or consume streamed
   const { pathToFileURL } = require('node:url');
   const { streamSimple } = await import(pathToFileURL(path.resolve(__dirname, '../../node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js')));
   const load = createLoader();
-  const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/observer.ts'));
+  const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/observer.ts'));
   const model = { id: 'qwen-fixture', provider: 'fixture', api: 'openai-responses', baseUrl: 'https://fixture.invalid/v1',
     name: 'Fixture', reasoning: true, input: ['text'], contextWindow: 262144, maxTokens: 65536,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsDeveloperRole: false },

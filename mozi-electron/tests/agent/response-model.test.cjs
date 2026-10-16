@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { responseModelFromEvent, ResponseModelCollector } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/response-model-collector.ts'));
+const { responseModelFromEvent, ResponseModelCollector } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/response-model-collector.ts'));
 
 test('extracts only provider response model fields for supported protocols', () => {
   assert.equal(responseModelFromEvent('openai-completions', { model: 'bailian-reported' }), 'bailian-reported');

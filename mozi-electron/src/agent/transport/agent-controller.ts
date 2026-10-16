@@ -1,5 +1,5 @@
 import type { ResultOf, RuntimeMethod, RuntimeRequest } from "../../../../shared/agent";
-import type { AgentApplication } from "../application/agent-application";
+import type { AgentApplication } from "../agent";
 
 /** Routes validated shared requests. No SDK calls, SQL, scheduling or business state. */
 export class AgentController {

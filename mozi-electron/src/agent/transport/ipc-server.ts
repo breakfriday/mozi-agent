@@ -1,7 +1,7 @@
 import { AGENT_PROTOCOL_VERSION, AGENT_MAX_PENDING_REQUESTS, isAgentRequest, isAgentEvent, isRecord, responseMatchesRequest } from "../../../../shared/agent";
 import type { AgentEvent, RuntimePacket, RuntimeRequest, RuntimeResponse } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
-import { appError, failure } from "../application/errors";
+import { appError, failure } from "../errors";
 import type { AgentController } from "./agent-controller";
 const log = createAgentLogger("agent-service");
 export class IpcServer {

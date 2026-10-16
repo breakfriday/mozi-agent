@@ -3,7 +3,7 @@ import type { RuntimePacket } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
 import { readAgentConfig } from "./bootstrap/config";
 import { createAgent } from "./bootstrap/create-agent";
-import { appError } from "./application/errors";
+import { appError } from "./errors";
 
 const log = createAgentLogger("agent-service");
 const port = process.parentPort;

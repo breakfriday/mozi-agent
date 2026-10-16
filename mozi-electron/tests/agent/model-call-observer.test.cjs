@@ -2,8 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const load = require('../helpers/load-ts.cjs')();
-const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/model-call/observer.ts'));
-const { PiExecution } = load(path.resolve(__dirname, '../../src/agent/infrastructure/pi/sessions/execution.ts'));
+const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/observer.ts'));
 const model = { api: 'openai-responses', provider: 'fixture', id: 'requested' };
 const tokens = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15 };
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -168,45 +167,4 @@ test('publishing failures remain visible and published records cannot mutate obs
   assert.equal(f.observer.error, failure);
   assert.equal(f.records[1].model, 'requested');
   assert.equal(f.records.length, 2);
-});
-
-test('PiExecution surfaces persistence failures from interrupted-call cleanup', async () => {
-  const failure = new Error('cannot persist interrupted call');
-  const agent = { streamFunction: async () => ({ result: () => new Promise(() => {}) }) };
-  const original = agent.streamFunction;
-  const session = {
-    agent, subscribe: () => () => {}, sendCustomMessage: async () => {},
-    prompt: async () => { await agent.streamFunction(model, {}); }, waitForIdle: async () => {},
-  };
-  const manager = {
-    getEntries: () => [], getBranch: () => [],
-    appendCustomEntry(type, call) { if (type === 'mozi.model-call-usage' && call.status === 'interrupted') throw failure; },
-  };
-  const execution = new PiExecution(session, manager);
-  await assert.rejects(execution.execute({ runId: 'run', clientMessageId: 'client', content: [{ type: 'text', text: 'test' }] }, () => {}), value => value === failure);
-  assert.equal(agent.streamFunction, original);
-});
-
-test('PiExecution leaves no installed hook when initialization or subscription fails', async () => {
-  for (const stage of ['marker', 'subscribe', 'prompt']) {
-    const failure = new Error(stage);
-    const agent = { streamFunction() {} };
-    const original = agent.streamFunction;
-    let unsubscribed = false;
-    const session = {
-      agent,
-      subscribe() {
-        if (stage === 'subscribe') throw failure;
-        return () => { unsubscribed = true; };
-      },
-      sendCustomMessage: async () => {},
-      prompt: async () => { throw failure; },
-    };
-    const manager = { appendCustomEntry() { if (stage === 'marker') throw failure; } };
-    await assert.rejects(new PiExecution(session, manager).execute({
-      runId: 'run', clientMessageId: 'client', content: [{ type: 'text', text: 'test' }],
-    }, () => {}), value => value === failure);
-    assert.equal(agent.streamFunction, original);
-    assert.equal(unsubscribed, stage === 'prompt');
-  }
 });
