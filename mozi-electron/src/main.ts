@@ -12,6 +12,8 @@ import { registerAgentIpc } from "./main/agent-ipc";
 import { AgentProcessManager } from "./main/agent/process-manager";
 import { registerAgentShutdown } from "./main/agent/app-lifecycle";
 import { createAgentLogger } from "../../shared/agent/logging";
+import { MoziBrowser } from "./main/services/browser.service";
+import { AgentTransport } from "./main/agent/transport";
 
 const log = createAgentLogger("main");
 
@@ -65,7 +67,9 @@ if (started) {
       registerWindowIpc(windowService, () => trayService.quitApplication(), rendererEntry);
 
       // ========== Agent 初始化与启动：开始 ==========
-      const agentIpc = registerAgentIpc(windowService, rendererEntry);
+      const browser = new MoziBrowser();
+      const transport = new AgentTransport(undefined, (operation, context) => browser.execute(operation, context));
+      const agentIpc = registerAgentIpc(windowService, rendererEntry, transport);
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
         dataDir: path.join(app.getPath("userData"), "agent"),
@@ -74,8 +78,9 @@ if (started) {
           : undefined,
       });
       stopAgent = () => agentProcess.stop();
-      disposeAgentIpc = () => agentIpc.dispose();
-      registerAgentShutdown(agentProcess, () => agentIpc.dispose());
+      disposeAgentIpc = () => { agentIpc.dispose(); browser.dispose(); };
+      registerAgentShutdown(agentProcess, disposeAgentIpc);
+      app.on("will-quit", () => browser.dispose());
       agentProcess.start();
       // ========== Agent 初始化与启动：结束 ==========
 

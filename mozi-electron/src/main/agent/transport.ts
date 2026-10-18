@@ -10,6 +10,8 @@ import {
   responseMatchesRequest,
 } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
+import { BROWSER_MAX_PENDING, BROWSER_TIMEOUT_MS, BrowserFailure, browserError, isBrowserToMain, isBrowserToAgent,
+  type BrowserHandler, type BrowserRequest, type BrowserToAgent } from "../../../../shared/browser";
 
 const log = createAgentLogger("transport");
 import type {
@@ -22,7 +24,7 @@ import type {
 
 /** Adapt a utilityProcess here; the router never owns the Agent loop. */
 export interface AgentConnection {
-  postMessage(request: RuntimeRequest): void;
+  postMessage(request: RuntimeRequest | BrowserToAgent): void;
   onMessage(listener: (packet: unknown) => void): () => void;
   onDisconnect(listener: (reason?: string) => void): () => void;
 }
@@ -59,8 +61,9 @@ export class AgentTransport {
   private readonly eventListeners = new Set<(event: AgentEvent) => void>();
   private readonly stateListeners = new Set<(notice: RuntimeNotice) => void>();
   private cleanups: (() => void)[] = [];
+  private readonly browserPending = new Map<string, AbortController>();
 
-  constructor(private readonly timeoutMs = AGENT_REQUEST_TIMEOUT_MS) {}
+  constructor(private readonly timeoutMs = AGENT_REQUEST_TIMEOUT_MS, private readonly browser?: BrowserHandler) {}
 
   getState(): RuntimeNotice {
     return { ...this.notice };
@@ -124,6 +127,8 @@ export class AgentTransport {
   ): void {
     this.generation++;
     this.connection = undefined;
+    for (const controller of this.browserPending.values()) controller.abort(new BrowserFailure("UNAVAILABLE", "Agent 连接已断开。"));
+    this.browserPending.clear();
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.notice = { state: "unavailable", reason };
@@ -240,6 +245,11 @@ export class AgentTransport {
       );
       return;
     }
+    if (isBrowserToMain(packet)) {
+      if (packet.kind === "browser.cancel") this.browserPending.get(packet.requestId)?.abort(new BrowserFailure("CANCELLED", "浏览器任务已取消。"));
+      else void this.executeBrowser(packet);
+      return;
+    }
     if (packet.kind === "response" && typeof packet.requestId === "string") {
       const pending = this.pending.get(packet.requestId);
       if (!pending) {
@@ -275,6 +285,44 @@ export class AgentTransport {
       "Invalid Agent event or control packet.",
       "PROTOCOL_MISMATCH",
     );
+  }
+
+  /** Reverse calls stay on the connection that owns them, never a replacement child. */
+  private async executeBrowser(request: BrowserRequest): Promise<void> {
+    const connection = this.connection;
+    const generation = this.generation;
+    const send = (packet: BrowserToAgent) => {
+      if (this.connection !== connection || this.generation !== generation) return;
+      if (!isBrowserToAgent(packet) || !isWirePayload(packet)) throw new BrowserFailure("UNAVAILABLE", "浏览器返回了无效结果。");
+      try { connection?.postMessage(packet); }
+      catch { this.disconnect("Could not return browser result."); }
+    };
+    if (this.browserPending.has(request.requestId)) {
+      this.disconnect("Duplicate browser request ID.", "PROTOCOL_MISMATCH");
+      return;
+    }
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!this.browser) throw new BrowserFailure("UNAVAILABLE", "此运行环境未连接 Mozi 浏览器。");
+      if (this.browserPending.size >= BROWSER_MAX_PENDING) throw new BrowserFailure("CAPACITY_EXCEEDED", "浏览器任务过多，请稍后重试。");
+      this.browserPending.set(request.requestId, controller);
+      timer = setTimeout(() => controller.abort(new BrowserFailure("TIMEOUT", "浏览器任务超时。")), BROWSER_TIMEOUT_MS);
+      const result = await this.browser(request.operation, {
+        ...request.scope, requestId: request.requestId, signal: controller.signal,
+        onProgress: progress => {
+          if (!controller.signal.aborted) send({ protocolVersion: 1, kind: "browser.progress", requestId: request.requestId, progress });
+        },
+      });
+      controller.signal.throwIfAborted();
+      if (result.kind !== request.operation.action) throw new BrowserFailure("UNAVAILABLE", "浏览器结果与请求不匹配。");
+      send({ protocolVersion: 1, kind: "browser.response", requestId: request.requestId, ok: true, result });
+    } catch (error) {
+      send({ protocolVersion: 1, kind: "browser.response", requestId: request.requestId, ok: false, error: browserError(error) });
+    } finally {
+      clearTimeout(timer);
+      if (this.browserPending.get(request.requestId) === controller) this.browserPending.delete(request.requestId);
+    }
   }
 
   dispose(): void {

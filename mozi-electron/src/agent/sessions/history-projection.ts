@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { MessageView } from "../../../../shared/agent";
+import type { MessageView, ToolView } from "../../../../shared/agent";
 import type { RuntimeHistoryMessage } from "../runtime/agent-runtime";
 import type { MessageLink, SessionMetadata, SessionMetadataDetails } from "../storage/metadata";
 import type { SessionRecord } from "./session-record";
@@ -26,6 +26,7 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
   const present = new Set<string>();
   const visibleRuns = new Set<string>();
   const entries: { message: MessageView; at: string }[] = [];
+  const tools: ToolView[] = [];
   for (const native of history) {
     let link = byNative.get(native.nativeEntryId);
     if (!link && native.runId) {
@@ -40,6 +41,10 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
     }
     if (run) visibleRuns.add(run.run.id);
     present.add(id);
+    for (const tool of native.tools ?? []) {
+      tools.push({ ...tool, messageId: id, runId: run?.run.id ?? native.runId ?? `native:${id}`,
+        status: tool.status === "interrupted" && run?.run.status === "cancelled" ? "cancelled" : tool.status });
+    }
     entries.push({ at: native.createdAt, message: {
       id, sessionId, role: native.role, status: native.status,
       ...(native.role === "assistant" && native.responseModelId ? { responseModelId: native.responseModelId } : {}),
@@ -81,6 +86,6 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
   return { confirmedLinks, record: {
     descriptor: metadata.descriptor, messageLinks: details.links,
     snapshot: { session: metadata.session, lastSeq: 0, messages: entries.map(entry => entry.message),
-      runs: details.runs.filter(item => visibleRuns.has(item.run.id)).map(item => item.run), tools: [], approvals: [] },
+      runs: details.runs.filter(item => visibleRuns.has(item.run.id)).map(item => item.run), tools, approvals: [] },
   } };
 }

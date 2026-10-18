@@ -17,6 +17,7 @@ import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
 import { ModelControls } from "./ModelControls";
 import { SessionList } from "./SessionList";
+import { ToolCallCard } from "./ToolCallCard";
 import { Reasoning, ReasoningRoot, ReasoningTrigger, ReasoningContent, ReasoningText } from "@/components/assistant-ui/elements/reasoning.aui";
 import styles from "./chat.module.css";
 import { useState } from "react";
@@ -87,6 +88,7 @@ function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseMo
               }
               if (part.type === "reasoning") return <Reasoning {...part} />;
               if (part.type === "text") return <MarkdownText />;
+              if (part.type === "tool-call") return <ToolCallCard toolCallId={part.toolCallId} />;
               return null;
             }}
           </MessagePrimitive.GroupedParts>

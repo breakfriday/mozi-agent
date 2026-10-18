@@ -1,13 +1,15 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { RuntimeHistoryMessage } from "../../agent-runtime";
+import type { RuntimeHistoryMessage, RuntimeTool } from "../../agent-runtime";
 import type { ModelCallView } from "../../../../../../shared/agent";
 import { displayParts } from "./content-mapper";
 import { normalizeUsage } from "../model-call/usage-collector";
 import { parseRunEntry, parseUsageEntry, parseResponseModelEntry } from "./session-entries";
+import { toolCalls, toolOutput } from "./tool-execution-collector";
 
 /** Converts the selected native branch into displayable history without I/O or mutation. */
 export function readHistory(branch: readonly SessionEntry[]): RuntimeHistoryMessage[] {
   const messages: RuntimeHistoryMessage[] = [];
+  const calls = new Map<string, RuntimeTool>();
   let runId: string | undefined;
   let ordinal = 0, seenUser = false;
   const responseModels = new Map<string, string>();
@@ -18,22 +20,33 @@ export function readHistory(branch: readonly SessionEntry[]): RuntimeHistoryMess
   for (const entry of branch) {
     const run = parseRunEntry(entry);
     if (run) {
+      calls.clear();
       runId = run.runId;
       ordinal = 0; seenUser = false;
     } else if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) {
       // Native/imported messages need no Mozi marker. An external continuation
       // must not inherit the previous Mozi Run's IDs or ordinal mappings.
       if (entry.message.role === "user") {
+        calls.clear();
         if (seenUser) { runId = undefined; ordinal = 0; }
         seenUser = true;
       }
       const stop = entry.message.role === "assistant" ? entry.message.stopReason : undefined;
+      const tools = entry.message.role === "assistant" ? toolCalls(entry.message.content) : [];
+      for (const tool of tools) {
+        tool.status = stop === "aborted" ? "cancelled" : "interrupted";
+        calls.set(tool.toolCallId, tool);
+      }
       messages.push({ ...(runId ? { runId } : {}), role: entry.message.role,
+        ...(tools.length ? { tools } : {}),
         ordinal: entry.message.role === "assistant" ? ordinal++ : 0,
         nativeEntryId: entry.id, createdAt: entry.timestamp,
         status: stop === "error" ? "failed" : stop === "aborted" ? "cancelled" : "completed",
         ...(entry.message.role === "assistant" && responseModels.has(entry.id) ? { responseModelId: responseModels.get(entry.id) } : {}),
         parts: displayParts(entry.message.content, entry.message.role === "assistant") });
+    } else if (entry.type === "message" && entry.message.role === "toolResult") {
+      const tool = calls.get(entry.message.toolCallId);
+      if (tool) Object.assign(tool, toolOutput(entry.message), { status: entry.message.isError ? "failed" : "succeeded" });
     }
   }
   return messages;

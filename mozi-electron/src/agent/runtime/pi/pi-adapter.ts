@@ -6,16 +6,17 @@ import type { ModelSelection, ProviderSaveInput } from "../../../../../shared/ag
 import type { ModelCatalog, PreparedModel } from "../../models/model-catalog";
 import { PiProviderManager } from "./providers/provider-manager";
 import { PiExecution } from "./sessions/execution";
+import type { BrowserCall } from "../../../../../shared/browser";
 
 /** Application-facing runtime adapter; all SDK types stay inside this directory. */
 export class PiAdapter implements AgentRuntime, ModelCatalog {
   private readonly providers: PiProviderManager;
   private readonly store: PiSessionStore;
   private readonly factory: PiSessionFactory;
-  constructor(config: PiConfig) {
-    this.providers = new PiProviderManager(config);
+  constructor(config: PiConfig, browser?: BrowserCall) {
+    this.providers = new PiProviderManager(config, !!browser);
     this.store = new PiSessionStore(config);
-    this.factory = new PiSessionFactory(config);
+    this.factory = new PiSessionFactory(config, browser);
   }
   listProviders() { return this.providers.listProviders(); }
   saveProvider(input: ProviderSaveInput) { return this.providers.saveProvider(input); }

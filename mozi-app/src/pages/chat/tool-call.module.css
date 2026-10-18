@@ -1,0 +1,22 @@
+.card {
+  margin: 10px 0;
+  border: 1px solid var(--border, #dedede);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.heading { display: flex; align-items: center; gap: 10px; padding: 12px; cursor: pointer; }
+.heading::before { content: "›"; font-size: 18px; }
+.card[open] > .heading::before { transform: rotate(90deg); }
+.heading:focus-visible { outline: 2px solid #6275cc; outline-offset: -2px; }
+.name { font-family: monospace; font-weight: 600; }
+.target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .7; }
+.status, .error { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; white-space: nowrap; }
+.error { color: #c43636; }
+.body { padding: 0 14px 14px; border-top: 1px solid var(--border, #dedede); }
+.label { margin-top: 12px; font-weight: 600; }
+.body pre { margin: 6px 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.body p { opacity: .7; font-size: 12px; }
+.spinner { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

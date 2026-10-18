@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type ProviderModelView,
   type ThinkingLevel,
+  type WebMode,
 } from "../../../../shared/agent";
 import { useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
@@ -411,33 +412,59 @@ function ThinkingControls({ model, value, disabled, onChange }: {
   );
 }
 
-function WebToolControls({ model, value, disabled, onChange }: {
+function WebControls({ model, value, disabled, onChange }: {
   model?: ProviderModelView;
   value?: ModelSelection;
   disabled?: boolean;
   onChange(model: ModelSelection): void;
 }) {
-  if (!model?.supportsWebTools || !value) return null;
+  if (!model || (!model.supportsWebTools && !model.supportsBrowserTools) || !value) return null;
+  const mode = value.webMode ?? (model.supportsBrowserTools ? "browser" : "provider");
   const thinking = (value.thinkingLevel ?? thinkingLevelFor(model)) !== "off";
   return (
-    <div className={styles.thinking}>
-      <label className={styles.thinkingSwitch}>
-        <Switch size="small" aria-label="联网搜索" checked={value.webSearch !== false}
-          disabled={disabled} onChange={webSearch => onChange({ ...value, webSearch })} />
-        <span>联网搜索</span>
-      </label>
-      <label className={styles.thinkingSwitch}>
-        <Switch size="small" aria-label="网页提取" checked={thinking && value.webExtractor !== false}
-          disabled={disabled || !thinking} onChange={webExtractor => onChange({ ...value, webExtractor })} />
-        <span>网页提取</span>
-      </label>
-      <span className={styles.hint}>{thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
-    </div>
+    <>
+      <div className={styles.thinking}>
+        <span>联网方式</span>
+        <Select<WebMode>
+          size="small"
+          aria-label="联网方式"
+          style={{ minWidth: 160 }}
+          value={mode}
+          disabled={disabled}
+          options={[
+            { value: "browser", label: "Mozi 浏览器", disabled: !model.supportsBrowserTools },
+            { value: "provider", label: "服务商原生", disabled: !model.supportsWebTools },
+          ]}
+          onChange={webMode => onChange({ ...value, webMode })}
+        />
+        <span className={styles.hint}>{mode === "browser"
+          ? "通过可视窗口搜索和读取，服务商原生联网已停用"
+          : "通过服务商联网，Mozi 浏览器工具已停用"}</span>
+        {!model.supportsWebTools && <span className={styles.hint}>此模型尚未接入原生联网</span>}
+      </div>
+      {mode === "provider" && model.supportsWebTools && (
+        <div className={styles.thinking}>
+          <label className={styles.thinkingSwitch}>
+            <Switch size="small" aria-label="联网搜索" checked={value.webSearch !== false}
+              disabled={disabled} onChange={webSearch => onChange({ ...value, webSearch })} />
+            <span>联网搜索</span>
+          </label>
+          <label className={styles.thinkingSwitch}>
+            <Switch size="small" aria-label="网页提取" checked={thinking && value.webExtractor !== false}
+              disabled={disabled || !thinking} onChange={webExtractor => onChange({ ...value, webExtractor })} />
+            <span>网页提取</span>
+          </label>
+          <span className={styles.hint}>{thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
+        </div>
+      )}
+    </>
   );
 }
 
 function webToolPreferences(model: ProviderModelView, value?: ModelSelection) {
-  return model.supportsWebTools ? { webSearch: value?.webSearch, webExtractor: value?.webExtractor } : {};
+  const webMode: WebMode | undefined = value?.webMode === "provider" && model.supportsWebTools ? "provider"
+    : model.supportsBrowserTools ? "browser" : model.supportsWebTools ? "provider" : undefined;
+  return { webMode, webSearch: value?.webSearch, webExtractor: value?.webExtractor };
 }
 
 function ModelChoices({
@@ -501,7 +528,7 @@ function ModelChoices({
         disabled={disabled || !provider?.configured}
         onChange={onChange}
       />
-      <WebToolControls
+      <WebControls
         model={provider?.models.find(item => item.id === value?.modelId)}
         value={value}
         disabled={disabled || !provider?.configured}
@@ -593,7 +620,7 @@ export function ModelControls() {
         }}
       >
         <p>
-          默认模型和思考设置用于新会话，已有会话保留自己的选择。
+          默认模型、思考和联网方式用于新会话，已有会话保留自己的选择。
         </p>
         <ModelChoices
           providers={providers}

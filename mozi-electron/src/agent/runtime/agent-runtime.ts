@@ -1,4 +1,4 @@
-import type { InputPart, ModelCallView } from "../../../../shared/agent";
+import type { InputPart, ModelCallView, ToolView } from "../../../../shared/agent";
 
 /** Application-owned port. Only the Pi infrastructure imports SDK types. */
 export interface RuntimeSessionDescriptor {
@@ -21,6 +21,7 @@ export interface RuntimeContentPart {
   text: string;
 }
 export type RuntimeEvent =
+  | { type: "tool.update"; ordinal: number; tool: RuntimeTool }
   | { type: "usage.update"; call: ModelCallView }
   | { type: "session.title"; title: string }
   | { type: "message.model"; ordinal: number; responseModelId: string }
@@ -29,6 +30,7 @@ export type RuntimeEvent =
   | { type: "message.reasoning.delta"; ordinal: number; partIndex: number; delta: string }
   | { type: "message.complete"; ordinal: number; parts: RuntimeContentPart[]; nativeEntryId?: string };
 export interface RuntimeHistoryMessage {
+  tools?: RuntimeTool[];
   responseModelId?: string;
   runId?: string;
   role: "user" | "assistant";
@@ -38,6 +40,7 @@ export interface RuntimeHistoryMessage {
   status: "completed" | "failed" | "cancelled";
   parts: RuntimeContentPart[];
 }
+export type RuntimeTool = Omit<ToolView, "runId" | "messageId" | "partIndex"> & { partIndex: number };
 export interface RuntimeSession {
   execute(input: { runId: string; clientMessageId: string; content: InputPart[] },
     emit: (event: RuntimeEvent) => void): Promise<void>;

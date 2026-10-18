@@ -9,7 +9,7 @@ async function installBridge(page: Page) {
       session: { sessionId: "thinking-session", title: "思考设置", model: initialModel, createdAt: timestamp, updatedAt: timestamp },
       messages: [], runs: [], tools: [], approvals: [], lastSeq: 0,
     };
-    const base = { contextWindow: 32000, maxTokens: 4096, vision: false };
+    const base = { contextWindow: 32000, maxTokens: 4096, vision: false, supportsBrowserTools: true };
     const settings: ModelSettings = {
       defaultModel: JSON.parse(localStorage.getItem("thinking-default") || "null") ?? initialModel,
       providers: [
@@ -179,6 +179,9 @@ test("web tools are independent of effort, persist and lock during runs", async 
   await expect(search).toHaveCount(0);
   await chat(page).getByRole("combobox", { name: "服务提供商" }).click();
   await page.locator(".ant-select-dropdown:visible").getByText("百炼 Token Plan", { exact: true }).click();
+  await expect(search).toHaveCount(0);
+  await chat(page).getByRole("combobox", { name: "联网方式" }).click();
+  await page.locator(".ant-select-dropdown:visible").getByText("服务商原生", { exact: true }).click();
   await expect(search).toBeChecked(); await expect(extractor).toBeChecked();
   await search.click(); await expect(search).not.toBeChecked(); await expect(extractor).toBeChecked();
   await thinking.click(); await expect(extractor).toBeDisabled(); await expect(extractor).not.toBeChecked();
@@ -195,16 +198,20 @@ test("web tools are independent of effort, persist and lock during runs", async 
   await chat(page).getByRole("textbox", { name: "消息内容" }).fill("不联网回答");
   await chat(page).getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(search).toBeDisabled(); await expect(extractor).toBeDisabled();
+  await expect(chat(page).getByRole("combobox", { name: "联网方式" })).toBeDisabled();
   expect(await page.evaluate(() => (window as unknown as { thinkingFixture: { submitted: ModelSelection[] } }).thinkingFixture.submitted.at(-1)))
-    .toMatchObject({ thinkingLevel: "high", webSearch: false, webExtractor: false });
+    .toMatchObject({ thinkingLevel: "high", webMode: "provider", webSearch: false, webExtractor: false });
   await page.evaluate(() => (window as unknown as { thinkingFixture: { finish(): void } }).thinkingFixture.finish());
   await expect(search).toBeEnabled();
   await page.getByRole("button", { name: "模型服务设置", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "模型服务设置", exact: true });
   await dialog.getByRole("combobox", { name: "服务提供商" }).click();
   await page.locator(".ant-select-dropdown:visible").getByText("百炼 Token Plan", { exact: true }).click();
+  await dialog.getByRole("combobox", { name: "联网方式" }).click();
+  await page.locator(".ant-select-dropdown:visible").getByText("服务商原生", { exact: true }).click();
   await dialog.getByRole("switch", { name: "网页提取" }).click();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("thinking-default")!).webExtractor)).toBe(false);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("thinking-default")!).webMode)).toBe("provider");
   await dialog.locator("button.ant-modal-close").click();
   await expect(dialog).not.toBeVisible();
   await expect(search).not.toBeChecked();
@@ -213,4 +220,37 @@ test("web tools are independent of effort, persist and lock during runs", async 
   await expect(search).toBeVisible(); await expect(extractor).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "/tmp/mozi-web-tool-controls-mobile.png" });
+});
+
+test("web mode switches persist, restore provider preferences and disable unsupported native routing", async ({ page }) => {
+  await installBridge(page);
+  await page.goto("/mozi_app/chat");
+  const mode = chat(page).getByRole("combobox", { name: "联网方式" });
+  const dropdown = page.locator(".ant-select-dropdown:visible");
+  await expect(chat(page).getByText("Mozi 浏览器", { exact: true })).toBeVisible();
+  await mode.click();
+  await expect(dropdown.locator(".ant-select-item-option-disabled").getByText("服务商原生", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await chat(page).getByRole("combobox", { name: "服务提供商" }).click();
+  await dropdown.getByText("百炼 Token Plan", { exact: true }).click();
+  await mode.click(); await dropdown.getByText("服务商原生", { exact: true }).click();
+  const search = chat(page).getByRole("switch", { name: "联网搜索" });
+  await search.click(); await expect(search).not.toBeChecked();
+  await mode.click(); await dropdown.getByText("Mozi 浏览器", { exact: true }).click();
+  await expect(search).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("thinking-session")!).session.model.webMode)).toBe("browser");
+  await page.reload();
+  await expect(chat(page).getByText("Mozi 浏览器", { exact: true })).toBeVisible();
+  await mode.click(); await dropdown.getByText("服务商原生", { exact: true }).click();
+  await expect(search).not.toBeChecked();
+  await page.evaluate(() => { (window as unknown as { thinkingFixture: { rejectNext: boolean } }).thinkingFixture.rejectNext = true; });
+  await mode.click(); await dropdown.getByText("Mozi 浏览器", { exact: true }).click();
+  await expect(page.getByText("思考设置保存失败").first()).toBeVisible();
+  await expect(search).not.toBeChecked();
+  await chat(page).getByRole("combobox", { name: "服务提供商" }).click();
+  await dropdown.getByText("Google", { exact: true }).click();
+  await expect(chat(page).getByText("Mozi 浏览器", { exact: true })).toBeVisible();
+  await expect(search).toHaveCount(0);
+  await expect(dropdown).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/mozi-browser-mode-controls.png" });
 });

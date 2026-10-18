@@ -6,6 +6,7 @@ import { observeModelCalls } from "../model-call/observer";
 import { PiEventMapper } from "./event-mapper";
 import { displayParts } from "./content-mapper";
 import { createUsageEntry, createResponseModelEntry } from "./session-entries";
+import { ToolExecutionCollector } from "./tool-execution-collector";
 
 /** Owns event observation and model-call hooks for one execution, never the SDK session. */
 export function observeExecution(session: AgentSession, manager: SessionManager, options: {
@@ -15,6 +16,7 @@ export function observeExecution(session: AgentSession, manager: SessionManager,
   onError: () => void;
 }) {
   const mapper = new PiEventMapper();
+  const tools = new ToolExecutionCollector(options.emit);
   const pending = new Map<object, string>();
   let observationFailure: { error: unknown } | undefined;
   let titlePublished = false;
@@ -70,7 +72,11 @@ export function observeExecution(session: AgentSession, manager: SessionManager,
       // A failed unsubscribe must not leave streamFunction wrapped or calls unsettled.
       try { modelCalls.dispose(); }
       catch (error) { fail(error); }
-      finally { pending.clear(); }
+      finally {
+        pending.clear();
+        try { tools.finish(options.isCancelled()); }
+        catch (error) { fail(error); }
+      }
     }
   };
 
@@ -93,6 +99,7 @@ export function observeExecution(session: AgentSession, manager: SessionManager,
         if (event.type === "turn_end" || event.type === "agent_end") persistEvidence();
         const output = mapper.map(event);
         if (output && !options.isCancelled()) options.emit(output);
+        tools.collect(event, mapper.currentOrdinal);
       } catch (error) { fail(error); }
     });
   } catch (error) {

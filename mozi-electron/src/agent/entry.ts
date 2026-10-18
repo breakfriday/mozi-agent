@@ -4,11 +4,12 @@ import { createAgentLogger } from "../../../shared/agent/logging";
 import { readAgentConfig } from "./bootstrap/config";
 import { createAgent } from "./bootstrap/create-agent";
 import { appError } from "./errors";
+import type { BrowserToMain } from "../../../shared/browser";
 
 const log = createAgentLogger("agent-service");
 const port = process.parentPort;
 if (!port) throw new Error("Agent must run in an Electron utility process.");
-const send = (packet: RuntimePacket) => port.postMessage(packet);
+const send = (packet: RuntimePacket | BrowserToMain) => port.postMessage(packet);
 let stopping = false;
 const fatal = (error: unknown) => {
   log.error("service.failed", appError(error));
@@ -24,6 +25,7 @@ async function start(): Promise<void> {
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
+    server.dispose();
     send({ protocolVersion: AGENT_PROTOCOL_VERSION, kind: "runtime", state: "unavailable", reason: "Agent 正在关闭。" });
     await application.close();
     log.info("service.stopped");

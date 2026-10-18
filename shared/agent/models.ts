@@ -76,6 +76,8 @@ export type MessageView = {
 export type ToolView = {
   toolCallId: Id;
   runId: Id;
+  messageId?: Id;
+  partIndex?: number;
   toolName: string;
   status: (typeof TOOL_STATUSES)[number];
   inputText: string; // 供展示的参数，不是前端执行指令

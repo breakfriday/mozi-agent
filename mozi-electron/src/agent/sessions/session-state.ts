@@ -1,5 +1,5 @@
 import { AGENT_MAX_MESSAGE_BYTES, buildUsageMonitor, type ModelCallView } from "../../../../shared/agent";
-import type { MessageView, RunView } from "../../../../shared/agent";
+import type { MessageView, RunView, ToolView } from "../../../../shared/agent";
 import { failure } from "../errors";
 import type { MessageLink } from "../storage/metadata";
 import type { SessionRecord } from "./session-record";
@@ -101,6 +101,16 @@ export class SessionState {
     this.record.snapshot.usage = usage;
     this.grow(growth);
     return { call, total: usage.total, runTotal: usage.runs.find(run => run.runId === call.runId)!.total };
+  }
+  reportTool(tool: ToolView): void {
+    const tools = this.record.snapshot.tools;
+    const index = tools.findIndex(item => item.toolCallId === tool.toolCallId);
+    const before = index < 0 ? { bytes: 0, nodes: 0 } : measure(tools[index]);
+    const after = measure(tool);
+    const growth = { bytes: after.bytes - before.bytes + (index < 0 ? 1 : 0), nodes: after.nodes - before.nodes };
+    this.ensureCapacity(growth);
+    if (index < 0) tools.push(tool); else tools[index] = tool;
+    this.grow(growth);
   }
   completeMessage(entry: MessageEntry, content: MessageView["content"], status: MessageView["status"] = "completed"): void {
     const next = { ...entry.value, content, status };

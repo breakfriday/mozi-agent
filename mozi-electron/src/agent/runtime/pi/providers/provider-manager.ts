@@ -54,7 +54,7 @@ export class PiProviderManager {
   private snapshot?: Promise<Snapshot>;
   private packageConfig?: Promise<ProviderConfig>;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private readonly config: PiConfig) {
+  constructor(private readonly config: PiConfig, private readonly visualBrowser = false) {
     const directory = path.join(config.dataDir, "providers");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     this.modelsPath = path.join(directory, "models.json");
@@ -180,7 +180,7 @@ export class PiProviderManager {
         endpointLocked: provider.id === BAILIAN_PROVIDER,
         removable: !builtinIds.has(provider.id) && provider.id !== BAILIAN_PROVIDER,
         models: models.map(model => ({ id: model.id, name: model.name, contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens, reasoning: model.reasoning, vision: model.input.includes("image"), supportsWebTools: supportsBailianWebTools(model), thinkingLevels: thinkingLevels(model) })),
+          maxTokens: model.maxTokens, reasoning: model.reasoning, vision: model.input.includes("image"), supportsWebTools: supportsBailianWebTools(model), supportsBrowserTools: this.visualBrowser, thinkingLevels: thinkingLevels(model) })),
         customModels: saved?.models ?? [],
       }];
     }).sort((a, b) => Number(b.id === BAILIAN_PROVIDER) - Number(a.id === BAILIAN_PROVIDER) || Number(b.configured) - Number(a.configured) || a.name.localeCompare(b.name));
@@ -235,6 +235,13 @@ export class PiProviderManager {
     if (selection.thinkingLevel !== undefined && !thinkingLevels(model).includes(selection.thinkingLevel)) {
       throw failure("INVALID_ARGUMENT", "所选模型不支持此思考等级，请重新选择。");
     }
-    return { runtime, model: withBailianWebTools(model, selection), version, thinkingLevel: selection.thinkingLevel };
+    const webMode = selection.webMode ?? (this.visualBrowser ? "browser" : "provider");
+    if (webMode === "browser" && !this.visualBrowser) {
+      throw failure("UNSUPPORTED_CAPABILITY", "当前运行环境不支持 Mozi 浏览器。");
+    }
+    if (selection.webMode === "provider" && !supportsBailianWebTools(model)) {
+      throw failure("UNSUPPORTED_CAPABILITY", "当前模型尚未接入服务商原生联网，请选择 Mozi 浏览器。");
+    }
+    return { runtime, model: withBailianWebTools(model, webMode === "browser" ? { ...selection, webSearch: false, webExtractor: false } : selection), version, thinkingLevel: selection.thinkingLevel, webMode };
   }
 }

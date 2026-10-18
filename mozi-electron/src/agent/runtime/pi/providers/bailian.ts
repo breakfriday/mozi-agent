@@ -5,6 +5,7 @@ import {
   SettingsManager,
   type ProviderConfig,
   type ModelRuntime,
+  type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 
 export const BAILIAN_PROVIDER = "bailian-tp";
@@ -110,6 +111,44 @@ type RuntimeModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
 export function supportsBailianWebTools(model: RuntimeModel): boolean {
   return model.provider === BAILIAN_PROVIDER && model.api === BAILIAN_API;
+}
+
+/** Append server tools after Pi serializes local tools; samplingParams.tools would replace them. */
+export function preserveBailianLocalTools(agent: AgentSession["agent"], visualBrowser = false): void {
+  const baseStream = agent.streamFunction;
+  agent.streamFunction = (model, context, options) => {
+    if (!supportsBailianWebTools(model)) return baseStream.call(agent, model, context, options);
+    const parameters = {
+      ...model.samplingParams,
+      ...model.samplingParamsByThinkingLevel?.[options?.reasoning ?? "off"],
+      ...options?.samplingParams,
+    };
+    if (!Array.isArray(parameters.tools)) return baseStream.call(agent, model, context, options);
+    const serverTools = visualBrowser ? parameters.tools.filter(tool => !tool || typeof tool !== "object"
+      || !["web_search", "web_extractor"].includes(String((tool as { type?: unknown }).type))) : parameters.tools;
+    const withoutTools = (params: Record<string, unknown> | undefined) => {
+      const copy = { ...params };
+      delete copy.tools;
+      return copy;
+    };
+    return baseStream.call(agent, {
+      ...model,
+      samplingParams: withoutTools(model.samplingParams),
+      samplingParamsByThinkingLevel: Object.fromEntries(
+        Object.entries(model.samplingParamsByThinkingLevel ?? {}).map(([level, params]) => [level, withoutTools(params)]),
+      ),
+    }, context, {
+      ...options,
+      samplingParams: withoutTools(options?.samplingParams),
+      onPayload: async (payload, requestModel) => {
+        if (payload && typeof payload === "object") {
+          const body = payload as { tools?: unknown[] };
+          body.tools = [...(body.tools ?? []), ...serverTools];
+        }
+        return options?.onPayload?.(payload, requestModel);
+      },
+    });
+  };
 }
 
 /** Bind tools to a session without changing the shared provider catalog. */

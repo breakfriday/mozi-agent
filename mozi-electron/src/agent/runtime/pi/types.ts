@@ -1,5 +1,5 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "../../../../../shared/agent";
+import type { ThinkingLevel, WebMode } from "../../../../../shared/agent";
 
 /** Pi-specific runtime configuration shared by the adapter's subsystems. */
 export interface PiConfig {
@@ -16,4 +16,5 @@ export type PiModelBinding = {
   model: NonNullable<ReturnType<ModelRuntime["getModel"]>>;
   version: string;
   thinkingLevel?: ThinkingLevel;
+  webMode?: WebMode;
 };

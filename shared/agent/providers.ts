@@ -1,11 +1,15 @@
 /** Provider identities include the service/channel, not just a model vendor. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const WEB_MODES = ["browser", "provider"] as const;
+export type WebMode = (typeof WEB_MODES)[number];
 export type ModelSelection = {
   providerId: string;
   modelId: string;
   thinkingLevel?: ThinkingLevel;
-  /** Omitted web tool preferences preserve the provider default (enabled). */
+  /** Mutually exclusive routes. Omitted: browser when available, otherwise legacy provider behavior. */
+  webMode?: WebMode;
+  /** Provider-mode preferences; retained but ignored in browser mode. Omitted means enabled. */
   webSearch?: boolean;
   webExtractor?: boolean;
 };
@@ -24,6 +28,8 @@ export type ProviderModelView = ProviderModel & {
   thinkingLevels?: ThinkingLevel[];
   /** Server search/extraction controls; extraction requires thinking enabled. */
   supportsWebTools?: boolean;
+  /** The host provides the visible Mozi browser independently of model vendor. */
+  supportsBrowserTools?: boolean;
 };
 export type ProviderView = {
   id: string;

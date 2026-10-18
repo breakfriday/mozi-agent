@@ -22,6 +22,67 @@ const custom = (name = 'custom', apiKey = 'fixture-only-key') => ({ providerId: 
   models: [{ id: 'model', name: 'A Model', contextWindow: 32768, maxTokens: 4096, reasoning: false, vision: false }],
 });
 
+test('real Pi calls visual search then read, returns evidence to the model and persists tool history', async t => {
+  const f = await fixture(t);
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const requests = [], browserCalls = [];
+  const server = require('node:http').createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const request = JSON.parse(body); requests.push(request);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const step = requests.length;
+    const delta = step <= 2 ? { role: 'assistant', tool_calls: [{ index: 0, id: `browser-${step}`, type: 'function', function: {
+      name: 'mozi_browser',
+      arguments: JSON.stringify(step === 1 ? { action: 'search', query: 'Mozi evidence', limit: 3 } : { action: 'read', url: 'https://example.com/article' }),
+    } }] } : { role: 'assistant', content: 'Summary from browser evidence.' };
+    for (const [content, finish] of [[delta, null], [{}, step <= 2 ? 'tool_calls' : 'stop']]) {
+      res.write(`data: ${JSON.stringify({ id: `response-${step}`, object: 'chat.completion.chunk', created: 1, model: 'model', choices: [{ index: 0, delta: content, finish_reason: finish }] })}\n\n`);
+    }
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const runtime = await sdk.ModelRuntime.create({ authPath: path.join(f.root, 'auth.json'), modelsPath: path.join(f.root, 'models.json'), allowModelNetwork: false });
+  runtime.registerProvider('fixture', { api: 'openai-completions', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+    models: [{ id: 'model', name: 'Fixture', input: ['text'], contextWindow: 32000, maxTokens: 1024, reasoning: false,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
+  await runtime.setRuntimeApiKey('fixture', 'fixture-key');
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
+  const { PiExecution } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/execution.ts'));
+  const { readHistory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/history-reader.ts'));
+  const manager = sdk.SessionManager.create(f.root, path.join(f.root, 'sessions'));
+  const descriptor = { sessionId: manager.getSessionId(), engine: 'pi', cwd: f.root, locator: manager.getSessionFile() };
+  const call = async (operation, ctx) => {
+    browserCalls.push({ operation, runId: ctx.runId, sessionId: ctx.sessionId, toolCallId: ctx.toolCallId });
+    ctx.onProgress({ stage: 'loading', message: 'Browser is loading' });
+    return operation.action === 'search'
+      ? { kind: 'search', query: operation.query, url: 'https://www.bing.com/search?q=Mozi', results: [{ title: 'Source', url: 'https://example.com/article', snippet: 'Evidence summary' }] }
+      : { kind: 'read', title: 'Source', url: operation.url, content: 'Unique browser evidence 739', truncated: false };
+  };
+  const session = await new PiSessionFactory(f.config, call).create(manager, descriptor, { runtime, model: runtime.getModel('fixture', 'model'), version: 'fixture' });
+  const execution = new PiExecution(session, manager);
+  t.after(() => execution.dispose());
+  const events = [];
+  await execution.execute({ runId: 'visual-run', clientMessageId: 'visual-client', content: [{ type: 'text', text: 'Search and read the source' }] }, event => events.push(event));
+  assert.deepEqual(browserCalls.map(c => c.operation.action), ['search', 'read']);
+  assert.ok(browserCalls.every(c => c.runId === 'visual-run' && c.sessionId === descriptor.sessionId));
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0].tools.filter(tool => tool.function.name === 'mozi_browser').length, 1);
+  assert.ok(requests[0].tools.every(tool => !tool.function.name.startsWith('mozi_visual_')));
+  assert.match(JSON.stringify(requests[0].messages), /不要使用 bash/);
+  assert.match(JSON.stringify(requests[2].messages), /Unique browser evidence 739/);
+  const updates = events.filter(e => e.type === 'tool.update');
+  assert.ok(updates.some(e => e.tool.status === 'running' && e.tool.outputText === 'Browser is loading'));
+  assert.equal(updates.filter(e => e.tool.status === 'succeeded').length, 2);
+  execution.dispose();
+  const history = readHistory(sdk.SessionManager.open(manager.getSessionFile()).getBranch());
+  assert.ok(history.flatMap(m => m.tools ?? []).some(tool => tool.toolName === 'mozi_browser' && tool.outputText.includes('Unique browser evidence 739')));
+  const visualProviders = new f.PiProviderManager(f.config, true);
+  const visibleModel = (await visualProviders.listProviders()).find(p => p.id === 'bailian-tp').models[0];
+  assert.equal(visibleModel.supportsWebTools, true);
+  assert.equal(visibleModel.supportsBrowserTools, true);
+});
+
 function respondWithResponses(res, id, thinking = true) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const send = event => res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -55,6 +116,61 @@ function respondWithResponses(res, id, thinking = true) {
   } } });
   res.end();
 }
+
+test('real Responses tool calls execute locally and expose success and failure in live events and native history', async t => {
+  const f = await fixture(t);
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const { createServer } = require('node:http');
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    requests.push(JSON.parse(body));
+    if (requests.length > 1) return respondWithResponses(res, 'answer', false);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const send = event => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const response = { id: 'resp_tools', model: 'fixture', status: 'in_progress', output: [] };
+    send({ type: 'response.created', response });
+    for (const [index, filename] of ['evidence.txt', 'does-not-exist.txt'].entries()) {
+      const item = { type: 'function_call', id: `fc_${index}`, call_id: `call_${index}`, name: 'read', arguments: JSON.stringify({ path: filename }), status: 'completed' };
+      send({ type: 'response.output_item.added', output_index: index, item: { ...item, arguments: '', status: 'in_progress' } });
+      send({ type: 'response.function_call_arguments.delta', output_index: index, delta: item.arguments });
+      send({ type: 'response.function_call_arguments.done', output_index: index, arguments: item.arguments });
+      send({ type: 'response.output_item.done', output_index: index, item });
+      response.output.push(item);
+    }
+    send({ type: 'response.completed', response: { ...response, status: 'completed', usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 } } });
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  writeFileSync(path.join(f.root, 'evidence.txt'), 'unique local evidence 729');
+  const runtime = await sdk.ModelRuntime.create({ authPath: path.join(f.root, 'auth.json'), modelsPath: path.join(f.root, 'models.json'), allowModelNetwork: false });
+  const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+  runtime.registerProvider('fixture', { api: 'openai-responses', baseUrl, models: [{ id: 'model', name: 'Fixture', input: ['text'], contextWindow: 32000, maxTokens: 1024, reasoning: false,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
+  await runtime.setRuntimeApiKey('fixture', 'fixture-key');
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
+  const { PiExecution } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/execution.ts'));
+  const { readHistory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/history-reader.ts'));
+  const manager = sdk.SessionManager.create(f.root, path.join(f.root, 'sessions'));
+  const descriptor = { sessionId: manager.getSessionId(), engine: 'pi', cwd: f.root, locator: manager.getSessionFile() };
+  const session = await new PiSessionFactory(f.config).create(manager, descriptor, { runtime, model: runtime.getModel('fixture', 'model'), version: 'fixture' });
+  const execution = new PiExecution(session, manager);
+  t.after(() => execution.dispose());
+  const events = [];
+  await execution.execute({ runId: 'r-tools', clientMessageId: 'client', content: [{ type: 'text', text: 'Read both files' }] }, event => events.push(structuredClone(event)));
+  const latest = [...new Map(events.filter(event => event.type === 'tool.update').map(event => [event.tool.toolCallId, event.tool])).values()];
+  assert.deepEqual(latest.map(tool => tool.status), ['succeeded', 'failed']);
+  assert.match(latest[0].outputText, /unique local evidence 729/);
+  assert.match(latest[1].outputText, /ENOENT|no such file/i);
+  assert.ok(events.filter(event => event.type === 'tool.update').every(event => event.ordinal === 0));
+  assert.equal(requests.length, 2);
+  assert.match(JSON.stringify(requests[1].input), /unique local evidence 729/);
+  execution.dispose();
+  const reopened = sdk.SessionManager.open(manager.getSessionFile());
+  const history = readHistory(reopened.getBranch());
+  assert.deepEqual(JSON.parse(JSON.stringify(history.find(message => message.tools?.length).tools)), latest);
+});
 
 test('real Pi loads the pinned extension model catalog without credentials or ambient extensions', async t => {
   const f = await fixture(t);
@@ -221,7 +337,7 @@ test('real Pi sessions send through the selected provider, preserve history, and
   assert.ok(times.every(entry => entry.display === false));
 });
 
-test('Bailian model defaults reach real Pi requests with local tools disabled and follow provider switches', async t => {
+test('Bailian model defaults coexist with local coding tools and follow provider switches', async t => {
   const f = await fixture(t);
   const sdk = await import('@earendil-works/pi-coding-agent');
   await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-only-key' });
@@ -262,7 +378,13 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
     { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
     { runtime, model: runtime.getModel('bailian-tp', 'model'), version: 'fixture' });
   t.after(() => session.dispose());
-  assert.equal(session.getActiveToolNames().length, 0);
+  const localToolNames = ['read', 'bash', 'edit', 'write'];
+  assert.deepEqual(session.getActiveToolNames().sort(), [...localToolNames].sort());
+  const remoteTools = body => (body.tools ?? []).filter(tool => tool.type !== 'function');
+  const assertLocalTools = body => assert.deepEqual(
+    body.tools.filter(tool => tool.type === 'function').map(tool => tool.name ?? tool.function.name).sort(),
+    [...localToolNames].sort(),
+  );
   await session.prompt('Search the web for the current release.');
   await session.setModel(runtime.getModel('other', 'model'));
   await session.prompt('Continue with the other provider.');
@@ -272,7 +394,8 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
   assert.equal(requests.length, 3);
   const serverTools = [{ type: 'web_search' }, { type: 'web_extractor' }];
   assert.deepEqual(requests.map(request => request.url), ['/v1/responses', '/v1/chat/completions', '/v1/responses']);
-  assert.deepEqual(requests.map(request => request.body.tools), [serverTools, undefined, serverTools]);
+  assert.deepEqual(requests.map(request => remoteTools(request.body)), [serverTools, [], serverTools]);
+  requests.forEach(request => assertLocalTools(request.body));
   assert.ok(requests.every(request => request.body.enable_search === undefined && request.body.search_options === undefined));
   assert.ok(JSON.stringify(requests[2].body.input).includes('Continue with the other provider.'), 'Responses keeps previous Chat Completions history');
   assert.equal(requests[0].body.max_output_tokens, 1024);
@@ -291,7 +414,8 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
       await next.prompt(`Continue with thinking ${thinkingLevel}.`);
       const body = requests.at(-1).body;
       assert.equal(body.reasoning.effort, thinkingLevel === 'off' ? 'none' : thinkingLevel, thinkingLevel);
-      assert.deepEqual(body.tools, thinkingLevel === 'off' ? [{ type: 'web_search' }] : serverTools, 'web_extractor requires thinking, while web_search remains available when off');
+      assertLocalTools(body);
+      assert.deepEqual(remoteTools(body), thinkingLevel === 'off' ? [{ type: 'web_search' }] : serverTools, 'web_extractor requires thinking, while web_search remains available when off');
       assert.equal(body.enable_thinking, thinkingLevel === 'off' ? undefined : true, 'only thinking levels explicitly enable thinking');
       for (const key of ['reasoning_effort', 'enable_search', 'search_options', 'max_tokens']) assert.equal(body[key], undefined, key);
       assert.equal(next.messages.at(-1).content.some(part => part.type === 'thinking'), thinkingLevel !== 'off');
@@ -310,7 +434,8 @@ test('Bailian model defaults reach real Pi requests with local tools disabled an
       try {
         await next.prompt('Check selected tools.');
         const body = requests.at(-1).body;
-        assert.deepEqual(body.tools, [
+        assertLocalTools(body);
+        assert.deepEqual(remoteTools(body), [
           ...(webSearch ? [{ type: 'web_search' }] : []),
           ...(webExtractor && thinkingLevel !== 'off' ? [{ type: 'web_extractor' }] : []),
         ], JSON.stringify({ thinkingLevel, webSearch, webExtractor }));
@@ -487,4 +612,59 @@ test('session web tool choices reach prepared bindings and leave other sessions 
   const { isModelSelection } = f.load(path.resolve(__dirname, '../../../shared/agent/validation.ts'));
   assert.equal(isModelSelection(selection), true);
   assert.equal(isModelSelection({ ...selection, webSearch: 'false' }), false);
+  assert.equal(isModelSelection({ ...selection, webMode: 'browser' }), true);
+  assert.equal(isModelSelection({ ...selection, webMode: 'provider' }), true);
+  assert.equal(isModelSelection({ ...selection, webMode: 'both' }), false);
+});
+
+test('desktop web modes are exclusive in real Responses payloads across switches on the same session', async t => {
+  const f = await fixture(t);
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const providers = new f.PiProviderManager(f.config, true);
+  await providers.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-key' });
+  const selection = { providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview', thinkingLevel: 'high' };
+  const browserBinding = await providers.prepare(selection);
+  assert.equal(browserBinding.webMode, 'browser', 'legacy desktop selections default to browser');
+  const providerBinding = await providers.prepare({ ...selection, webMode: 'provider' });
+  assert.equal(providerBinding.webMode, 'provider');
+  assert.equal(JSON.stringify(browserBinding.model.samplingParams.tools), '[]', 'preparing native mode cannot mutate an accepted browser binding');
+  const requests = [];
+  const server = require('node:http').createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    requests.push(JSON.parse(body));
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const response = { id: `resp_${requests.length}`, model: selection.modelId, status: 'in_progress', output: [] };
+    const send = event => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    send({ type: 'response.created', response });
+    const item = { id: `msg_${requests.length}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'mode answer', annotations: [] }] };
+    send({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
+    send({ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: 'mode answer' });
+    send({ type: 'response.output_item.done', output_index: 0, item });
+    send({ type: 'response.completed', response: { ...response, status: 'completed', output: [item], usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } });
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
+  const { PiExecution } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/execution.ts'));
+  const factory = new PiSessionFactory(f.config, async () => { throw new Error('No browser call expected'); });
+  const manager = sdk.SessionManager.create(f.root, path.join(f.root, 'sessions'));
+  const descriptor = { sessionId: manager.getSessionId(), engine: 'pi', cwd: f.root, locator: manager.getSessionFile() };
+  const disabled = await providers.prepare({ ...selection, webMode: 'provider', webSearch: false, webExtractor: false });
+  for (const [index, binding] of [browserBinding, providerBinding, disabled, browserBinding].entries()) {
+    const session = await factory.create(manager, descriptor, { ...binding, model: { ...binding.model, baseUrl: `http://127.0.0.1:${server.address().port}/v1` } });
+    const execution = new PiExecution(session, manager);
+    try { await execution.execute({ runId: `mode-${index}`, clientMessageId: `mode-${index}`, content: [{ type: 'text', text: 'Reply briefly' }] }, () => {}); }
+    finally { execution.dispose(); }
+    const request = requests[index];
+    assert.ok(request, 'one real HTTP request per Run');
+    const names = request.tools.map(tool => tool.type === 'function' ? tool.name : tool.type);
+    assert.ok(names.includes('read'), 'local tools remain available in both modes');
+    assert.equal(names.includes('mozi_browser'), binding.webMode === 'browser');
+    for (const name of ['mozi_visual_search', 'mozi_visual_read']) assert.equal(names.includes(name), false);
+    for (const name of ['web_search', 'web_extractor']) assert.equal(names.includes(name), binding === providerBinding);
+  }
+  await providers.saveProvider(custom());
+  await assert.rejects(providers.prepare({ providerId: 'custom', modelId: 'model', webMode: 'provider' }), e => e.code === 'UNSUPPORTED_CAPABILITY');
+  await assert.rejects(f.manager.prepare({ ...selection, webMode: 'browser' }), e => e.code === 'UNSUPPORTED_CAPABILITY');
 });

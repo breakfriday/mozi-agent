@@ -10,7 +10,7 @@ import type {
   RuntimeNotice, RuntimeShutdown,
 } from "./protocol";
 
-import { PROVIDER_APIS, THINKING_LEVELS } from "./providers";
+import { PROVIDER_APIS, THINKING_LEVELS, WEB_MODES } from "./providers";
 import type { ModelSelection, ProviderModel, ProviderModelView, ProviderView, ModelSettings, ThinkingLevel } from "./providers";
 import type { ModelCallView, TokenUsage, UsageTotals, UsageMonitorView, ServerStepView } from "./usage";
 
@@ -90,12 +90,13 @@ export const isAppError = object<AppError>({
 });
 
 const thinkingLevel = oneOf(...THINKING_LEVELS);
-export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id, thinkingLevel: optional(thinkingLevel), webSearch: optional(boolean), webExtractor: optional(boolean) });
+export const isModelSelection = object<ModelSelection>({ providerId: id, modelId: id, thinkingLevel: optional(thinkingLevel), webMode: optional(oneOf(...WEB_MODES)), webSearch: optional(boolean), webExtractor: optional(boolean) });
 const positive: Guard<number> = (value): value is number => sequence(value) && value > 0 && value <= 100_000_000;
 const providerModelShape = { id, name: id, contextWindow: positive, maxTokens: positive, reasoning: boolean, vision: boolean };
 const providerModel = object<ProviderModel>(providerModelShape);
 const providerModelView = object<ProviderModelView>({ ...providerModelShape,
   supportsWebTools: optional(boolean),
+  supportsBrowserTools: optional(boolean),
   thinkingLevels: optional((value): value is ThinkingLevel[] => array(thinkingLevel)(value) && value.length > 0 && new Set(value).size === value.length),
 });
 const providerView = object<ProviderView>({
@@ -129,6 +130,7 @@ const messageView: Guard<MessageView> = (value): value is MessageView => message
   && (value.role === "assistant" || value.content.every(part => part.type === "text"));
 const toolView = object<ToolView>({
   toolCallId: id, runId: id, toolName: id,
+  messageId: optional(id), partIndex: optional(sequence),
   status: oneOf(...TOOL_STATUSES),
   inputText: string, outputText: string, outputTruncated: boolean, summary: optional(string),
 });

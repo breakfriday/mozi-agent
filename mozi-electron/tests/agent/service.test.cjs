@@ -68,6 +68,29 @@ async function fixture(t, catalogFactory) {
 }
 const input = (sessionId, clientMessageId = 'client', text = 'hello') => ({ sessionId, clientMessageId, content: [{ type: 'text', text }] });
 
+test('tool results update completed assistant messages, survive recovery and settle on cancellation', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'tools' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  const execution = f.executions[0];
+  execution.emit({ type: 'message.complete', ordinal: 0, parts: [] });
+  const tool = { toolCallId: 'read-1', toolName: 'read', partIndex: 0, status: 'running', inputText: '{"path":"missing"}', outputText: '', outputTruncated: false };
+  execution.emit({ type: 'tool.update', ordinal: 0, tool });
+  execution.emit({ type: 'tool.update', ordinal: 0, tool: { ...tool, status: 'failed', outputText: 'ENOENT' } });
+  execution.emit({ type: 'tool.update', ordinal: 0, tool: { ...tool, toolCallId: 'unfinished' } });
+  f.histories.get(sessionId).at(-1).tools = [{ ...tool, status: 'failed', outputText: 'ENOENT' }, { ...tool, toolCallId: 'unfinished', status: 'interrupted' }];
+  await f.call('run.cancel', { sessionId, runId }); await tick();
+  const snapshot = await f.call('session.snapshot', { sessionId });
+  assert.deepEqual(snapshot.tools.map(tool => tool.status), ['failed', 'cancelled']);
+  assert.ok(snapshot.tools.every(tool => tool.messageId === snapshot.messages.at(-1).id));
+  assert.equal(f.events.filter(event => event.type === 'tool.completed').length, 2);
+  await f.service.close();
+  const restored = await reopen(t, f);
+  const recovered = await restored.call('session.snapshot', { sessionId });
+  assert.deepEqual(recovered.tools, snapshot.tools);
+  assert.deepEqual(f.fatal, []);
+});
+
 test('reasoning streams through application events and preserves part identities after native-history recovery', async t => {
   const f = await fixture(t);
   const { sessionId } = await f.call('session.create', { clientOperationId: 'reasoning' });
@@ -519,8 +542,8 @@ test('deleting during history loading cannot resurrect a cached session or accep
 
 test('provider defaults, session choices and accepted Runs persist independently', async t => {
   let version = 'configuration-one'; const opened = [];
-  const a = { providerId: 'first', modelId: 'same-model', thinkingLevel: 'off', webSearch: false, webExtractor: true };
-  const b = { providerId: 'second', modelId: 'same-model', thinkingLevel: 'high', webSearch: true, webExtractor: false };
+  const a = { providerId: 'first', modelId: 'same-model', thinkingLevel: 'off', webMode: 'browser', webSearch: false, webExtractor: true };
+  const b = { providerId: 'second', modelId: 'same-model', thinkingLevel: 'high', webMode: 'provider', webSearch: true, webExtractor: false };
   const f = await fixture(t, runtime => ({
     listProviders: async () => [], saveProvider: async () => {}, removeProvider: async () => {},
     prepareModel: async selection => {
@@ -540,6 +563,7 @@ test('provider defaults, session choices and accepted Runs persist independently
   version = 'configuration-two';
   await assert.rejects(f.call('session.setModel', { sessionId, model: b }), e => e.code === 'SESSION_BUSY');
   await assert.rejects(f.call('session.setModel', { sessionId, model: { ...a, thinkingLevel: 'medium' } }), e => e.code === 'SESSION_BUSY');
+  await assert.rejects(f.call('session.setModel', { sessionId, model: { ...a, webMode: 'provider' } }), e => e.code === 'SESSION_BUSY');
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ selection: a, version: 'configuration-one' }]);
   const run = await f.call('run.get', { sessionId, runId: accepted.runId });
@@ -555,6 +579,28 @@ test('provider defaults, session choices and accepted Runs persist independently
   assert.deepEqual(JSON.parse(JSON.stringify(opened[1])), { selection: b, version: 'configuration-two' });
   f.executions[1].resolve(); await tick();
   assert.equal((await f.call('run.get', { sessionId, runId: next.runId })).status, 'completed');
+});
+
+test('changing only the web mode while preparing a Run rejects the stale binding', async t => {
+  let release, preparing;
+  const started = new Promise(resolve => { preparing = resolve; });
+  let hold = false;
+  const f = await fixture(t, runtime => ({ listProviders: async () => [],
+    prepareModel: async selection => {
+      if (hold) { hold = false; preparing(); await new Promise(resolve => { release = resolve; }); }
+      return { selection, configVersion: 'one', openSession: d => runtime.openSession(d) };
+    },
+  }));
+  const model = { providerId: 'p', modelId: 'm', webMode: 'browser' };
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'mode-race', model });
+  hold = true;
+  const pending = f.call('run.start', input(sessionId));
+  const rejected = assert.rejects(pending, e => e.code === 'SESSION_BUSY');
+  await started;
+  await f.call('session.setModel', { sessionId, model: { ...model, webMode: 'provider' } });
+  release(); await rejected;
+  assert.equal((await f.call('session.snapshot', { sessionId })).runs.length, 0);
+  assert.equal(f.executions.length, 0);
 });
 
 test('session creation deduplication compares the requested model, not a later default', async t => {
@@ -575,6 +621,7 @@ test('session creation deduplication compares the requested model, not a later d
   for (const field of ['webSearch', 'webExtractor']) {
     await assert.rejects(f.call('session.create', { ...request, model: { ...a, [field]: false } }), e => e.code === 'SUBMISSION_CONFLICT');
   }
+  await assert.rejects(f.call('session.create', { ...request, model: { ...a, webMode: 'provider' } }), e => e.code === 'SUBMISSION_CONFLICT');
 });
 
 test('provider-reported model travels through events and snapshots independently of the selected model', async t => {

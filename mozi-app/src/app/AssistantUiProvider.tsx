@@ -8,31 +8,10 @@ import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { modelActions } from "@/agent/modelActions";
 import { agentActions } from "@/agent/agentActions";
 import { useAgentStore } from "@/agent/agentStore";
-import type { AgentMessage } from "@/agent/types";
+import { convertAssistantMessage } from "@/agent/assistantMessage";
 import { selectChatMessages } from "@/agent/submissionState";
 
-function convertMessage(message: AgentMessage): ThreadMessageLike {
-  if (message.role === "user") return {
-    id: message.id, role: "user",
-    content: message.content.filter(part => part.type === "text").map(part => ({ type: "text" as const, text: part.text })),
-  };
-  const content = message.content.map(part => ({ id: part.id, type: part.type, text: part.text }));
-
-  return {
-    id: message.id,
-    role: "assistant",
-    content,
-    metadata: { custom: { responseModelId: message.responseModelId } },
-    status:
-      message.status === "streaming"
-        ? { type: "running" }
-        : message.status === "cancelled"
-          ? { type: "incomplete", reason: "cancelled" }
-          : message.status === "failed" || message.status === "interrupted"
-            ? { type: "incomplete", reason: "error" }
-            : { type: "complete", reason: "stop" },
-  };
-}
+const convertMessage = (message: ThreadMessageLike) => message;
 
 async function onNew(message: AppendMessage) {
   const text = message.content
@@ -59,11 +38,13 @@ export function AssistantUiProvider({ children }: PropsWithChildren) {
   const authoritativeMessages = useAgentStore((state) => state.messages);
   const pendingSubmissions = useAgentStore((state) => state.pendingSubmissions);
   const messageOrder = useAgentStore((state) => state.messageOrder);
+  const tools = useAgentStore((state) => state.tools);
   const isRunning = useAgentStore((state) => state.activeRunId !== null);
   const isSubmitting = useAgentStore((state) => state.inFlightSubmissionId !== null);
   const syncing = useAgentStore((state) => state.syncStatus === "syncing");
-  const messages = useMemo(() => selectChatMessages({ messages: authoritativeMessages, pendingSubmissions, messageOrder }),
-    [authoritativeMessages, pendingSubmissions, messageOrder]);
+  const messages = useMemo(() => selectChatMessages({ messages: authoritativeMessages, pendingSubmissions, messageOrder })
+    .map(message => convertAssistantMessage(message, tools)),
+    [authoritativeMessages, pendingSubmissions, messageOrder, tools]);
   const hasUnknownSubmission = Object.values(pendingSubmissions).some((submission) => submission.status === "unknown");
   const runtime = useExternalStoreRuntime({
     messages,

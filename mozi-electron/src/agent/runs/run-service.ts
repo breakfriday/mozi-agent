@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MessageView, ParamsOf, RunAccepted, RunOutcome, RunView, ResultOf, StartRunInput } from "../../../../shared/agent";
+import { TOOL_OUTCOMES, type ToolOutcome, type MessageView, type ParamsOf, type RunAccepted, type RunOutcome, type RunView, type ResultOf, type StartRunInput } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import { isTerminalRun as terminal, transitionRun } from "./run-machine";
 import type { MetadataStore } from "../storage/metadata-store";
@@ -46,6 +46,7 @@ export class RunService {
     const latest = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
     if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId
       || selection?.thinkingLevel !== latest?.thinkingLevel
+      || selection?.webMode !== latest?.webMode
       || selection?.webSearch !== latest?.webSearch || selection?.webExtractor !== latest?.webExtractor) {
       throw failure("SESSION_BUSY", "会话模型已变化，请重新发送。");
     }
@@ -120,7 +121,7 @@ export class RunService {
         this.events.publish(state, run.id, { type: "run.updated", data: { run } });
         this.events.publish(state, run.id, { type: "run.started", data: {} });
         await execution.session!.execute({ runId: run.id, clientMessageId: input.clientMessageId, content: input.content },
-          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "usage.update" || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
+          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "tool.update" || event.type === "usage.update" || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
       }
       if (execution.cancelled) outcome = { status: "cancelled" };
     } catch (error) {
@@ -168,6 +169,14 @@ export class RunService {
       this.events.publish(state, run.id, { type: "message.started", data: { messageId: message.id, role: "assistant" } });
     }
     const entry = state.messages.get(link.messageId)!, message = entry.value;
+    if (event.type === "tool.update") {
+      const tool = { ...event.tool, runId: run.id, messageId: message.id };
+      state.reportTool(tool);
+      this.events.publish(state, run.id, TOOL_OUTCOMES.includes(tool.status as ToolOutcome)
+        ? { type: "tool.completed", data: { toolCallId: tool.toolCallId, outcome: tool.status as ToolOutcome, tool } }
+        : { type: "tool.updated", data: { tool } });
+      return;
+    }
     if (message.status !== "streaming") return;
     if (event.type === "message.model") {
       state.reportResponseModel(entry, event.responseModelId);
@@ -193,6 +202,12 @@ export class RunService {
     if (outcome.status === "failed") run.error = { ...outcome.error, message: outcome.error.message.slice(0, 8_000) };
     if (outcome.status === "interrupted") run.interruptionReason = outcome.reason;
     state.refreshRun(run.id);
+    for (const tool of [...state.record.snapshot.tools]) {
+      if (tool.runId !== run.id || !["preparing", "running", "awaiting_approval"].includes(tool.status)) continue;
+      const next = { ...tool, status: outcome.status === "cancelled" ? "cancelled" as const : "interrupted" as const };
+      state.reportTool(next);
+      this.events.publish(state, run.id, { type: "tool.completed", data: { toolCallId: next.toolCallId, outcome: next.status, tool: next } });
+    }
     for (const entry of state.messagesByRun.get(run.id) ?? []) {
       if (entry.value.status !== "streaming" && entry.value.status !== "accepted") continue;
       entry.value.status = entry.value.role === "user" ? "completed" : outcome.status;
