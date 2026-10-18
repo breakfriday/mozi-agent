@@ -1,4 +1,5 @@
 import {
+  DesktopOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MessageOutlined,
@@ -6,18 +7,43 @@ import {
   SunOutlined,
 } from "@ant-design/icons";
 import { Button, Grid, Tooltip } from "antd";
-import { Link, Outlet, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
+import {
+  Link,
+  Outlet,
+  useLocation,
+  type LinkProps,
+} from "@tanstack/react-router";
+import { useState, type ReactNode } from "react";
 import { useThemeStore } from "@/store/useThemeStore";
 import { bridgeApi } from "@/runtime/bridge";
 import { WindowControls } from "./WindowControls";
 import styles from "./AppLayout.module.css";
 
-const menuItems = [
+type MenuItem = {
+  icon: ReactNode;
+  label: string;
+} & (
+  | { key: NonNullable<LinkProps["to"]>; onHandle?: undefined }
+  | { key: string; onHandle: () => void | Promise<void> }
+);
+
+const menuItems: MenuItem[] = [
   {
     key: "/chat" as const,
     icon: <MessageOutlined />,
     label: "智能对话",
+  },
+  {
+    key: "dsh",
+    icon: <DesktopOutlined />,
+    label: "dsh",
+    onHandle: async () => {
+      await bridgeApi.window.openWindow({
+        channelId: "dsh",
+        url: "http://127.0.0.1:3080/?token=ecMcq_obmmXJjYMG0cecS24hNGwu8E4kjooYgKxMg0s",
+        options: { title: "dsh", frame: true },
+      });
+    },
   },
 ];
 
@@ -42,18 +68,24 @@ export function AppLayout() {
     >
       <header className={styles.header}>
         <div className={styles.brand}>
-          {!monitor && <Button
-            type="text"
-            icon={menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setCollapsed((value) => !value)}
-            className={styles.collapseButton}
-            aria-label={menuCollapsed ? "展开菜单" : "收起菜单"}
-            title={menuCollapsed ? "展开菜单" : "收起菜单"}
-            aria-expanded={!menuCollapsed}
-            aria-controls="app-menu"
-            disabled={isCompact}
-          />}
-          <span className={styles.brandName}>{monitor ? "Mozi · 用量监控" : "Mozi"}</span>
+          {!monitor && (
+            <Button
+              type="text"
+              icon={
+                menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
+              }
+              onClick={() => setCollapsed((value) => !value)}
+              className={styles.collapseButton}
+              aria-label={menuCollapsed ? "展开菜单" : "收起菜单"}
+              title={menuCollapsed ? "展开菜单" : "收起菜单"}
+              aria-expanded={!menuCollapsed}
+              aria-controls="app-menu"
+              disabled={isCompact}
+            />
+          )}
+          <span className={styles.brandName}>
+            {monitor ? "Mozi · 用量监控" : "Mozi"}
+          </span>
         </div>
         <div className={styles.headerActions}>
           <Button
@@ -70,29 +102,47 @@ export function AppLayout() {
         </div>
       </header>
       <div className={styles.mainLayout}>
-        {!monitor && <aside className={styles.sideBar}>
-          <nav id="app-menu" className={styles.menu} aria-label="主导航">
-            {menuItems.map((item) => (
-              <Tooltip
-                key={item.key}
-                title={menuCollapsed ? item.label : undefined}
-                placement="right"
-              >
-                <Link
-                  to={item.key}
-                  className={styles.menuItem}
-                  aria-label={item.label}
-                  aria-current={selectedPath === item.key ? "page" : undefined}
+        {!monitor && (
+          <aside className={styles.sideBar}>
+            <nav id="app-menu" className={styles.menu} aria-label="主导航">
+              {menuItems.map((item) => (
+                <Tooltip
+                  key={item.key}
+                  title={menuCollapsed ? item.label : undefined}
+                  placement="right"
                 >
-                  <span className={styles.menuIcon} aria-hidden="true">
-                    {item.icon}
-                  </span>
-                  <span className={styles.menuLabel}>{item.label}</span>
-                </Link>
-              </Tooltip>
-            ))}
-          </nav>
-        </aside>}
+                  {item.onHandle ? (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      aria-label={item.label}
+                      onClick={item.onHandle}
+                    >
+                      <span className={styles.menuIcon} aria-hidden="true">
+                        {item.icon}
+                      </span>
+                      <span className={styles.menuLabel}>{item.label}</span>
+                    </button>
+                  ) : (
+                    <Link
+                      to={item.key}
+                      className={styles.menuItem}
+                      aria-label={item.label}
+                      aria-current={
+                        selectedPath === item.key ? "page" : undefined
+                      }
+                    >
+                      <span className={styles.menuIcon} aria-hidden="true">
+                        {item.icon}
+                      </span>
+                      <span className={styles.menuLabel}>{item.label}</span>
+                    </Link>
+                  )}
+                </Tooltip>
+              ))}
+            </nav>
+          </aside>
+        )}
         <main className={styles.content}>
           <div className={styles.contentInner}>
             <Outlet />

@@ -14,11 +14,7 @@ export interface WindowCreateOptions extends Omit<
   bgColor?: BrowserWindowConstructorOptions["backgroundColor"];
 }
 
-export interface WindowCreatePayload {
-  channelId: string;
-  url: string;
-  options?: WindowCreateOptions;
-}
+export type { WindowCreatePayload } from "../../../../shared/electron-api";
 
 export class WindowService {
   private readonly windowMap = new Map<string, BrowserWindow>();
