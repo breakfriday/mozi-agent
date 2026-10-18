@@ -3,7 +3,7 @@ import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails,
 
 /** Mozi metadata only: no history, UI snapshots or SDK context.
  * Mutations synchronously commit before acceptance/events. An async implementation
- * must also serialize acceptance in RunService.
+ * must also serialize the SessionService prepare/persist/commit operations.
  */
 export interface MetadataStore {
   getDefaultModel(): ModelSelection | undefined;

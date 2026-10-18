@@ -2,17 +2,18 @@ import { createHash } from "node:crypto";
 import type { MessageView, ToolView } from "../../../../shared/agent";
 import type { RuntimeHistoryMessage } from "../runtime/agent-runtime";
 import type { MessageLink, SessionMetadata, SessionMetadataDetails } from "../storage/metadata";
-import type { SessionRecord } from "./session-record";
-import { linkKey } from "./session-state";
+import type { SessionProjectionSeed } from "./types/session-projection";
+import { linkKey, partId } from "./message-identity";
 
-export const partId = (messageId: string, index: number, type: "text" | "reasoning" = "text"): string => `${messageId}:${type}:${index}`;
 const nativeId = (metadata: SessionMetadata, entryId: string): string => "native:" + createHash("sha256")
   .update(JSON.stringify([metadata.descriptor.engine, metadata.descriptor.sessionId, entryId])).digest("hex");
 
 /** Build a disposable UI view from the selected native branch plus Mozi overlays. */
 export function projectHistory(metadata: SessionMetadata, details: SessionMetadataDetails, history: RuntimeHistoryMessage[]): {
-  record: SessionRecord; confirmedLinks: MessageLink[];
+  seed: SessionProjectionSeed; confirmedLinks: MessageLink[];
 } {
+  // Reconciliation must not mutate repository results or the session catalog.
+  details = structuredClone(details);
   const sessionId = metadata.descriptor.sessionId;
   const runs = new Map(details.runs.map(item => [item.run.id, item]));
   const byOrdinal = new Map(details.links.map(link => [linkKey(link.runId, link.role, link.ordinal), link]));
@@ -83,9 +84,9 @@ export function projectHistory(metadata: SessionMetadata, details: SessionMetada
       present.add(link.messageId);
     }
   }
-  return { confirmedLinks, record: {
-    descriptor: metadata.descriptor, messageLinks: details.links,
-    snapshot: { session: metadata.session, lastSeq: 0, messages: entries.map(entry => entry.message),
+  return { confirmedLinks, seed: {
+    messageLinks: details.links,
+    snapshot: { session: structuredClone(metadata.session), lastSeq: 0, messages: entries.map(entry => entry.message),
       runs: details.runs.filter(item => visibleRuns.has(item.run.id)).map(item => item.run), tools, approvals: [] },
   } };
 }

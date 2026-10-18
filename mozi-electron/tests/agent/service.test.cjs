@@ -270,6 +270,39 @@ test('metadata write failure stops execution before advertising a new assistant 
   await assert.rejects(f.call('session.snapshot', { sessionId }), error => error.code === 'RUNTIME_UNAVAILABLE');
 });
 
+test('terminal persistence failure publishes neither partial tool settlement nor a finished Run', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'terminal-failure' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  f.executions[0].emit({ type: 'tool.update', ordinal: 0, tool: {
+    toolCallId: 'pending', toolName: 'read', status: 'running', inputText: '{}', outputText: '', outputTruncated: false,
+  } });
+  const db = new DatabaseSync(f.filename); t.after(() => db.close());
+  db.exec("CREATE TRIGGER fail_terminal BEFORE UPDATE ON runs WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT, 'terminal write failed'); END");
+  const count = f.events.length;
+  f.executions[0].resolve(); await tick();
+  assert.equal(f.fatal.length, 1);
+  assert.equal(f.events.length, count, 'no terminal part is published before persistence succeeds');
+  assert.equal(f.repository.findRun(sessionId, runId).status, 'running');
+});
+
+test('public session results and events cannot mutate active execution or projection state', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'ownership' });
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  const snapshot = await f.call('session.snapshot', { sessionId });
+  snapshot.runs[0].status = 'completed'; snapshot.messages[0].content[0].text = 'outside';
+  f.events.find(event => event.type === 'run.updated').data.run.status = 'failed';
+  const descriptor = f.service.sessions.descriptor(sessionId); descriptor.locator = 'outside';
+  const link = f.service.sessions.findMessageLink(sessionId, runId, 'user', 0); link.nativeEntryId = 'outside';
+  assert.equal((await f.call('run.get', { sessionId, runId })).status, 'running');
+  assert.notEqual(f.service.sessions.descriptor(sessionId).locator, 'outside');
+  assert.equal(f.service.sessions.findMessageLink(sessionId, runId, 'user', 0).nativeEntryId, undefined);
+  assert.equal((await f.call('session.snapshot', { sessionId })).messages[0].content[0].text, 'hello');
+  await f.call('run.cancel', { sessionId, runId }); await tick();
+  assert.equal((await f.call('session.snapshot', { sessionId })).runs[0].status, 'cancelled');
+});
+
 test('new execution writes the same rows with short and long history and never serializes old content', async t => {
   const measurements = [];
   for (const historyCount of [1, 120]) {
@@ -281,10 +314,12 @@ test('new execution writes the same rows with short and long history and never s
       execution.emit({ type: 'message.complete', ordinal: 0, parts: [{ index: 0, type: 'text', text: 'history '.repeat(100) }] });
       execution.resolve(); await tick();
     }
-    const state = f.service.sessions.peek(sessionId);
-    for (const message of state.record.snapshot.messages) {
-      Object.defineProperty(message.content, 'toJSON', { configurable: true, value() { throw Error('Historical message serialized'); } });
-    }
+    const originalByteLength = Buffer.byteLength;
+    Buffer.byteLength = function(value, ...args) {
+      if (typeof value === 'string' && value.includes('history history history')) throw Error('Historical message serialized');
+      return originalByteLength.call(this, value, ...args);
+    };
+    t.after(() => { Buffer.byteLength = originalByteLength; });
     const a = audit(f.filename); t.after(() => a.close());
     const accepted = await f.call('run.start', input(sessionId, 'new')); await tick();
     const execution = f.executions.at(-1);
@@ -295,7 +330,7 @@ test('new execution writes the same rows with short and long history and never s
     const writes = a.writes();
     assert.ok(writes.filter(x => x.table_name === 'runs').every(x => x.row_id === accepted.runId));
     measurements.push({ rows: writes.length });
-    for (const message of state.record.snapshot.messages) delete message.content.toJSON;
+    Buffer.byteLength = originalByteLength;
     const snapshot = await f.call('session.snapshot', { sessionId });
     assert.equal(snapshot.messages.length, historyCount * 2 + 2);
     a.clear(); await f.service.close(); assert.equal(a.writes().length, 0);
@@ -401,7 +436,7 @@ test('missing native history fails that query instead of substituting a SQL tran
   const restored = await reopen(t, f);
   assert.equal((await restored.call('session.list', {})).items[0].sessionId, sessionId);
   await assert.rejects(restored.call('session.snapshot', { sessionId }), /native file missing/);
-  assert.equal(restored.service.sessions.peek(sessionId), undefined);
+  assert.equal(restored.service.sessions.isLoaded(sessionId), false);
 });
 
 test('simultaneous submissions after a cold native-history load accept only once', async t => {
@@ -437,7 +472,7 @@ test('deduplication and Run queries survive a native history read failure', asyn
   assert.equal(duplicate.runId, accepted.runId); assert.equal(duplicate.disposition, 'duplicate');
   assert.equal((await restored.call('run.get', { sessionId, runId: accepted.runId })).status, 'cancelled');
   await assert.rejects(restored.call('session.snapshot', { sessionId }), /native unavailable/);
-  assert.equal(restored.service.sessions.peek(sessionId), undefined);
+  assert.equal(restored.service.sessions.isLoaded(sessionId), false);
 });
 
 test('cancel during native reconciliation wins before the terminal decision and emits one finish', async t => {
@@ -535,7 +570,7 @@ test('deleting during history loading cannot resurrect a cached session or accep
   recovered.sessions.delete({ sessionId });
   release([]);
   await assert.rejects(pending, e => e.code === 'SESSION_NOT_FOUND');
-  assert.equal(recovered.sessions.peek(sessionId), undefined);
+  assert.equal(recovered.sessions.isLoaded(sessionId), false);
   await recovered.close();
 });
 
@@ -751,7 +786,24 @@ test('deleting during usage loading cannot restore cache or write orphaned links
   recovered.sessions.delete({ sessionId });
   release([]);
   await assert.rejects(pending, e => e.code === 'SESSION_NOT_FOUND');
-  assert.equal(recovered.sessions.peek(sessionId), undefined);
+  assert.equal(recovered.sessions.isLoaded(sessionId), false);
   assert.equal(failures.length, 0);
   await recovered.close();
+});
+
+test('renaming during usage loading is reflected in the newly constructed projection', async t => {
+  const f = await fixture(t);
+  const { sessionId } = await f.call('session.create', { clientOperationId: 'loading-rename' });
+  await f.service.close();
+  let release;
+  f.runtime.readUsage = () => new Promise(resolve => { release = resolve; });
+  const recovered = createApplication(new SqliteMetadataRepository(f.filename), f.runtime, () => {}, error => { throw error; });
+  await recovered.initialize();
+  t.after(() => recovered.close());
+  const pending = recovered.sessions.snapshot({ sessionId });
+  await tick();
+  recovered.sessions.rename({ sessionId, title: 'renamed while loading' });
+  release([]);
+  assert.equal((await pending).session.title, 'renamed while loading');
+  assert.equal(recovered.sessions.list({}).items[0].title, 'renamed while loading');
 });

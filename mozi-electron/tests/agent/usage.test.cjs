@@ -6,7 +6,7 @@ const { normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/runtime
 const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/observer.ts'));
 const { buildUsageMonitor, isAgentEvent, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent'));
 const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
-const { SessionState } = load(path.resolve(__dirname, '../../src/agent/sessions/session-state.ts'));
+const { SessionProjection } = load(path.resolve(__dirname, '../../src/agent/sessions/session-projection.ts'));
 const { ServerStepsCollector } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/server-steps-collector.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const tokens = { input: 60, cacheRead: 40, cacheWrite: 0, output: 30, reasoning: 20, totalTokens: 130 };
@@ -121,7 +121,7 @@ test('usage observer keeps retries separate, records zero reasoning only when re
 
 test('completed records replace running ones across backend, wire, reducer and history snapshots', () => {
   const snapshot = { session: { sessionId: 's', title: 'Tokens', createdAt: base.startedAt, updatedAt: base.startedAt }, lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] };
-  const backend = new SessionState({ snapshot, messageLinks: [], descriptor: {} });
+  const backend = new SessionProjection({ snapshot, messageLinks: [] });
   let state = initialAgentState('s');
   let seq = 0;
   for (const call of [base, { ...base, status: 'completed', usage: tokens }, { ...base, status: 'completed', usage: tokens }]) {
@@ -134,7 +134,7 @@ test('completed records replace running ones across backend, wire, reducer and h
   assert.equal(state.usage.total.totalTokens, 130);
   assert.equal(state.usage.total.input + state.usage.total.cacheRead + state.usage.total.cacheWrite + state.usage.total.output, 130);
   assert.equal(isApiResultFor('session.snapshot', { ok: true, result: snapshot }), true);
-  const restored = installAgentSnapshot(initialAgentState('s'), snapshot);
+  const restored = installAgentSnapshot(initialAgentState('s'), backend.toSnapshot());
   assert.deepEqual(plain(restored.usage), plain(state.usage));
   const empty = installAgentSnapshot(state, { ...snapshot, session: { ...snapshot.session, sessionId: 'other' }, usage: undefined });
   assert.equal(empty.usage, undefined, 'switching session removes previous consumption');

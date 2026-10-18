@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TOOL_OUTCOMES, type ToolOutcome, type MessageView, type ParamsOf, type RunAccepted, type RunOutcome, type RunView, type ResultOf, type StartRunInput } from "../../../../shared/agent";
+import type { MessageView, ParamsOf, RunAccepted, RunOutcome, RunView, ResultOf, StartRunInput } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import { isTerminalRun as terminal, transitionRun } from "./run-machine";
 import type { MetadataStore } from "../storage/metadata-store";
@@ -7,21 +7,19 @@ import type { AgentRuntime, RuntimeEvent, RuntimeSession } from "../runtime/agen
 import { contentHash } from "./submission";
 import type { ApplicationControl } from "../agent-control";
 import type { MessageLink } from "../storage/metadata";
-import { SessionState, linkKey } from "../sessions/session-state";
 import type { SessionService } from "../sessions/session-service";
-import type { AgentEventPublisher } from "../events/event-publisher";
 import type { ModelService } from "../models/model-service";
 import type { PreparedModel } from "../models/model-catalog";
 import { appError, failure } from "../errors";
 
 const log = createAgentLogger("agent-service");
 const now = () => new Date().toISOString();
-type Execution = { model?: PreparedModel; cancelled: boolean; session?: RuntimeSession; done: Promise<void> };
+type Execution = { run: RunView; model?: PreparedModel; cancelled: boolean; session?: RuntimeSession; done: Promise<void> };
 export class RunService {
   private readonly active = new Map<string, Execution>();
   private readonly busySessions = new Set<string>();
   constructor(private readonly repository: MetadataStore, private readonly runtime: AgentRuntime,
-    private readonly sessions: SessionService, private readonly events: AgentEventPublisher,
+    private readonly sessions: SessionService,
     private readonly control: ApplicationControl, private readonly models: ModelService) {}
 
   recover(): void {
@@ -36,14 +34,14 @@ export class RunService {
     this.control.assertAvailable(); this.sessions.assertExists(input.sessionId);
     const duplicate = this.duplicate(input);
     if (duplicate) return duplicate;
-    await this.sessions.load(input.sessionId);
+    await this.sessions.ensureLoaded(input.sessionId);
     this.control.assertAvailable();
-    const selection = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
+    const selection = this.sessions.model(input.sessionId);
     const prepared = await this.models.prepare(selection);
     this.control.assertAvailable(); this.sessions.assertExists(input.sessionId);
     const accepted = this.duplicate(input);
     if (accepted) return accepted;
-    const latest = this.sessions.loaded(input.sessionId).record.snapshot.session.model;
+    const latest = this.sessions.model(input.sessionId);
     if (selection?.providerId !== latest?.providerId || selection?.modelId !== latest?.modelId
       || selection?.thinkingLevel !== latest?.thinkingLevel
       || selection?.webMode !== latest?.webMode
@@ -64,10 +62,7 @@ export class RunService {
     if (!execution) throw failure("RUNTIME_UNAVAILABLE", "任务执行器不可用，请重新同步。");
     execution.cancelled = true;
     if (transitionRun(run, "cancelling", now())) {
-      const state = this.sessions.loaded(run.sessionId);
-      state.refreshRun(run.id);
-      this.control.write(() => this.repository.updateRun(run));
-      this.events.publish(state, run.id, { type: "run.updated", data: { run } });
+      this.sessions.applyRunUpdated(run.sessionId, run);
     }
     if (execution.session) void execution.session.cancel().catch(error => this.control.fail(error));
     return { ...input, disposition: "requested" };
@@ -81,47 +76,46 @@ export class RunService {
   }
 
   private accept(input: StartRunInput, prepared?: PreparedModel): RunAccepted {
-    const state = this.sessions.loaded(input.sessionId);
     // Check again after async history loading: simultaneous retries share one acceptance.
     const duplicate = this.duplicate(input);
     if (duplicate) return duplicate;
     const hash = contentHash(input.content);
     if (this.busySessions.has(input.sessionId)) throw failure("SESSION_BUSY", "当前会话仍有正在执行的任务。");
     if (this.active.size >= 8) throw failure("CAPACITY_EXCEEDED", "同时运行的任务过多。");
-    if (prepared && !state.record.snapshot.session.model) this.sessions.bindModel(input.sessionId, prepared.selection);
+    if (prepared && !this.sessions.model(input.sessionId)) this.sessions.bindModel(input.sessionId, prepared.selection);
     const run: RunView = { ...(prepared ? { model: prepared.selection, modelConfigVersion: prepared.configVersion } : {}), id: randomUUID(), sessionId: input.sessionId, userMessageId: randomUUID(), status: "accepted", createdAt: now(), updatedAt: now() };
     const message: MessageView = {
       id: run.userMessageId, sessionId: input.sessionId, runId: run.id, clientMessageId: input.clientMessageId,
       role: "user", status: "accepted", content: input.content.map((part, index) => ({ ...part, id: this.partId(run.userMessageId, index) })),
     };
     const link: MessageLink = { messageId: message.id, runId: run.id, role: "user", ordinal: 0 };
-    state.checkAppend(message, run);
-    // Reserve pending input, Run and stable ID in one durable transaction.
-    // No projection or completed message body is passed into the store.
-    this.repository.accept({ run, clientMessageId: input.clientMessageId, contentHash: hash, pendingContent: input.content }, link);
-    state.appendRun(run); state.appendMessage(message); state.appendLink(link);
+    const execution: Execution = { run, model: prepared, cancelled: false, done: Promise.resolve() };
     this.busySessions.add(input.sessionId);
-    const execution: Execution = { model: prepared, cancelled: false, done: Promise.resolve() };
     this.active.set(run.id, execution);
-    this.events.publish(state, run.id, { type: "run.updated", data: { run } });
-    this.events.publish(state, run.id, { type: "message.accepted", data: { message } });
+    try {
+      this.sessions.applyRunAccepted(input.sessionId, {
+        metadata: { run, clientMessageId: input.clientMessageId, contentHash: hash, pendingContent: input.content }, message, link,
+      });
+    } catch (error) {
+      this.active.delete(run.id); this.busySessions.delete(input.sessionId);
+      throw error;
+    }
     execution.done = new Promise<void>(resolve => setImmediate(resolve))
-      .then(() => this.execute(state, run, input, execution)).catch(error => { if (!this.control.isFailed()) this.control.fail(error); });
+      .then(() => this.execute(run, input, execution)).catch(error => { if (!this.control.isFailed()) this.control.fail(error); });
     return { sessionId: input.sessionId, clientMessageId: input.clientMessageId, runId: run.id, messageId: message.id, disposition: "accepted" };
   }
 
-  private async execute(state: SessionState, run: RunView, input: StartRunInput, execution: Execution): Promise<void> {
+  private async execute(run: RunView, input: StartRunInput, execution: Execution): Promise<void> {
+    const descriptor = this.sessions.descriptor(run.sessionId);
     let outcome: RunOutcome = { status: "completed" };
     try {
       if (!execution.cancelled) execution.session = await (execution.model
-        ? execution.model.openSession(state.record.descriptor) : this.runtime.openSession(state.record.descriptor));
+        ? execution.model.openSession(descriptor) : this.runtime.openSession(descriptor));
       if (!execution.cancelled) {
-        transitionRun(run, "running", now()); state.refreshRun(run.id);
-        this.control.write(() => this.repository.updateRun(run));
-        this.events.publish(state, run.id, { type: "run.updated", data: { run } });
-        this.events.publish(state, run.id, { type: "run.started", data: {} });
+        transitionRun(run, "running", now());
+        this.sessions.applyRunUpdated(run.sessionId, run, true);
         await execution.session!.execute({ runId: run.id, clientMessageId: input.clientMessageId, content: input.content },
-          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "tool.update" || event.type === "usage.update" || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(state, run, event); });
+          event => { if (!this.control.isFailed() && (!execution.cancelled || event.type === "tool.update" || event.type === "usage.update" || event.type === "message.model" || event.type === "session.title") && !terminal(run)) this.output(run, event); });
       }
       if (execution.cancelled) outcome = { status: "cancelled" };
     } catch (error) {
@@ -133,9 +127,9 @@ export class RunService {
         execution.session = undefined;
         session?.dispose();
         // Only update mappings belonging to this Run. History does not trigger row rewrites.
-        for (const native of this.control.isFailed() ? [] : await this.runtime.readHistory(state.record.descriptor)) {
+        for (const native of this.control.isFailed() ? [] : await this.runtime.readHistory(descriptor)) {
           if (native.runId !== run.id) continue;
-          const link = state.links.get(linkKey(run.id, native.role, native.ordinal));
+          const link = this.sessions.findMessageLink(run.sessionId, run.id, native.role, native.ordinal);
           if (link && link.nativeEntryId !== native.nativeEntryId) { link.nativeEntryId = native.nativeEntryId; links.push(link); }
         }
       } catch (error) {
@@ -143,15 +137,15 @@ export class RunService {
       }
       // Cancellation can arrive while native-history reconciliation is awaiting I/O.
       if (execution.cancelled) outcome = { status: "cancelled" };
-      try { if (!this.control.isFailed()) this.finish(state, run, outcome, links); }
+      try { if (!this.control.isFailed()) this.finish(run, outcome, links); }
       finally { this.active.delete(run.id); this.busySessions.delete(run.sessionId); }
     }
   }
 
-  private output(state: SessionState, run: RunView, event: RuntimeEvent): void {
+  private output(run: RunView, event: RuntimeEvent): void {
     if (event.type === "usage.update") {
       if (event.call.runId !== run.id) throw failure("PROTOCOL_MISMATCH", "用量记录与当前任务不匹配。");
-      this.events.publish(state, run.id, { type: "usage.updated", data: state.reportUsage(event.call) });
+      this.sessions.reportUsage(run.sessionId, event.call);
       return;
     }
     if (event.type === "session.title") {
@@ -159,64 +153,41 @@ export class RunService {
       return;
     }
     if (!Number.isSafeInteger(event.ordinal) || event.ordinal < 0) throw failure("PROTOCOL_MISMATCH", "无效的运行时消息序号。");
-    let link = state.links.get(linkKey(run.id, "assistant", event.ordinal));
+    let link = this.sessions.findMessageLink(run.sessionId, run.id, "assistant", event.ordinal);
     if (!link) {
       link = { messageId: randomUUID(), runId: run.id, role: "assistant", ordinal: event.ordinal };
       const message: MessageView = { id: link.messageId, sessionId: run.sessionId, runId: run.id, role: "assistant", status: "streaming", content: [] };
-      state.checkAppend(message);
-      this.control.write(() => this.repository.saveLinks(run.sessionId, [link!]));
-      state.appendMessage(message); state.appendLink(link);
-      this.events.publish(state, run.id, { type: "message.started", data: { messageId: message.id, role: "assistant" } });
+      this.sessions.applyAssistantStarted(run.sessionId, { message, link });
     }
-    const entry = state.messages.get(link.messageId)!, message = entry.value;
+    const messageId = link.messageId;
     if (event.type === "tool.update") {
-      const tool = { ...event.tool, runId: run.id, messageId: message.id };
-      state.reportTool(tool);
-      this.events.publish(state, run.id, TOOL_OUTCOMES.includes(tool.status as ToolOutcome)
-        ? { type: "tool.completed", data: { toolCallId: tool.toolCallId, outcome: tool.status as ToolOutcome, tool } }
-        : { type: "tool.updated", data: { tool } });
+      const tool = { ...event.tool, runId: run.id, messageId };
+      this.sessions.reportTool(run.sessionId, tool);
       return;
     }
-    if (message.status !== "streaming") return;
+    if (!this.sessions.isMessageStreaming(run.sessionId, messageId)) return;
     if (event.type === "message.model") {
-      state.reportResponseModel(entry, event.responseModelId);
-      this.events.publish(state, run.id, { type: "message.model.reported", data: { messageId: message.id, responseModelId: event.responseModelId } });
+      this.sessions.reportResponseModel(run.sessionId, run.id, messageId, event.responseModelId);
     } else if (event.type === "message.delta" || event.type === "message.reasoning.delta") {
       const type = event.type === "message.delta" ? "text" : "reasoning";
-      const partId = this.partId(message.id, event.partIndex, type);
-      state.appendDelta(entry, partId, event.delta, type);
-      this.events.publish(state, run.id, { type: type === "text" ? "message.text.delta" : "message.reasoning.delta", data: { messageId: message.id, partId, delta: event.delta } });
+      const partId = this.partId(messageId, event.partIndex, type);
+      this.sessions.appendMessageDelta(run.sessionId, run.id, { messageId, partId, type, delta: event.delta });
     } else if (event.type === "message.complete") {
-      const content = event.parts.map(part => ({ id: this.partId(message.id, part.index, part.type), type: part.type, text: part.text }));
+      const content = event.parts.map(part => ({ id: this.partId(messageId, part.index, part.type), type: part.type, text: part.text }));
       if (new Set(content.map(part => part.id)).size !== content.length) throw failure("PROTOCOL_MISMATCH", "重复的运行时内容块。");
-      state.completeMessage(entry, content);
       const links: MessageLink[] = [];
       if (event.nativeEntryId && link.nativeEntryId !== event.nativeEntryId) { link.nativeEntryId = event.nativeEntryId; links.push(link); }
-      this.control.write(() => this.repository.saveLinks(run.sessionId, links));
-      this.events.publish(state, run.id, { type: "message.completed", data: { messageId: message.id, content: message.content } });
+      this.sessions.applyMessageCompleted(run.sessionId, run.id, { messageId, content, links });
     }
   }
 
-  private finish(state: SessionState, run: RunView, outcome: RunOutcome, links: MessageLink[]): void {
+  private finish(run: RunView, outcome: RunOutcome, links: MessageLink[]): void {
     if (!transitionRun(run, outcome.status, now())) return;
     if (outcome.status === "failed") run.error = { ...outcome.error, message: outcome.error.message.slice(0, 8_000) };
     if (outcome.status === "interrupted") run.interruptionReason = outcome.reason;
-    state.refreshRun(run.id);
-    for (const tool of [...state.record.snapshot.tools]) {
-      if (tool.runId !== run.id || !["preparing", "running", "awaiting_approval"].includes(tool.status)) continue;
-      const next = { ...tool, status: outcome.status === "cancelled" ? "cancelled" as const : "interrupted" as const };
-      state.reportTool(next);
-      this.events.publish(state, run.id, { type: "tool.completed", data: { toolCallId: next.toolCallId, outcome: next.status, tool: next } });
-    }
-    for (const entry of state.messagesByRun.get(run.id) ?? []) {
-      if (entry.value.status !== "streaming" && entry.value.status !== "accepted") continue;
-      entry.value.status = entry.value.role === "user" ? "completed" : outcome.status;
-      state.refreshMessage(entry);
-    }
-    this.control.write(() => this.repository.saveLinks(run.sessionId, links));
-    this.control.write(() => this.repository.updateRun(run));
-    this.events.publish(state, run.id, { type: "run.updated", data: { run } });
-    this.events.publish(state, run.id, { type: "run.finished", data: outcome.status === "failed" ? { status: "failed", error: run.error! } : outcome });
+    this.sessions.applyRunFinished(run.sessionId, {
+      run, outcome: outcome.status === "failed" ? { status: "failed", error: run.error! } : outcome, links,
+    });
     log.info("run.finished", { sessionId: run.sessionId, runId: run.id, status: outcome.status });
   }
 
@@ -225,8 +196,8 @@ export class RunService {
     return `${messageId}:${type}:${index}`;
   }
   private run(sessionId: string, runId: string): RunView {
-    const run = this.sessions.peek(sessionId)?.runs.get(runId)?.value ?? this.repository.findRun(sessionId, runId);
-    if (!run) throw failure("RUN_NOT_FOUND", "任务不存在。");
+    const run = this.active.get(runId)?.run ?? this.repository.findRun(sessionId, runId);
+    if (!run || run.sessionId !== sessionId) throw failure("RUN_NOT_FOUND", "任务不存在。");
     return run;
   }
   cancelAll(): void {

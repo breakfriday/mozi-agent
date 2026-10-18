@@ -6,7 +6,7 @@ const { PiEventMapper } = load(path.resolve(__dirname, '../../src/agent/runtime/
 const { displayParts } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/content-mapper.ts'));
 const { isAgentEvent, isParamsFor, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
 const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
-const { SessionState, measure } = load(path.resolve(__dirname, '../../src/agent/sessions/session-state.ts'));
+const { SessionProjection } = load(path.resolve(__dirname, '../../src/agent/sessions/session-projection.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const event = (type, data, seq = 1) => ({ protocolVersion: 1, kind: 'event', sessionId: 's', runId: 'r', seq, type, data });
 const snapshot = messages => ({ session: { sessionId: 's', title: 'Reasoning', createdAt: '2026-10-09T00:00:00Z', updatedAt: '2026-10-09T00:00:00Z' }, messages, runs: [], tools: [], approvals: [], lastSeq: 0 });
@@ -57,15 +57,12 @@ test('reasoning crosses wire validation and frontend state through completion, c
 
 test('reasoning shares capacity limits and incremental size accounting with text', () => {
   const message = { id: 'm', sessionId: 's', runId: 'r', role: 'assistant', status: 'streaming', content: [] };
-  const state = new SessionState({ descriptor: {}, snapshot: snapshot([message]), messageLinks: [] });
-  const entry = state.messages.get('m');
-  state.appendDelta(entry, 'r0', '中\n', 'reasoning');
-  state.appendDelta(entry, 'r0', '文', 'reasoning');
-  state.appendDelta(entry, 't1', '答案');
-  const actual = measure(message);
-  assert.equal(entry.nodes, actual.nodes);
-  assert.ok(entry.bytes >= actual.bytes && entry.bytes <= actual.bytes + 2);
-  assert.throws(() => state.appendDelta(entry, 'r0', 'wrong', 'text'), error => error.code === 'PROTOCOL_MISMATCH');
-  assert.throws(() => state.appendDelta(entry, 'r0', 'x'.repeat(256_000), 'reasoning'), error => error.code === 'CAPACITY_EXCEEDED');
-  assert.equal(message.content[0].text, '中\n文');
+  const state = new SessionProjection({ snapshot: snapshot([message]), messageLinks: [] });
+  state.appendMessageDelta({ messageId: 'm', partId: 'r0', delta: '中\n', type: 'reasoning' });
+  state.appendMessageDelta({ messageId: 'm', partId: 'r0', delta: '文', type: 'reasoning' });
+  state.appendMessageDelta({ messageId: 'm', partId: 't1', delta: '答案', type: 'text' });
+  assert.throws(() => state.appendMessageDelta({ messageId: 'm', partId: 'r0', delta: 'wrong', type: 'text' }), error => error.code === 'PROTOCOL_MISMATCH');
+  assert.throws(() => state.appendMessageDelta({ messageId: 'm', partId: 'r0', delta: 'x'.repeat(256_000), type: 'reasoning' }), error => error.code === 'CAPACITY_EXCEEDED');
+  assert.equal(state.toSnapshot().messages[0].content[0].text, '中\n文');
+  assert.equal(message.content.length, 0, 'input remains isolated');
 });

@@ -25,7 +25,7 @@ export class AgentApplication implements ApplicationControl {
     });
     this.models = new ModelService(store, this, catalog, startupDefault);
     this.sessions = new SessionService(store, runtime, events, this, this.models);
-    this.runs = new RunService(store, runtime, this.sessions, events, this, this.models);
+    this.runs = new RunService(store, runtime, this.sessions, this, this.models);
   }
   initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;

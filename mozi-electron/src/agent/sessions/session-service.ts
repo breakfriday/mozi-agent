@@ -1,12 +1,12 @@
-import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor, buildUsageMonitor } from "../../../../shared/agent";
-import type { ModelSelection, ParamsOf, ResultOf, SessionSnapshot } from "../../../../shared/agent";
+import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor, buildUsageMonitor, TOOL_OUTCOMES } from "../../../../shared/agent";
+import type { EventPayload, ModelCallView, ModelSelection, ParamsOf, ResultOf, RunView, SessionSnapshot, ToolOutcome, ToolView } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import type { MetadataStore } from "../storage/metadata-store";
 import type { AgentRuntime } from "../runtime/agent-runtime";
 import type { ApplicationControl } from "../agent-control";
-import type { SessionMetadata } from "../storage/metadata";
-import type { SessionRecord } from "./session-record";
-import { SessionState } from "./session-state";
+import type { MessageLink, SessionMetadata } from "../storage/metadata";
+import type { AcceptedRunChange, CompletedMessageChange, FinishedRunChange, MessageDelta, SessionProjectionSeed, StartedMessageChange } from "./types/session-projection";
+import { SessionProjection } from "./session-projection";
 import { projectHistory } from "./history-projection";
 import type { AgentEventPublisher } from "../events/event-publisher";
 import type { ModelService } from "../models/model-service";
@@ -16,9 +16,9 @@ import { EMPTY_SESSION_TITLE } from "./session-title";
 const log = createAgentLogger("agent-service");
 const now = () => new Date().toISOString();
 export class SessionService {
-  private readonly sessions = new Map<string, SessionState>();
+  private readonly sessions = new Map<string, SessionProjection>();
   private readonly catalog = new Map<string, SessionMetadata>();
-  private readonly loading = new Map<string, Promise<SessionState>>();
+  private readonly loading = new Map<string, Promise<SessionProjection>>();
   private createQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly repository: MetadataStore, private readonly runtime: AgentRuntime,
     private readonly events: AgentEventPublisher, private readonly control: ApplicationControl, private readonly models: ModelService) {}
@@ -49,7 +49,7 @@ export class SessionService {
     log.info("service.recovered", { stage: "native_sessions_discovered" });
   }
 
-  async load(sessionId: string): Promise<SessionState> {
+  private async load(sessionId: string): Promise<SessionProjection> {
     this.control.assertAvailable();
     const cached = this.sessions.get(sessionId);
     if (cached) return cached;
@@ -61,14 +61,16 @@ export class SessionService {
       const history = await this.runtime.readHistory(metadata.descriptor);
       this.control.assertAvailable();
       this.assertExists(sessionId);
-      const { record, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
-      if (this.runtime.readUsage) record.snapshot.usage = buildUsageMonitor(await this.runtime.readUsage(metadata.descriptor));
+      const { seed, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
+      if (this.runtime.readUsage) seed.snapshot.usage = buildUsageMonitor(await this.runtime.readUsage(metadata.descriptor));
       this.control.assertAvailable();
       this.assertExists(sessionId);
-      record.snapshot.lastSeq = this.events.sequence(sessionId);
-      this.assertSnapshot(record.snapshot);
+      // A rename/model update may have completed while usage was loading.
+      seed.snapshot.session = structuredClone(metadata.session);
+      seed.snapshot.lastSeq = this.events.sequence(sessionId);
+      this.assertSnapshot(seed.snapshot);
+      const state = new SessionProjection(seed);
       this.control.write(() => this.repository.saveLinks(sessionId, confirmedLinks));
-      const state = new SessionState(record);
       this.sessions.set(sessionId, state);
       return state;
     })();
@@ -94,16 +96,16 @@ export class SessionService {
       this.control.assertAvailable();
       const descriptor = await this.runtime.createSession();
       if (input.title?.trim()) this.runtime.setSessionName(descriptor, title);
-      const record: SessionRecord = {
-        descriptor, messageLinks: [],
+      const seed: SessionProjectionSeed = {
+        messageLinks: [],
         snapshot: { session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
           lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] },
       };
-      this.assertSnapshot(record.snapshot);
-      const metadata: SessionMetadata = { descriptor, session: record.snapshot.session, titleSource: input.title?.trim() ? "explicit" : "automatic" };
+      this.assertSnapshot(seed.snapshot);
+      const metadata: SessionMetadata = { descriptor, session: seed.snapshot.session, titleSource: input.title?.trim() ? "explicit" : "automatic" };
       this.repository.create(input.clientOperationId, metadata, input.model);
       this.catalog.set(descriptor.sessionId, metadata);
-      this.sessions.set(descriptor.sessionId, new SessionState(record));
+      this.sessions.set(descriptor.sessionId, new SessionProjection(seed));
       log.info("session.created", { sessionId: descriptor.sessionId, clientOperationId: input.clientOperationId });
       return { sessionId: descriptor.sessionId };
     });
@@ -124,10 +126,10 @@ export class SessionService {
     this.assertExists(sessionId);
     const metadata = this.catalog.get(sessionId)!;
     const session = { ...metadata.session, model: { ...model }, updatedAt: now() };
+    const change = this.sessions.get(sessionId)?.prepareSessionUpdated(session);
     this.control.write(() => this.repository.saveSession({ ...metadata, session }));
+    change?.commit();
     metadata.session = session;
-    const cached = this.sessions.get(sessionId);
-    if (cached) cached.record.snapshot.session = session;
     return structuredClone(session);
   }
 
@@ -138,13 +140,13 @@ export class SessionService {
     if (!title || input.title.length > 200) throw failure("INVALID_ARGUMENT", "会话名称需要 1–200 个字符。");
     const metadata = this.catalog.get(input.sessionId)!;
     const session = { ...metadata.session, title, updatedAt: now() };
+    const change = this.sessions.get(input.sessionId)?.prepareSessionUpdated(session);
     // Native first: a metadata-write failure can be recovered from the JSONL.
     this.runtime.setSessionName(metadata.descriptor, title);
     this.control.write(() => this.repository.saveSession({ ...metadata, session, titleSource: "explicit" }));
+    change?.commit();
     metadata.titleSource = "explicit";
     metadata.session = session;
-    const cached = this.sessions.get(input.sessionId);
-    if (cached) cached.record.snapshot.session = session;
     return structuredClone({ session });
   }
 
@@ -152,12 +154,12 @@ export class SessionService {
     const metadata = this.catalog.get(sessionId)!;
     if (metadata.titleSource === "explicit" || metadata.session.title === title) return;
     const session = { ...metadata.session, title, updatedAt: now() };
+    const change = this.loaded(sessionId).prepareSessionUpdated(session);
     this.control.write(() => this.repository.saveSession({ ...metadata, session, titleSource: "automatic" }));
+    change.commit();
     metadata.session = session;
     metadata.titleSource = "automatic";
-    const state = this.loaded(sessionId);
-    state.record.snapshot.session = session;
-    this.events.publish(state, runId, { type: "session.updated", data: { session } });
+    this.publish(sessionId, runId, [{ type: "session.updated", data: { session } }]);
   }
 
   delete(input: ParamsOf<"session.delete">): ResultOf<"session.delete"> {
@@ -184,15 +186,19 @@ export class SessionService {
   assertExists(sessionId: string): void {
     if (!this.catalog.has(sessionId)) throw failure("SESSION_NOT_FOUND", "会话不存在。");
   }
-  peek(sessionId: string): SessionState | undefined { return this.sessions.get(sessionId); }
-  loaded(sessionId: string): SessionState {
-    const state = this.peek(sessionId);
+  async ensureLoaded(sessionId: string): Promise<void> { await this.load(sessionId); }
+  isLoaded(sessionId: string): boolean { return this.sessions.has(sessionId); }
+  private loaded(sessionId: string): SessionProjection {
+    const state = this.sessions.get(sessionId);
     if (!state) throw failure("SESSION_NOT_FOUND", "会话尚未加载。");
     return state;
   }
   touch(sessionId: string, at: string): void {
     const metadata = this.catalog.get(sessionId);
-    if (metadata) metadata.session.updatedAt = at;
+    if (!metadata) return;
+    const session = { ...metadata.session, updatedAt: at };
+    this.sessions.get(sessionId)?.prepareSessionUpdated(session).commit();
+    metadata.session = session;
   }
   list(input: ParamsOf<"session.list">): ResultOf<"session.list"> {
     this.control.assertAvailable();
@@ -207,13 +213,14 @@ export class SessionService {
     const state = await this.load(input.sessionId);
     this.control.assertAvailable();
     this.assertExists(input.sessionId);
-    this.assertSnapshot(state.record.snapshot);
-    return structuredClone(state.record.snapshot);
+    const snapshot = state.toSnapshot();
+    this.assertSnapshot(snapshot);
+    return snapshot;
   }
   async respondApproval(input: ParamsOf<"approval.respond">): Promise<ResultOf<"approval.respond">> {
     const state = await this.load(input.sessionId);
     this.control.assertAvailable();
-    const approval = state.record.snapshot.approvals.find(item => item.id === input.approvalId && item.runId === input.runId);
+    const approval = state.findApproval(input.approvalId, input.runId);
     if (!approval) throw failure("APPROVAL_NOT_FOUND", "当前文本运行时没有此审批项。");
     if (approval.status === "expired") throw failure("APPROVAL_EXPIRED", "审批已过期。");
     const expected = input.decision === "approve" ? "approved" : "denied";
@@ -221,6 +228,94 @@ export class SessionService {
     if (approval.status !== "pending") throw failure("APPROVAL_CONFLICT", "审批决定已确定。");
     throw failure("UNSUPPORTED_CAPABILITY", "当前文本运行时未启用工具审批执行。");
   }
+  descriptor(sessionId: string) {
+    this.assertExists(sessionId);
+    return structuredClone(this.catalog.get(sessionId)!.descriptor);
+  }
+  model(sessionId: string): ModelSelection | undefined {
+    this.assertExists(sessionId);
+    return structuredClone(this.catalog.get(sessionId)!.session.model);
+  }
+  findMessageLink(sessionId: string, runId: string, role: MessageLink["role"], ordinal: number) {
+    return this.loaded(sessionId).findMessageLink(runId, role, ordinal);
+  }
+  isMessageStreaming(sessionId: string, messageId: string): boolean {
+    return this.loaded(sessionId).isMessageStreaming(messageId);
+  }
+
+  // These operations synchronously prepare, persist, commit and publish. Do not
+  // insert awaits: async storage needs per-session serialization first.
+  applyRunAccepted(sessionId: string, input: AcceptedRunChange): void {
+    const change = this.loaded(sessionId).prepareRunAccepted(input);
+    this.repository.accept(input.metadata, input.link);
+    change.commit();
+    this.publish(sessionId, input.metadata.run.id, [
+      { type: "run.updated", data: { run: input.metadata.run } },
+      { type: "message.accepted", data: { message: input.message } },
+    ]);
+  }
+  applyRunUpdated(sessionId: string, run: RunView, started = false): void {
+    const change = this.loaded(sessionId).prepareRunUpdated(run);
+    this.control.write(() => this.repository.updateRun(run));
+    change.commit();
+    this.publish(sessionId, run.id, [
+      { type: "run.updated", data: { run } }, ...(started ? [{ type: "run.started" as const, data: {} }] : []),
+    ]);
+  }
+  applyAssistantStarted(sessionId: string, input: StartedMessageChange): void {
+    const change = this.loaded(sessionId).prepareAssistantStarted(input);
+    this.control.write(() => this.repository.saveLinks(sessionId, [input.link]));
+    change.commit();
+    this.publish(sessionId, input.link.runId, [{ type: "message.started", data: { messageId: input.message.id, role: "assistant" } }]);
+  }
+  appendMessageDelta(sessionId: string, runId: string, input: MessageDelta): void {
+    this.loaded(sessionId).appendMessageDelta(input);
+    this.publish(sessionId, runId, [{ type: input.type === "text" ? "message.text.delta" : "message.reasoning.delta",
+      data: { messageId: input.messageId, partId: input.partId, delta: input.delta } }]);
+  }
+  reportResponseModel(sessionId: string, runId: string, messageId: string, responseModelId: string): void {
+    this.loaded(sessionId).reportResponseModel(messageId, responseModelId);
+    this.publish(sessionId, runId, [{ type: "message.model.reported", data: { messageId, responseModelId } }]);
+  }
+  reportTool(sessionId: string, tool: ToolView): void {
+    if (!tool.runId) throw failure("PROTOCOL_MISMATCH", "工具缺少任务关联。");
+    this.loaded(sessionId).reportTool(tool);
+    this.publish(sessionId, tool.runId, [TOOL_OUTCOMES.includes(tool.status as ToolOutcome)
+      ? { type: "tool.completed", data: { toolCallId: tool.toolCallId, outcome: tool.status as ToolOutcome, tool } }
+      : { type: "tool.updated", data: { tool } }]);
+  }
+  reportUsage(sessionId: string, call: ModelCallView): void {
+    if (!call.runId) throw failure("PROTOCOL_MISMATCH", "用量记录缺少任务关联。");
+    const data = this.loaded(sessionId).reportUsage(call);
+    this.publish(sessionId, call.runId, [{ type: "usage.updated", data }]);
+  }
+  applyMessageCompleted(sessionId: string, runId: string, input: CompletedMessageChange): void {
+    const change = this.loaded(sessionId).prepareMessageCompleted(input);
+    this.control.write(() => this.repository.saveLinks(sessionId, input.links));
+    change.commit();
+    this.publish(sessionId, runId, [{ type: "message.completed", data: { messageId: input.messageId, content: input.content } }]);
+  }
+  applyRunFinished(sessionId: string, input: FinishedRunChange): void {
+    const change = this.loaded(sessionId).prepareRunFinished(input);
+    this.control.write(() => {
+      this.repository.saveLinks(sessionId, input.links);
+      this.repository.updateRun(input.run);
+    });
+    change.commit();
+    this.publish(sessionId, input.run.id, [
+      ...change.tools.map(tool => ({ type: "tool.completed" as const, data: { toolCallId: tool.toolCallId, outcome: tool.status as ToolOutcome, tool } })),
+      { type: "run.updated", data: { run: input.run } },
+      { type: "run.finished", data: input.outcome },
+    ]);
+  }
+  private publish(sessionId: string, runId: string, payloads: EventPayload[]): void {
+    const events = this.events.prepare(sessionId, runId, payloads);
+    const at = now();
+    this.loaded(sessionId).recordPublication(events.at(-1)!.seq, at);
+    this.catalog.get(sessionId)!.session.updatedAt = at;
+    this.events.publish(events);
+  }
+
   async drain(): Promise<void> {
     await this.createQueue;
     await Promise.allSettled([...this.loading.values()]);

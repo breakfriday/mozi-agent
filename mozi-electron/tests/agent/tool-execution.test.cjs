@@ -57,17 +57,17 @@ test('native tool-only messages restore results, interrupted calls and stable UI
   const details = { runs: [{ run: { id: 'r', status: 'cancelled', updatedAt: timestamp } }], links: [
     { messageId: 'app-a', nativeEntryId: 'a', runId: 'r', role: 'assistant', ordinal: 0 },
   ] };
-  const { record } = projectHistory(metadata, details, history);
-  assert.deepEqual(plain(record.snapshot.tools.map(tool => tool.status)), ['succeeded', 'failed', 'cancelled']);
-  assert.ok(record.snapshot.tools.every(tool => tool.messageId === 'app-a'));
-  const message = { ...record.snapshot.messages[1], id: 'message:app-a' };
-  const view = convertAssistantMessage(message, record.snapshot.tools);
+  const { seed } = projectHistory(metadata, details, history);
+  assert.deepEqual(plain(seed.snapshot.tools.map(tool => tool.status)), ['succeeded', 'failed', 'cancelled']);
+  assert.ok(seed.snapshot.tools.every(tool => tool.messageId === 'app-a'));
+  const message = { ...seed.snapshot.messages[1], id: 'message:app-a' };
+  const view = convertAssistantMessage(message, seed.snapshot.tools);
   assert.deepEqual(plain(view.content.map(part => part.type)), ['tool-call', 'tool-call', 'tool-call']);
   assert.equal(view.content[1].result, 'ENOENT');
   assert.equal(view.content[1].isError, true);
   assert.equal(view.content[2].isPreliminary, false);
   // An imported native session without Mozi metadata still has visible tools.
-  assert.equal(projectHistory(metadata, { runs: [], links: [] }, history).record.snapshot.tools.length, 3);
+  assert.equal(projectHistory(metadata, { runs: [], links: [] }, history).seed.snapshot.tools.length, 3);
 });
 
 test('UI conversion interleaves tools and text and treats empty successful results as settled', () => {

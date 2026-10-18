@@ -16,7 +16,7 @@ function files(directory) {
 }
 test('capability boundaries keep business code independent of Pi, SQLite and transport implementations', () => {
   const contracts = new Set(['agent-control', 'errors', 'runtime/agent-runtime', 'models/model-catalog',
-    'storage/metadata-store', 'storage/metadata', 'sessions/session-record']);
+    'storage/metadata-store', 'storage/metadata', 'sessions/types/session-projection']);
   const rules = new Set(['runs/run-machine', 'sessions/session-title']);
   for (const file of files(root)) {
     const relative = path.relative(root, file).split(path.sep).join('/');
@@ -46,6 +46,10 @@ test('capability boundaries keep business code independent of Pi, SQLite and tra
       if (/^(runs|sessions|models|events)\//.test(relative) || module === 'agent') {
         assert.ok(!/^(transport|bootstrap)\//.test(target) && targetModule !== 'entry', location);
       }
+      if (!relative.startsWith('sessions/') && target.startsWith('sessions/')) {
+        assert.ok(targetModule === 'sessions/session-service' || target.startsWith('sessions/types/') || rules.has(targetModule), `${location}: projection implementation is private to sessions`);
+      }
+      if (relative.startsWith('events/')) assert.ok(!target.startsWith('sessions/'), location);
       if (relative.startsWith('transport/')) assert.ok(!target.startsWith('bootstrap/'), location);
       if (rules.has(module)) assert.fail(`${location}: business rules must not depend on Agent orchestration`);
       if (contracts.has(module)) assert.ok(contracts.has(targetModule), location);
@@ -75,13 +79,12 @@ test('Run state rules prevent cancellation from becoming completed and keep term
 });
 test('event seq belongs to the publisher across rebuilt projections and is independent per session', () => {
   const sent = [], publisher = new AgentEventPublisher(event => sent.push(event));
-  const state = id => ({ record: { snapshot: { session: { sessionId: id }, lastSeq: 0 } } });
-  publisher.publish(state('s'), 'r', { type: 'run.started', data: {} });
-  const rebuilt = state('s');
-  publisher.publish(rebuilt, 'r', { type: 'run.started', data: {} });
-  publisher.publish(state('other'), 'r2', { type: 'run.started', data: {} });
+  publisher.publish(publisher.prepare('s', 'r', [{ type: 'run.started', data: {} }]));
+  // Rebuilding a projection has no effect on this process-owned sequence.
+  publisher.publish(publisher.prepare('s', 'r', [{ type: 'run.started', data: {} }]));
+  publisher.publish(publisher.prepare('other', 'r2', [{ type: 'run.started', data: {} }]));
   assert.deepEqual(sent.map(event => event.seq), [1, 2, 1]);
-  assert.equal(rebuilt.record.snapshot.lastSeq, 2);
+  assert.equal(publisher.sequence('s'), 2);
   assert.equal(new AgentEventPublisher(() => {}).sequence('s'), 0);
 });
 test('Pi mapping keeps ordinals per execution, handles retries and never creates wire events', () => {
