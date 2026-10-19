@@ -40,7 +40,7 @@ const menuItems: MenuItem[] = [
     onHandle: async () => {
       await bridgeApi.window.openWindow({
         channelId: "dsh",
-        url: "http://127.0.0.1:3080/?token=ecMcq_obmmXJjYMG0cecS24hNGwu8E4kjooYgKxMg0s",
+        url: "http://127.0.0.1:3080/",
         options: { title: "dsh", frame: true },
       });
     },

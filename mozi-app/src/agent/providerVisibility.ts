@@ -6,6 +6,7 @@ export type ProviderDisplayFilter = string | readonly string[];
 // Set to "*" / "all" (or ["*"] / ["all"]) to display the entire catalog.
 export const PROVIDER_DISPLAY_FILTER: ProviderDisplayFilter = [
   "bailian-tp",
+  "deepseek",
   "google",
   "google-vertex",
   "huggingface",

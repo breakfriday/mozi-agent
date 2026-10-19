@@ -420,6 +420,7 @@ function WebControls({ model, value, disabled, onChange }: {
 }) {
   if (!model || (!model.supportsWebTools && !model.supportsBrowserTools) || !value) return null;
   const mode = value.webMode ?? (model.supportsBrowserTools ? "browser" : "provider");
+  const extraction = model.supportsWebExtractor ?? model.supportsWebTools;
   const thinking = (value.thinkingLevel ?? thinkingLevelFor(model)) !== "off";
   return (
     <>
@@ -449,12 +450,12 @@ function WebControls({ model, value, disabled, onChange }: {
               disabled={disabled} onChange={webSearch => onChange({ ...value, webSearch })} />
             <span>联网搜索</span>
           </label>
-          <label className={styles.thinkingSwitch}>
+          {extraction && <label className={styles.thinkingSwitch}>
             <Switch size="small" aria-label="网页提取" checked={thinking && value.webExtractor !== false}
               disabled={disabled || !thinking} onChange={webExtractor => onChange({ ...value, webExtractor })} />
             <span>网页提取</span>
-          </label>
-          <span className={styles.hint}>{thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
+          </label>}
+          <span className={styles.hint}>{!extraction || thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
         </div>
       )}
     </>
