@@ -96,6 +96,7 @@ const providerModelShape = { id, name: id, contextWindow: positive, maxTokens: p
 const providerModel = object<ProviderModel>(providerModelShape);
 const providerModelView = object<ProviderModelView>({ ...providerModelShape,
   supportsWebTools: optional(boolean),
+  supportsWebExtractor: optional(boolean),
   supportsBrowserTools: optional(boolean),
   thinkingLevels: optional((value): value is ThinkingLevel[] => array(thinkingLevel)(value) && value.length > 0 && new Set(value).size === value.length),
 });

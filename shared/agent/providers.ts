@@ -28,6 +28,8 @@ export type ProviderModelView = ProviderModel & {
   thinkingLevels?: ThinkingLevel[];
   /** Server search/extraction controls; extraction requires thinking enabled. */
   supportsWebTools?: boolean;
+  /** Whether native web extraction is available in addition to search. */
+  supportsWebExtractor?: boolean;
   /** The host provides the visible Mozi browser independently of model vendor. */
   supportsBrowserTools?: boolean;
 };
