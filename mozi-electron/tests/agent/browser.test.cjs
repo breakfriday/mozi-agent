@@ -265,8 +265,9 @@ test('input filters and submission preconditions agree across host and real Pi v
 
 test('browser tool instructions distinguish placeholder text and require guarded site submission', () => {
   const tool = createBrowserTool(async () => readResult, 'session', () => 'run');
-  for (const text of [tool.description, BROWSER_GUIDELINES]) {
-    assert.match(text, /filter=inputs/); assert.match(text, /expect=/);
-    assert.match(text, /占位/); assert.match(text, /拼接/);
-  }
+  assert.equal(tool.promptGuidelines, BROWSER_GUIDELINES);
+  const text = tool.promptGuidelines.join('\n\n');
+  assert.match(text, /filter=inputs/); assert.match(text, /expect=/);
+  assert.match(text, /占位/); assert.match(text, /拼接/);
+  assert.match(tool.description, /expect/);
 });

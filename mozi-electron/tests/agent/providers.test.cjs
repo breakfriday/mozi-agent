@@ -22,6 +22,59 @@ const custom = (name = 'custom', apiKey = 'fixture-only-key') => ({ providerId: 
   models: [{ id: 'model', name: 'A Model', contextWindow: 32768, maxTokens: 4096, reasoning: false, vision: false }],
 });
 
+test('DeepSeek registration sends thinking off and preserves local tools in native and browser modes', async t => {
+  const f = await fixture(t);
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const requests = [];
+  const server = require('node:http').createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    requests.push({ url: req.url, body: JSON.parse(body) });
+    respondWithResponses(res, requests.length, requests.at(-1).body.reasoning.effort !== 'none');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const providers = new f.PiProviderManager(f.config, true);
+  await providers.saveProvider({ providerId: 'deepseek', apiKey: 'fixture-only-key',
+    baseUrl: `http://127.0.0.1:${server.address().port}` });
+  const catalog = (await providers.listProviders()).find(p => p.id === 'deepseek');
+  assert.equal(catalog.api, 'openai-responses');
+  for (const id of ['deepseek-v4-pro', 'deepseek-flash']) {
+    const model = catalog.models.find(m => m.id === id);
+    assert.ok(model.thinkingLevels.includes('off'));
+    assert.equal(model.supportsWebTools, id === 'deepseek-v4-pro');
+    assert.equal(model.supportsWebExtractor, false);
+  }
+  const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
+  for (const modelId of ['deepseek-v4-pro', 'deepseek-flash']) {
+    for (const thinkingLevel of ['off', 'medium']) {
+      for (const mode of ['native', 'disabled', 'browser']) {
+        if (modelId === 'deepseek-flash' && mode !== 'browser') continue;
+        const binding = await providers.prepare({ providerId: 'deepseek', modelId, thinkingLevel,
+          webMode: mode === 'browser' ? 'browser' : 'provider', webSearch: mode !== 'disabled' });
+        const manager = sdk.SessionManager.create(f.root, path.join(f.root, 'sessions'));
+        const session = await new PiSessionFactory(f.config, async () => { throw new Error('Unexpected browser call'); })
+          .create(manager, { sessionId: manager.getSessionId(), engine: 'pi', cwd: f.root, locator: manager.getSessionFile() }, binding);
+        try {
+          await session.prompt('Hello');
+          const { url, body } = requests.at(-1);
+          assert.equal(url, '/responses');
+          assert.equal(body.model, modelId);
+          assert.equal(body.reasoning.effort, thinkingLevel === 'off' ? 'none' : 'high');
+          for (const name of ['read', 'bash', 'edit', 'write']) {
+            assert.ok(body.tools.some(tool => tool.type === 'function' && tool.name === name), name);
+          }
+          assert.equal(body.tools.some(tool => tool.name === 'mozi_browser'), mode === 'browser');
+          assert.equal(body.tools.filter(tool => tool.type === 'web_search').length, mode === 'native' ? 1 : 0);
+          assert.ok(!body.tools.some(tool => tool.type === 'web_extractor'));
+          assert.ok(body.input.some(item => item.role === 'system'));
+          assert.equal(session.messages.at(-1).stopReason, 'stop');
+          assert.equal(session.messages.at(-1).content.some(part => part.type === 'thinking'), thinkingLevel !== 'off');
+        } finally { session.dispose(); }
+      }
+    }
+  }
+});
+
 test('real Pi calls visual search then read, returns evidence to the model and persists tool history', async t => {
   const f = await fixture(t);
   const sdk = await import('@earendil-works/pi-coding-agent');

@@ -6,7 +6,9 @@ import {
   type BrowserCall,
 } from "../../../../../shared/browser";
 
-export { BROWSER_GUIDELINES } from "./sessions/prompt/browser-guidelines";
+import { BROWSER_GUIDELINES } from "./sessions/prompt/browser-guidelines";
+
+export { BROWSER_GUIDELINES };
 
 export const BROWSER_TOOL_NAME = "mozi_browser";
 
@@ -19,13 +21,24 @@ export function createBrowserTool(
   return {
     name: BROWSER_TOOL_NAME,
     label: "Mozi 浏览器",
-    description:
-      "操作 MoziBrowser（墨子浏览器）。search + query：在窗口中用 Bing 搜索互联网，返回标题、链接和摘要。" +
-      "read + url：打开指定网址并读取正文。read + target=current：直接读取现有窗口当前渲染的页面，返回真实 URL、标题和正文，不刷新、不根据历史猜网址。" +
-      "inspect：列出当前页可交互元素及编号；找搜索输入框先用 filter=inputs，不加 query，避免漏掉热词占位框。query 可按名称或占位提示过滤。click + elementId：点击刚刚 inspect 返回的元素，支持 JavaScript 动态链接和按钮。fill + elementId + text：替换输入框全部内容，空字符串清空。press + elementId + key：对元素按键，如 Enter 提交站内搜索。" +
-      "inspect 提供输入类型、可编辑/只读状态、placeholder 和 hasValue，不返回输入值；占位热词不代表已输入。fill 成功返回 inputVerified=true。每次 click/fill/press 后整组编号失效，必须重新 inspect 获取编号；操作后需读取/查看页面确认业务结果。" +
-      "页面搜索/站内搜索必须先 fill 用户关键词，再重新 inspect，用 click/press 携带 expect={elementId:新输入框编号,text:完整关键词} 提交；不匹配会拦截。普通点击可省略 expect。禁止猜测或拼接搜索 URL 代替页面操作或补救失败。" +
-      "用户说‘分析浏览器内容’或‘总结当前页面’时使用 target=current；没有当前页面则报告错误。url 和 target 二选一。",
+    description: `
+操作用户可见的 MoziBrowser（墨子浏览器）窗口，通过 action 选择操作。
+
+支持的操作：
+- search：通过 Bing 搜索互联网。必填 query，可选 limit；返回标题、链接和摘要。
+- read：读取网页正文。传 url 打开指定网址；或传 target=current 读取当前页面，不导航、不刷新。url 和 target 二选一，没有当前页面时返回错误。
+- inspect：列出当前页面的可交互元素及 elementId。可选 query 按名称或占位提示过滤，可选 filter=inputs 仅查看输入控件。返回控件状态、placeholder、hasValue 等信息，不返回输入值。
+- click：点击 elementId 指定的元素，支持页面链接、按钮和菜单。
+- fill：用 text 替换 elementId 指定输入框的全部内容；空字符串清空，不提交。成功返回 inputVerified=true。
+- press：向 elementId 指定的元素发送 key 按键，支持 Enter、Tab、Escape、ArrowUp、ArrowDown、ArrowLeft、ArrowRight。
+
+交互约束：
+- elementId 必须来自最新 inspect；每次 click/fill/press 尝试后，整组旧编号失效。
+- click/press 支持 expect={elementId,text}，执行前核对指定输入框的实际文本，不匹配则拒绝操作。站内搜索提交必须携带 expect。
+- dispatched 仅表示事件已发送，不代表业务成功。
+`,
+    promptSnippet: "通过可见浏览器搜索互联网、读取网页和操作页面元素。",
+    promptGuidelines: BROWSER_GUIDELINES,
     parameters: BROWSER_OPERATION_SCHEMA,
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate) {

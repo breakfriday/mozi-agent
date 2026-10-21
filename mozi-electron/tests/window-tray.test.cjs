@@ -192,6 +192,36 @@ test("window service loads URL/file entries and retains mozi window settings", (
   assert.equal(local.options.frame, false);
 });
 
+test("open window IPC creates and reuses windows and rejects invalid callers and options", () => {
+  const { windowService, windows, registerIpc, handlers } = setup();
+  registerIpc();
+  const main = windowService.createMainWindow(entry);
+  const event = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const open = handlers.get("window:open");
+  const payload = { channelId: "detail", url: entry.url, options: { width: 800, height: 600, bgColor: "#ffffff" } };
+  assert.equal(open(event, payload), true);
+  const detail = windows[1];
+  assert.equal(detail.loaded.url, entry.url);
+  assert.equal(detail.options.width, 800);
+  assert.equal(detail.options.backgroundColor, "#ffffff");
+  detail.minimize();
+  assert.equal(open(event, payload), true);
+  assert.equal(windows.length, 2);
+  assert.equal(detail.minimized, false);
+  assert.equal(detail.focused, true);
+  assert.equal(open({ ...event, senderFrame: {} }, payload), false);
+  const unknown = { mainFrame: {} };
+  assert.equal(open({ sender: unknown, senderFrame: unknown.mainFrame }, payload), false);
+  for (const invalid of [null, [], {}, { ...payload, channelId: " " }, { ...payload, url: 1 },
+    { ...payload, options: null }, { ...payload, options: { width: -1 } },
+    { ...payload, options: { frame: "false" } }, { ...payload, options: { webPreferences: { nodeIntegration: true } } }]) {
+    assert.equal(open(event, invalid), false);
+  }
+  assert.equal(windows.length, 2);
+  assert.equal(open(event, { channelId: "local", url: "/renderer/index.html" }), true);
+  assert.equal(windows[2].loaded.filePath, "/renderer/index.html");
+});
+
 test("token monitor windows reuse each session, retarget scopes, and close independently", () => {
   const { windowService, windows, registerIpc, handlers } = setup();
   registerIpc();
@@ -459,11 +489,13 @@ test("preload wraps window notifications, filters payloads, and removes listener
   assert.equal(ipcRenderer.listenerCount("window:state-changed"), 0);
   await api.window.setFullScreen(false);
   await api.window.getState();
+  await api.window.openWindow({ channelId: "detail", url: entry.url });
   await api.window.openTokenMonitor({ sessionId: "s", runId: "r" });
   api.window.minimize();
   api.window.close();
   assert.deepEqual(calls, [
     ["window:set-full-screen", false], ["window:get-state"],
+    ["window:open", { channelId: "detail", url: entry.url }],
     ["window:open-token-monitor", { sessionId: "s", runId: "r" }],
     ["window:minimize"], ["window:close"],
   ]);

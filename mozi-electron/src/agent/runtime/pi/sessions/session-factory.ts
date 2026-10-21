@@ -7,6 +7,7 @@ import {
 import type {
   AgentSession,
   SessionManager,
+  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import type { RuntimeSessionDescriptor } from "../../agent-runtime";
@@ -15,11 +16,13 @@ import { failure } from "../../../errors";
 import { preserveDeepSeekLocalTools } from "../providers/deepSeek";
 import { preserveBailianLocalTools } from "../providers/bailian";
 import type { BrowserCall } from "../../../../../../shared/browser";
+import { createBrowserTool } from "../browser-tools";
+import { collectToolGuidelines } from "./prompt/tool-guidelines";
 import {
-  BROWSER_GUIDELINES,
-  BROWSER_TOOL_NAME,
-  createBrowserTool,
-} from "../browser-tools";
+  MOZI_SYSTEM_PROMPT,
+  BROWSER_WEB_GUIDELINES,
+  PROVIDER_WEB_GUIDELINES,
+} from "./prompt/mozi-guidelines";
 import { parseRunEntry } from "./session-entries";
 
 /** SDK configuration/resource customization has a single assembly point. */
@@ -61,6 +64,18 @@ export class PiSessionFactory {
       "browser"
         ? this.browser
         : undefined;
+    // This list is the single source for active custom tools and their prompt rules.
+    const customTools: ToolDefinition[] = browser
+      ? [
+          createBrowserTool(browser, descriptor.sessionId, () => {
+            const entries = manager.getEntries();
+            for (let i = entries.length - 1; i >= 0; i--) {
+              const run = parseRunEntry(entries[i]);
+              if (run) return run.runId;
+            }
+          }),
+        ]
+      : [];
     const loader = new DefaultResourceLoader({
       cwd: descriptor.cwd,
       agentDir: piDir,
@@ -70,11 +85,11 @@ export class PiSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt:
-        "你是 Mozi，一个嵌入桌面应用的智能助手。请准确回答用户的问题；涉及实时信息时，以实际获取的信息为依据，无法核实时明确说明。 思考内容使用中文 " +
-        (browser
-          ? BROWSER_GUIDELINES
-          : "当前使用服务商原生联网模式，按当前可用的服务端工具联网；不要调用历史中的 Mozi 浏览器工具，也不要使用 bash、curl、wget 或脚本代替联网搜索和网页读取。无法联网时明确说明。"),
+      systemPrompt: MOZI_SYSTEM_PROMPT,
+      appendSystemPrompt: [
+        browser ? BROWSER_WEB_GUIDELINES : PROVIDER_WEB_GUIDELINES,
+        ...collectToolGuidelines(customTools),
+      ],
     });
     await loader.reload();
     const { session } = await createAgentSession({
@@ -91,19 +106,9 @@ export class PiSessionFactory {
         "bash",
         "edit",
         "write",
-        ...(browser ? [BROWSER_TOOL_NAME] : []),
+        ...customTools.map((tool) => tool.name),
       ],
-      customTools: browser
-        ? [
-            createBrowserTool(browser, descriptor.sessionId, () => {
-              const entries = manager.getEntries();
-              for (let i = entries.length - 1; i >= 0; i--) {
-                const run = parseRunEntry(entries[i]);
-                if (run) return run.runId;
-              }
-            }),
-          ]
-        : undefined,
+      customTools,
     });
     preserveBailianLocalTools(session.agent, !!browser);
     preserveDeepSeekLocalTools(session.agent, !!browser);
