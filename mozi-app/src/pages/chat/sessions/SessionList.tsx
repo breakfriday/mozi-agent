@@ -11,7 +11,7 @@ function SessionItem() {
   const id = useAuiState((s) => s.threadListItem.id);
   const title = useAuiState((s) => s.threadListItem.title || "新会话");
   const disabled = useAgentStore((s) => s.sessionOperation !== null || s.inFlightSubmissionId !== null || s.runtime.state !== "ready");
-  const running = useAgentStore((s) => s.sessionId === id && s.activeRunId !== null);
+  const running = useAgentStore((s) => s.runtime.state === "ready" && !!s.sessionActivity[id]);
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -37,7 +37,7 @@ function SessionItem() {
       <ThreadListItemPrimitive.Trigger className={styles.trigger} disabled={disabled} title={title}>
         <MessageOutlined aria-hidden="true" />
         <span className={styles.title}><ThreadListItemPrimitive.Title fallback="新会话" /></span>
-        {running && <span className={styles.running} aria-label="正在运行" />}
+        {running && <span className={styles.running} aria-label="正在运行">running</span>}
       </ThreadListItemPrimitive.Trigger>
       <div className={styles.actions}>
         <button type="button" disabled={disabled} aria-label={`重命名会话：${title}`} title="重命名"

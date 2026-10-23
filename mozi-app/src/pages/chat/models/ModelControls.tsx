@@ -26,7 +26,7 @@ import {
   type ProviderModelView,
   type ThinkingLevel,
   type WebMode,
-} from "../../../../shared/agent";
+} from "../../../../../shared/agent";
 import { useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
 import { agentActions } from "@/agent/agentActions";

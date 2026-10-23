@@ -7,7 +7,7 @@ export type SessionListProps = {
   query: string;
   setQuery: (query: string) => void;
   currentId: string | null;
-  activeRunId: string | null;
+  sessionActivity: AgentState["sessionActivity"];
   disabled: boolean;
   loading: boolean;
   error: string | undefined;

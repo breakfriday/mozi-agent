@@ -76,10 +76,13 @@ export function createAgentActions(
   let offEvent: () => void = () => {};
   let offRuntime: () => void = () => {};
 
-  async function listSessions() {
+  let activityTimer: ReturnType<typeof setInterval> | undefined;
+  let activityRefresh = false;
+
+  async function listSessions(background = false) {
     const version = ++listVersion;
     const token = connection;
-    store.setState({ sessionsLoading: true, sessionsError: null });
+    if (!background) store.setState({ sessionsLoading: true, sessionsError: null });
     try {
       const sessions: AgentState["sessions"] = [];
       let cursor: string | undefined;
@@ -99,7 +102,22 @@ export function createAgentActions(
           };
         if (cursor) cursors.add(cursor);
       } while (cursor);
-      store.setState({ sessions });
+      // Older agents may omit activity from the catalog. An absent field must
+      // not erase a known live Run; reconcile it against run.get first.
+      const knownActivity = store.getState().sessionActivity;
+      await Promise.all(sessions.map(async (session) => {
+        const known = knownActivity[session.sessionId];
+        if (session.activeRun || !known) return;
+        try {
+          const run = await api.getRun({ sessionId: session.sessionId, runId: known.id });
+          session.activeRun = isTerminalRun(run.status) ? undefined : { id: run.id, status: run.status };
+        } catch (error) {
+          if (appError(error).code !== "RUN_NOT_FOUND") session.activeRun = known;
+        }
+      }));
+      if (version !== listVersion || token !== connection) return;
+      store.setState({ sessions, sessionActivity: Object.fromEntries(sessions.flatMap((session) =>
+        session.activeRun ? [[session.sessionId, session.activeRun]] : [])) });
       const state = store.getState();
       if (
         state.sessionId &&
@@ -109,7 +127,7 @@ export function createAgentActions(
       )
         await activateSession(null);
     } catch (error) {
-      if (version === listVersion && token === connection)
+      if (!background && version === listVersion && token === connection)
         store.setState({ sessionsError: appError(error) });
     } finally {
       if (version === listVersion && token === connection)
@@ -131,6 +149,13 @@ export function createAgentActions(
       messageOrder: state.messageOrder,
       modelSelection: state.modelSelection,
     });
+    // Preserve activity even when acceptance arrived before run.updated.
+    const sessions = state.sessions.map((session) => session.sessionId === state.sessionId
+      ? { ...session, activeRun: state.activeRunId
+        ? { id: state.activeRunId, status: state.runs.find((run) => run.id === state.activeRunId)?.status ?? "accepted" as const }
+        : undefined }
+      : session);
+    ++listVersion;
     generation++;
     if (subscription)
       void api
@@ -146,8 +171,9 @@ export function createAgentActions(
       ...empty,
       ...cached,
       runtime: state.runtime,
-      sessions: state.sessions,
-      sessionsLoading: state.sessionsLoading,
+      sessions,
+      sessionActivity: state.sessionActivity,
+      sessionsLoading: false,
       sessionsError: state.sessionsError,
     });
     rememberSession(sessionId);
@@ -236,7 +262,7 @@ export function createAgentActions(
         store.setState({ sessionsLoading: false });
         store.setState((current) => ({
           sessions: current.sessions.map((item) =>
-            item.sessionId === sessionId ? result.session : item,
+            item.sessionId === sessionId ? { ...result.session, activeRun: item.activeRun } : item,
           ),
         }));
       } else {
@@ -351,7 +377,7 @@ export function createAgentActions(
   function receiveEvent(event: AgentEvent) {
     const state = store.getState();
     if (event.sessionId !== state.sessionId) return;
-    if (event.type === "session.updated" && event.seq > state.lastSeq) {
+    if (["session.updated", "run.updated", "run.finished"].includes(event.type) && event.seq > state.lastSeq) {
       // A list response requested before this event must not restore the old title.
       ++listVersion;
       store.setState({ sessionsLoading: false });
@@ -393,6 +419,8 @@ export function createAgentActions(
         lastSeq: 0,
         syncStatus: "idle",
         activeRunId: null,
+        sessionActivity: {},
+        sessions: state.sessions.map((session) => ({ ...session, activeRun: undefined })),
         sessionsLoading: false,
         sessionOperation: null,
       }));
@@ -420,6 +448,8 @@ export function createAgentActions(
   function dispose() {
     if (!attached) return;
     attached = false;
+    clearInterval(activityTimer);
+    activityTimer = undefined;
     lifecycle++;
     generation++;
     connection++;
@@ -454,6 +484,12 @@ export function createAgentActions(
       if (owner === lifecycle) receiveRuntime(notice);
     });
     log.info("chat.initialized", { stage: "real_bridge" });
+    activityTimer = setInterval(() => {
+      const state = store.getState();
+      if (state.runtime.state !== "ready" || state.sessionsLoading || state.sessionOperation || activityRefresh) return;
+      activityRefresh = true;
+      void listSessions(true).finally(() => { activityRefresh = false; });
+    }, 2000);
     void refresh();
     return () => {
       if (owner === lifecycle) dispose();
@@ -504,7 +540,17 @@ export function createAgentActions(
         content: pending.content,
       });
       if (token !== generation) return;
+      ++listVersion;
       store.setState((state) => ({
+        sessionsLoading: false,
+        sessionActivity: finishedRuns.has(accepted.runId) || state.runs.some((run) => run.id === accepted.runId && isTerminalRun(run.status))
+          ? state.sessionActivity
+          : { ...state.sessionActivity, [sessionId!]: { id: accepted.runId, status: state.runs.find((run) => run.id === accepted.runId)?.status ?? "accepted" } },
+        sessions: state.sessions.map((session) => session.sessionId === sessionId
+          ? { ...session, activeRun: finishedRuns.has(accepted.runId) || state.runs.some((run) => run.id === accepted.runId && isTerminalRun(run.status))
+            ? undefined
+            : { id: accepted.runId, status: state.runs.find((run) => run.id === accepted.runId)?.status ?? "accepted" } }
+          : session),
         activeRunId:
           finishedRuns.has(accepted.runId) ||
           state.runs.some(

@@ -43,7 +43,7 @@ export function SessionSwitcher({
   const listId = useId();
   const sessions = useAgentStore((s) => s.sessions);
   const currentId = useAgentStore((s) => s.sessionId);
-  const activeRunId = useAgentStore((s) => s.activeRunId);
+  const sessionActivity = useAgentStore((s) => s.sessionActivity);
   const loading = useAgentStore((s) => s.sessionsLoading);
   const error = useAgentStore((s) => s.sessionsError);
   const disabled = useAgentStore(
@@ -153,8 +153,7 @@ export function SessionSwitcher({
 
   const deletingRunning =
     action?.kind === "delete" &&
-    action.id === currentId &&
-    activeRunId !== null;
+    !!sessionActivity[action.id];
   const beginAction = (
     kind: "rename" | "delete",
     id: string,
@@ -210,7 +209,7 @@ export function SessionSwitcher({
     query,
     setQuery,
     currentId,
-    activeRunId,
+    sessionActivity,
     disabled,
     loading,
     error: error?.message,

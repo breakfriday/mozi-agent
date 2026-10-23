@@ -30,6 +30,7 @@ export type AgentState = {
   tools: ToolView[];
   approvals: ApprovalView[];
   activeRunId: string | null;
+  sessionActivity: Record<string, Pick<RunView, "id" | "status">>;
   lastSeq: number;
   syncStatus: "idle" | "syncing" | "ready" | "error";
   runtime: RuntimeNotice;

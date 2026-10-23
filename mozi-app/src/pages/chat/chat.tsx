@@ -15,9 +15,9 @@ import {
 import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
-import { ModelControls } from "./ModelControls";
-import { SessionSwitcher } from "./SessionSwitcher";
-import { ToolCallCard } from "./ToolCallCard";
+import { ModelControls } from "./models/ModelControls";
+import { SessionSwitcher } from "./sessions/SessionSwitcher";
+import { ToolCallCard } from "./tools/ToolCallCard";
 import { Reasoning, ReasoningRoot, ReasoningTrigger, ReasoningContent, ReasoningText } from "@/components/assistant-ui/elements/reasoning.aui";
 import styles from "./chat.module.css";
 import { useRef, useState } from "react";

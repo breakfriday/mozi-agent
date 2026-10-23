@@ -202,7 +202,8 @@ export class SessionService {
   }
   list(input: ParamsOf<"session.list">): ResultOf<"session.list"> {
     this.control.assertAvailable();
-    const ordered = [...this.catalog.values()].map(metadata => metadata.session)
+    const activeRuns = new Map(this.repository.unfinishedRuns().map(run => [run.sessionId, { id: run.id, status: run.status }]));
+    const ordered = [...this.catalog.values()].map(metadata => ({ ...metadata.session, activeRun: activeRuns.get(metadata.session.sessionId) }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.sessionId.localeCompare(b.sessionId));
     const index = input.cursor ? ordered.findIndex(item => item.sessionId === input.cursor) + 1 : 0;
     if (input.cursor && index === 0) throw failure("INVALID_ARGUMENT", "无效的会话游标。");

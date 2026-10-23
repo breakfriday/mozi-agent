@@ -48,7 +48,7 @@
   cursor: pointer;
 }
 .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.running { flex: 0 0 6px; height: 6px; border-radius: 50%; background: var(--app-primary-color); }
+.running { flex-shrink: 0; color: var(--app-primary-color); font-size: 11px; }
 .actions { display: flex; padding-right: 4px; }
 .actions button {
   display: grid;

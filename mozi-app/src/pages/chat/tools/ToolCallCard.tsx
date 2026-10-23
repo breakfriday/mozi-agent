@@ -1,5 +1,5 @@
 import { useAgentStore } from "@/agent/agentStore";
-import type { ToolView } from "../../../../shared/agent";
+import type { ToolView } from "../../../../../shared/agent";
 import styles from "./tool-call.module.css";
 
 const labels: Record<ToolView["status"], string> = {

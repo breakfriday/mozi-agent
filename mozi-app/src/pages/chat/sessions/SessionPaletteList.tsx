@@ -17,7 +17,7 @@ export function SessionPaletteList({
   query,
   setQuery,
   currentId,
-  activeRunId,
+  sessionActivity,
   disabled,
   loading,
   error,
@@ -165,6 +165,9 @@ export function SessionPaletteList({
                           query={search}
                         />
                       </span>
+                      {sessionActivity[session.sessionId] && (
+                        <span className={styles.running} aria-label="正在运行">running</span>
+                      )}
                       {session.sessionId === currentId && (
                         <span className={styles.current}>当前</span>
                       )}
@@ -184,8 +187,7 @@ export function SessionPaletteList({
                         title={session.title || "新会话"}
                         disabled={disabled}
                         running={
-                          session.sessionId === currentId &&
-                          activeRunId !== null
+                          !!sessionActivity[session.sessionId]
                         }
                         onAction={(kind) =>
                           beginAction(

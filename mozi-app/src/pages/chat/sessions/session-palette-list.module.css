@@ -204,3 +204,5 @@
   opacity: 1;
   pointer-events: auto;
 }
+
+.running { flex-shrink: 0; color: var(--app-primary-color); font-size: 11px; }

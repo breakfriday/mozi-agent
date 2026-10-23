@@ -20,6 +20,7 @@ export function initialAgentState(sessionId: string | null = null): AgentState {
     tools: [],
     approvals: [],
     activeRunId: null,
+    sessionActivity: {},
     lastSeq: 0,
     syncStatus: "idle",
     runtime: { state: "unavailable" },
@@ -52,16 +53,21 @@ export function installAgentSnapshot(
   state: AgentState,
   snapshot: SessionSnapshot,
 ): AgentState {
+  const sessionActivity = { ...state.sessionActivity };
+  const active = snapshot.runs.find((run) => !isTerminalRun(run.status));
+  if (active) sessionActivity[snapshot.session.sessionId] = { id: active.id, status: active.status };
+  else delete sessionActivity[snapshot.session.sessionId];
   return reconcileMessages(
     {
       ...state,
       usage: snapshot.usage,
+      sessionActivity,
       modelSelection: snapshot.session.model ?? null,
       sessionId: snapshot.session.sessionId,
       messages: snapshot.messages,
       sessions: upsert(
         state.sessions,
-        snapshot.session,
+        { ...snapshot.session, activeRun: snapshot.runs.find((run) => !isTerminalRun(run.status)) },
         (session) => session.sessionId,
       ),
       runs: snapshot.runs,
@@ -94,7 +100,7 @@ export function applyAgentEvent(
     case "session.updated":
       next.sessions = upsert(
         state.sessions,
-        event.data.session,
+        { ...event.data.session, activeRun: state.sessions.find((session) => session.sessionId === event.sessionId)?.activeRun },
         (session) => session.sessionId,
       );
       next.sessionsLoading = false;
@@ -271,6 +277,15 @@ export function applyAgentEvent(
       if (outcome.status === "failed") next.error = outcome.error;
       break;
     }
+  }
+  if (["run.updated", "run.started", "run.finished"].includes(event.type)) {
+    const activeRun = next.runs.find((run) => run.id === next.activeRunId);
+    next.sessionActivity = { ...state.sessionActivity };
+    if (activeRun) next.sessionActivity[event.sessionId] = { id: activeRun.id, status: activeRun.status };
+    else delete next.sessionActivity[event.sessionId];
+    next.sessions = next.sessions.map((session) => session.sessionId === event.sessionId
+      ? { ...session, activeRun: activeRun ? { id: activeRun.id, status: activeRun.status } : undefined }
+      : session);
   }
   return event.type === "message.accepted" || event.type === "message.started"
     ? reconcileMessages(next)
