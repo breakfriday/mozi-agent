@@ -1,0 +1,35 @@
+.menu {
+  min-width: 144px;
+  z-index: 1200;
+  padding: 5px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 8px;
+  background: var(--app-elevated-background);
+  color: var(--app-text-color);
+  box-shadow: 0 8px 24px var(--app-shadow-color);
+}
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+.menuItem[data-highlighted] {
+  background: var(--app-hover-background);
+}
+.menuItem[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.deleteItem {
+  color: var(--destructive);
+}
+.separator {
+  height: 1px;
+  background: var(--app-border-color);
+  margin: 4px;
+}

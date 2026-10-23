@@ -1,0 +1,206 @@
+.panel {
+  padding-top: 8px;
+}
+.results {
+  max-height: min(420px, 52dvh);
+  overflow-y: auto;
+  padding-bottom: 2px;
+  margin-top: 8px;
+  overscroll-behavior: contain;
+}
+.group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  color: var(--app-heading-color);
+  font-size: 11px;
+  font-weight: 650;
+}
+.results > :first-child .group {
+  margin-top: 0;
+}
+.count {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--app-hover-background);
+  color: var(--app-muted-color);
+  font-size: 11px;
+  font-weight: 400;
+}
+.row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 2px;
+  border-radius: 8px;
+}
+.row:hover,
+.row:focus-within {
+  background: var(--app-hover-background);
+}
+.row:has([aria-selected="true"]) {
+  background: var(--app-selected-background);
+}
+.actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding-right: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+.row:hover .actions,
+.row:focus-within .actions,
+.row:has([aria-selected="true"]) .actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.actions button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--app-muted-color);
+  cursor: pointer;
+}
+.actions button:hover {
+  background: var(--app-input-background);
+  color: var(--app-text-color);
+}
+.actions button:focus-visible {
+  outline: 2px solid var(--app-focus-color);
+}
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.option {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 36px;
+  font-size: 13px;
+  line-height: 20px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--app-text-color);
+}
+.option:hover {
+  background: var(--app-hover-background);
+}
+.option[aria-selected="true"] {
+  background: var(--app-selected-background);
+  box-shadow: inset 3px 0 var(--app-border-hover-color);
+}
+.option[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.title mark {
+  color: var(--app-heading-color);
+  background: var(--app-hover-background);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: 2px;
+  font-weight: 650;
+}
+.current,
+.time {
+  flex-shrink: 0;
+  color: var(--app-muted-color);
+  font-size: 11px;
+}
+.footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--app-border-color);
+  color: var(--app-muted-color);
+  font-size: 11px;
+}
+.empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--app-muted-color);
+}
+.status {
+  color: var(--app-text-color);
+}
+@media (max-width: 600px) {
+  .option {
+    gap: 8px;
+  }
+}
+
+.results {
+  scrollbar-color: var(--app-border-hover-color) var(--app-elevated-background);
+}
+
+.searchBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.searchBar :global(.ant-input) {
+  font-size: 13px;
+}
+.newButton {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text-color);
+  cursor: pointer;
+}
+.newButton:hover,
+.emptyNew:hover {
+  background: var(--app-hover-background);
+}
+.emptyNew {
+  display: block;
+  margin: 12px auto 0;
+  padding: 5px 12px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 6px;
+  color: var(--app-text-color);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.newButton:disabled,
+.emptyNew:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.actions .menuTrigger {
+  opacity: 1;
+  pointer-events: auto;
+}

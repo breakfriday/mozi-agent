@@ -6,7 +6,7 @@ import {
   MoonOutlined,
   SunOutlined,
 } from "@ant-design/icons";
-import { Button, Grid, Tooltip } from "antd";
+import { Button, Dropdown, Grid, Tooltip } from "antd";
 import {
   Link,
   Outlet,
@@ -14,7 +14,7 @@ import {
   type LinkProps,
 } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { useThemeStore } from "@/store/useThemeStore";
+import { isAppTheme, isDarkTheme, themeOptions, useThemeStore } from "@/store/useThemeStore";
 import { bridgeApi } from "@/runtime/bridge";
 import { WindowControls } from "./WindowControls";
 import styles from "./AppLayout.module.css";
@@ -88,16 +88,20 @@ export function AppLayout() {
           </span>
         </div>
         <div className={styles.headerActions}>
-          <Button
-            type="text"
-            className={styles.themeButton}
-            icon={appTheme === "dark" ? <MoonOutlined /> : <SunOutlined />}
-            onClick={() => setTheme(appTheme === "dark" ? "light" : "dark")}
-            role="switch"
-            aria-checked={appTheme === "dark"}
-            aria-label="切换主题"
-            title={appTheme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
-          />
+          <Dropdown trigger={["click"]} menu={{
+            items: themeOptions.map(option => ({ ...option })),
+            selectable: true,
+            selectedKeys: [appTheme],
+            onClick: ({ key }) => { if (isAppTheme(key)) setTheme(key); },
+          }}>
+            <Button
+              type="text"
+              className={styles.themeButton}
+              icon={isDarkTheme(appTheme) ? <MoonOutlined /> : <SunOutlined />}
+              aria-label="切换主题"
+              title={`当前主题：${themeOptions.find(option => option.key === appTheme)?.label}`}
+            />
+          </Dropdown>
           <WindowControls />
         </div>
       </header>

@@ -16,11 +16,11 @@ import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
 import { ModelControls } from "./ModelControls";
-import { SessionList } from "./SessionList";
+import { SessionSwitcher } from "./SessionSwitcher";
 import { ToolCallCard } from "./ToolCallCard";
 import { Reasoning, ReasoningRoot, ReasoningTrigger, ReasoningContent, ReasoningText } from "@/components/assistant-ui/elements/reasoning.aui";
 import styles from "./chat.module.css";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { RunUsageSummary, TokenMonitorButton } from "../angetTokenMonitor/UsageButtons";
 import { bridgeApi } from "@/runtime/bridge";
 import { createPageUrl } from "@/runtime/pageUrl";
@@ -202,6 +202,7 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
 }
 
 export function ChatPage() {
+  const pageRef = useRef<HTMLElement>(null);
   const sessionId = useAgentStore((state) => state.sessionId ?? state.localSessionId);
   const [monitorError, setMonitorError] = useState<string | null>(null);
   const openUsage = async (runId?: string) => {
@@ -220,11 +221,11 @@ export function ChatPage() {
   const syncing = useAgentStore((state) => state.syncStatus === "syncing");
   const syncFailed = useAgentStore((state) => state.syncStatus === "error");
   return (
-    <section className={styles.page} aria-label="智能对话">
-      <SessionList />
+    <section ref={pageRef} tabIndex={-1} className={styles.page} aria-label="智能对话">
       <div className={styles.conversation}>
         <header className={styles.conversationHeader}>
           <h1 title={title}>{title}</h1>
+          <SessionSwitcher getContainer={() => pageRef.current ?? document.body} />
           {syncing && <span role="status">正在加载会话…</span>}
           {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
           <TokenMonitorButton onOpen={() => openUsage()} />

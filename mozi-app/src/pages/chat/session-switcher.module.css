@@ -1,0 +1,81 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 7px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--app-text-color);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.trigger:hover {
+  background: var(--app-hover-background);
+}
+.trigger:focus-visible {
+  outline: 2px solid var(--app-focus-color);
+  outline-offset: 2px;
+}
+.trigger kbd {
+  color: var(--app-muted-color);
+  font: inherit;
+  font-size: 11px;
+}
+.trigger {
+  flex-shrink: 0;
+}
+.trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (max-width: 600px) {
+  .trigger kbd,
+  .trigger .triggerLabel {
+    display: none;
+  }
+}
+
+.actionOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: var(--app-mask-color);
+}
+.actionDialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1101;
+  width: min(460px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  background: var(--app-elevated-background);
+  color: var(--app-text-color);
+  box-shadow: 0 20px 64px var(--app-shadow-color);
+  outline: none;
+}
+.actionTitle {
+  margin: 0 0 18px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--app-heading-color);
+}
+.actionFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+.confirm {
+  background: var(--app-primary-color);
+  color: var(--app-primary-contrast-color);
+  border-color: transparent;
+}
+.danger {
+  color: var(--destructive);
+  border-color: var(--destructive);
+}

@@ -182,7 +182,8 @@ for (const width of [1280, 560]) {
       path: `/tmp/mozi-markdown-${width}.png`,
       fullPage: true,
     });
-    await page.getByRole("switch", { name: "切换主题" }).click();
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await page.getByRole("menuitem", { name: "默认浅色", exact: true }).click();
     await expect.poll(themeColors).toEqual({ theme: "light", dark: false, tableBackground: "rgb(247, 247, 247)" });
     await expect(page.locator(".ant-select").first()).toHaveCSS("background-color", "rgb(247, 247, 247)");
     await page.screenshot({ path: `/tmp/mozi-markdown-light-${width}.png`, fullPage: true });

@@ -1,5 +1,5 @@
 import { theme, type ThemeConfig } from "antd";
-import type { AppTheme } from "@/store/useThemeStore";
+import { isDarkTheme, type AppTheme } from "@/store/useThemeStore";
 
 // CSS owns the palette. Resolve variables to color values because Ant Design's
 // theme algorithm also uses them in color calculations (not only CSS output).
@@ -17,7 +17,7 @@ export function createAntdTheme(mode: AppTheme): ThemeConfig {
     addonBg: color("selected-background"),
   };
   const antd: ThemeConfig = {
-    algorithm: mode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+    algorithm: isDarkTheme(mode) ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {
       colorPrimary: color("primary-color"),
       colorPrimaryBorder: color("focus-color"),
