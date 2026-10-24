@@ -403,3 +403,48 @@ test('a title event invalidates a stale list response', async t => {
   assert.equal(f.store.getState().sessions[0].title, '首条消息标题');
   assert.equal(f.store.getState().sessionsLoading, false);
 });
+
+test('background refresh clears other session activity without replacing selected messages', async t => {
+  let activeRun = { id: 'other-run', status: 'running' };
+  const f = setup(t, { sessionId: 's', api: {
+    getRun: async () => ({ id: 'other-run', status: 'completed' }),
+    listSessions: async () => ({ items: [
+      { sessionId: 's', title: 'Chat', createdAt: timestamp, updatedAt: timestamp },
+      { sessionId: 'other', title: 'Other', createdAt: timestamp, updatedAt: timestamp, activeRun },
+    ] }),
+  } });
+  f.actions.initialize();
+  await tick(); await tick();
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 'other').activeRun.id, 'other-run');
+  const messages = f.store.getState().messages;
+  activeRun = undefined;
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 'other').activeRun, undefined);
+  assert.equal(f.store.getState().sessionId, 's');
+  assert.equal(f.store.getState().messages, messages);
+});
+
+
+test('switching preserves accepted activity when the catalog omits it, then clears only on confirmed completion', async t => {
+  let status = 'running';
+  const sessions = ['s', 'other'].map(sessionId => ({ sessionId, title: sessionId, createdAt: timestamp, updatedAt: timestamp }));
+  const f = setup(t, { sessionId: 's', api: {
+    listSessions: async () => ({ items: sessions.map(session => ({ ...session })) }),
+    getRun: async ({ runId }) => ({ id: runId, status }),
+    subscribeSession: async ({ sessionId }) => ({ sessionId, subscriptionId: `sub-${sessionId}` }),
+    getSessionSnapshot: async ({ sessionId }) => ({ session: sessions.find(s => s.sessionId === sessionId), lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] }),
+  } });
+  f.actions.initialize();
+  await tick(); await tick();
+  await f.actions.submit('continue in background');
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.id, 'r');
+  await f.actions.activateSession('other');
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.id, 'r');
+  await f.actions.listSessions();
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.status, 'running');
+  assert.equal(f.store.getState().sessionId, 'other');
+  assert.equal(f.calls.some(([method]) => method === 'cancel'), false);
+  status = 'completed';
+  await f.actions.listSessions();
+  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun, undefined);
+});

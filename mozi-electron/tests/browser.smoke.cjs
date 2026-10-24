@@ -1,5 +1,7 @@
 // Real Electron navigation and isolated DOM extraction against deterministic pages.
 // Run with: electron tests/browser.smoke.cjs (a display or xvfb is required).
+// --background-only tests hidden windows; --visible/--minimized select other states.
+// Visible background tests require programmatic blur (use --ozone-platform=x11 on Wayland).
 const { app, BrowserWindow, Menu, session, utilityProcess } = require('electron');
 const { buildSync } = require('esbuild');
 const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require('node:fs');
@@ -39,14 +41,11 @@ async function until(predicate) {
 }
 const current = () => BrowserWindow.getAllWindows()[0];
 async function clickLink(id) {
-  const contents = current().webContents;
-  const point = await contents.executeJavaScript(`(() => {
-    const rect = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect();
-    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
-  })()`);
-  contents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
-  contents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+  // Exercise link navigation independently of OS focus. Trusted pointer events
+  // are verified through the actual service in interactionWorkflow below.
+  await current().webContents.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).click()`, true);
 }
+
 const html = body => new Response(`<!doctype html><html><head><title>Mozi browser test</title></head><body>${body}</body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 async function agentWorkflow() {
   let rounds = 0;
@@ -299,6 +298,96 @@ async function inputWorkflow() {
   console.log('PASS: trusted replacement/clear input, labels/placeholders, native Enter and button submission, suggestions, Tab, Unicode/multiline, stale/readonly/disabled/cancel guards and navigation.');
 }
 
+async function backgroundWorkflow(mode = "hidden") {
+  const win = current();
+  win.hide();
+  if (mode === "visible") { win.showInactive(); await new Promise(resolve => setTimeout(resolve, 500)); win.blur(); }
+  if (mode === "minimized") { win.showInactive(); await new Promise(resolve => setTimeout(resolve, 500)); win.minimize(); await until(() => win.isMinimized()); }
+  await until(async () => !win.isFocused() && !await win.webContents.executeJavaScript('document.hasFocus()'));
+  const assertBackground = async () => {
+    if (mode === 'hidden') assert.equal(win.isVisible(), false, 'automation must not show a hidden window');
+    if (mode === 'minimized') assert.equal(win.isMinimized(), true, 'automation must not restore the window');
+    assert.equal(win.webContents.debugger.isAttached(), false, 'debugger must be released after each operation');
+    assert.equal(win.isFocused(), false, 'automation must not activate the browser');
+    assert.equal(win.webContents.isFocused(), false, 'automation must not focus the native web contents');
+    // CDP input can focus the renderer without activating the OS window.
+    // backgroundThrottling=false also keeps page visibility active by design.
+  };
+  await assertBackground();
+  const restore = [];
+  const emulation = [];
+  const sendCommand = win.webContents.debugger.sendCommand;
+  win.webContents.debugger.sendCommand = async function (method, params, ...args) {
+    const result = await sendCommand.call(this, method, params, ...args);
+    if (method === 'Emulation.setFocusEmulationEnabled') emulation.push(params.enabled);
+    return result;
+  };
+  restore.push(() => { win.webContents.debugger.sendCommand = sendCommand; });
+  for (const [owner, method] of [[win, 'show'], [win, 'showInactive'], [win, 'focus'], [win.webContents, 'focus']]) {
+    const original = owner[method];
+    owner[method] = () => { assert.fail(`background automation called ${method}`); };
+    restore.push(() => { owner[method] = original; });
+  }
+  try {
+    await read('https://example.test/interactive', contexts());
+    const expanded = (await inspect('展开详情')).elements[0].elementId;
+    await click(expanded);
+    assert.match((await readCurrent(contexts())).content, /Trusted dynamic expanded evidence/);
+    assert.deepEqual(emulation.splice(0), [true, false], 'successful interaction explicitly disables emulation');
+    await assert.rejects(click(expanded), e => e.code === 'STALE_ELEMENT');
+    assert.deepEqual(emulation.splice(0), [true, false], 'failed interaction explicitly disables emulation');
+    await assertBackground();
+    await read('https://example.test/site-search', contexts());
+    for (let round = 0; round < 3; round++) {
+      const text = `后台采集 ${round}`;
+      const input = (await inspect('商品关键词')).elements[0].elementId;
+      assert.equal((await fill(input, text)).inputVerified, true);
+      await assertBackground();
+      let fresh = (await inspect('商品关键词')).elements[0].elementId;
+      await assert.rejects(browser.execute({ action: 'press', elementId: fresh, key: 'Enter',
+        expect: { elementId: fresh, text: 'wrong value' } }, contexts()), e => e.code === 'INPUT_MISMATCH');
+      fresh = (await inspect('商品关键词')).elements[0].elementId;
+      await browser.execute({ action: 'press', elementId: fresh, key: 'Enter',
+        expect: { elementId: fresh, text } }, contexts());
+      assert.ok((await readCurrent(contexts())).content.includes(`Station search result: ${text}`));
+      await assertBackground();
+    }
+    // An existing debugger belongs to its owner and must not be stolen.
+    let guarded = (await inspect('商品关键词')).elements[0].elementId;
+    win.webContents.debugger.attach('1.3');
+    try {
+      await assert.rejects(fill(guarded, 'occupied'), e => e.code === 'UNAVAILABLE');
+      assert.equal(win.webContents.debugger.isAttached(), true);
+    } finally { win.webContents.debugger.detach(); }
+    await assertBackground();
+    emulation.length = 0;
+    const controller = new AbortController();
+    guarded = (await inspect('商品关键词')).elements[0].elementId;
+    await assert.rejects(fill(guarded, 'cancelled', { ...contexts(), signal: controller.signal,
+      onProgress: p => { if (p.stage === 'interacting') controller.abort(); } }), e => e.code === 'CANCELLED');
+    assert.deepEqual(emulation.splice(0), [true, false], 'cancellation explicitly disables emulation');
+    await assertBackground();
+    guarded = (await inspect('商品关键词')).elements[0].elementId;
+    await assert.rejects(fill(guarded, 'detached', { ...contexts(), onProgress: p => {
+      if (p.stage === 'interacting') win.webContents.debugger.detach();
+    } }), e => e.code === 'UNAVAILABLE');
+    await assertBackground();
+    assert.equal(await win.webContents.executeJavaScript('document.getElementById("query").value'), '后台采集 2');
+    // A fresh operation must recover after each of those failures.
+    const input = (await inspect('商品关键词')).elements[0].elementId;
+    await fill(input, '');
+    assert.equal(await win.webContents.executeJavaScript('document.getElementById("query").value'), '');
+    assert.equal((await search('empty', contexts())).results.length, 0);
+    await assertBackground();
+    win.hide();
+    await readCurrent(contexts());
+    assert.equal(win.isVisible(), false, 'reading must not reshow a hidden browser');
+    console.log(`PASS: ${mode} CDP click/fill/press and repeated search submissions without activation; debugger and focus emulation cleaned up.`);
+  } finally {
+    for (const reset of restore) reset();
+  }
+}
+
 async function guardedSearchWorkflow() {
   await read('https://example.test/hot-search', contexts());
   const js = code => current().webContents.executeJavaScript(code);
@@ -445,6 +534,15 @@ app.whenReady().then(async () => {
       <script>setTimeout(() => document.querySelector('article p').textContent = 'Rendered evidence: visual reading works after JavaScript rendering.', 450);</script>`);
   });
   browser = new MoziBrowser();
+  if (process.argv.includes('--background-only')) {
+    await read('https://example.test/article', contexts());
+    await backgroundWorkflow(process.argv.includes("--minimized") ? "minimized" : process.argv.includes("--visible") ? "visible" : "hidden"); browser.dispose(); app.exit(0); return;
+  }
+  if (process.argv.includes('--guard-only') || process.argv.includes('--input-only')) {
+    await read('https://example.test/site-search', contexts());
+    current().show(); current().focus(); current().webContents.focus();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
   if (process.argv.includes('--guard-only')) { await guardedSearchWorkflow(); browser.dispose(); app.exit(0); return; }
   if (process.argv.includes('--input-only')) {
     await inputWorkflow(); await guardedSearchWorkflow(); browser.dispose(); app.exit(0); return;
@@ -489,9 +587,13 @@ app.whenReady().then(async () => {
   await until(() => originalWindow.webContents.getURL() === 'https://example.test/blank' && !originalWindow.webContents.isLoading());
   console.log('PASS: normal, target=_blank, named and window.open links reuse the window; back works and active extraction stops.');
   await agentWorkflow();
+  // Foreground-only focus-handler fixtures deliberately require actual page focus.
+  current().show(); current().focus(); current().webContents.focus();
+  await new Promise(resolve => setTimeout(resolve, 100));
   await interactionWorkflow();
   await inputWorkflow();
   await guardedSearchWorkflow();
+  await backgroundWorkflow();
   const queuedOpen = read('https://example.test/article', contexts());
   const queuedCurrent = readCurrent(contexts());
   const [openedPage, currentPage] = await Promise.all([queuedOpen, queuedCurrent]);
@@ -576,7 +678,7 @@ app.whenReady().then(async () => {
   console.error(error);
   if (current() && !current().webContents.isDestroyed()) {
     console.error('Last browser URL:', current().webContents.getURL());
-    await current().webContents.capturePage().then(image => require('node:fs').writeFileSync('/tmp/mozi-browser-failure.png', image.toPNG())).catch(() => {});
+    if (current().isVisible()) await current().webContents.capturePage().then(image => require('node:fs').writeFileSync('/tmp/mozi-browser-failure.png', image.toPNG())).catch(() => {});
   }
   child?.kill(); browser?.dispose(); app.exit(1);
 });

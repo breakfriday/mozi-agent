@@ -6,7 +6,7 @@ const ts = require("typescript");
 module.exports = function createLoader(overrides = {}) {
   const cache = new Map();
   const context = vm.createContext({
-    console, URL, TextEncoder, Buffer, AbortController, AbortSignal, setTimeout, clearTimeout, setImmediate, structuredClone,
+    console, URL, TextEncoder, Buffer, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, structuredClone,
     crypto: require("node:crypto").webcrypto,
     process: { env: {} },
   });

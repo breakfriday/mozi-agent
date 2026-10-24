@@ -807,3 +807,24 @@ test('renaming during usage loading is reflected in the newly constructed projec
   assert.equal((await pending).session.title, 'renamed while loading');
   assert.equal(recovered.sessions.list({}).items[0].title, 'renamed while loading');
 });
+
+test('session list reports independent activity for concurrent sessions and clears finished runs', async t => {
+  const f = await fixture(t);
+  const a = await f.call('session.create', { clientOperationId: 'activity-a' });
+  const b = await f.call('session.create', { clientOperationId: 'activity-b' });
+  const first = await f.call('run.start', input(a.sessionId));
+  let page = await f.call('session.list', {});
+  assert.deepEqual(page.items.find(s => s.sessionId === a.sessionId).activeRun, { id: first.runId, status: 'accepted' });
+  const second = await f.call('run.start', input(b.sessionId));
+  await tick();
+  page = await f.call('session.list', {});
+  assert.equal(page.items.filter(s => s.activeRun?.status === 'running').length, 2);
+  f.executions[0].resolve();
+  await tick();
+  page = await f.call('session.list', {});
+  assert.equal(page.items.find(s => s.sessionId === a.sessionId).activeRun, undefined);
+  assert.deepEqual(page.items.find(s => s.sessionId === b.sessionId).activeRun, { id: second.runId, status: 'running' });
+  f.executions[1].resolve();
+  await tick();
+  assert.ok((await f.call('session.list', {})).items.every(s => !s.activeRun));
+});
