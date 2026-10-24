@@ -1,5 +1,7 @@
 import {
   filterCommands,
+  matchesKeymap,
+  ariaKeymap,
   getAction,
   actionHint,
   formatKeymap,
@@ -53,6 +55,7 @@ export function SessionPaletteList({
           aria-expanded={active}
           aria-controls={`${listId}`}
           aria-autocomplete="list"
+          aria-keyshortcuts={ariaKeymap("session.delete")}
           aria-activedescendant={
             count
               ? `${listId}-${commandMode ? "command-" : ""}${activeIndex}`
@@ -64,6 +67,11 @@ export function SessionPaletteList({
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (matchesKeymap(e.nativeEvent, getAction("session.delete").keymap)) {
+              e.preventDefault();
+              if (active && !commandMode && !e.repeat) onExecute("session.delete");
+              return;
+            }
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
               if (count)
@@ -226,7 +234,7 @@ export function SessionPaletteList({
         </p>
       )}
       <div className={styles.footer}>
-        <span>↑ ↓ 选择 · ↵ 确认 · Esc 关闭</span>
+        <span>↑ ↓ 选择 · ↵ 确认 · Esc 关闭{!commandMode && ` · ${formatKeymap(getAction("session.delete").keymap)} 删除`}</span>
         <span>
           {disabled
             ? "连接就绪且当前操作完成后可切换"

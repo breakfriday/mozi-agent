@@ -1,4 +1,11 @@
-import { useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  getAction,
+  matchesKeymap,
+  actionHint,
+  ariaKeymap,
+} from "@/config/action-config";
+import type { RefSelectProps } from "antd";
 import {
   Button,
   Form,
@@ -353,19 +360,40 @@ function ProviderEditor({
 }
 
 const thinkingLabels: Record<ThinkingLevel, string> = {
-  off: "关闭", minimal: "最少", low: "低", medium: "中", high: "高", xhigh: "更高", max: "最高",
+  off: "关闭",
+  minimal: "最少",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "更高",
+  max: "最高",
 };
 
 function availableThinkingLevels(model?: ProviderModelView): ThinkingLevel[] {
-  return model?.thinkingLevels ?? (model?.reasoning ? ["off", "minimal", "low", "medium", "high"] : ["off"]);
+  return (
+    model?.thinkingLevels ??
+    (model?.reasoning ? ["off", "minimal", "low", "medium", "high"] : ["off"])
+  );
 }
 
-function thinkingLevelFor(model: ProviderModelView, preferred?: ThinkingLevel): ThinkingLevel {
+function thinkingLevelFor(
+  model: ProviderModelView,
+  preferred?: ThinkingLevel,
+): ThinkingLevel {
   const levels = availableThinkingLevels(model);
-  return preferred && levels.includes(preferred) ? preferred : levels.includes("medium") ? "medium" : levels[0];
+  return preferred && levels.includes(preferred)
+    ? preferred
+    : levels.includes("medium")
+      ? "medium"
+      : levels[0];
 }
 
-function ThinkingControls({ model, value, disabled, onChange }: {
+function ThinkingControls({
+  model,
+  value,
+  disabled,
+  onChange,
+}: {
   model?: ProviderModelView;
   value?: ModelSelection;
   disabled?: boolean;
@@ -373,8 +401,9 @@ function ThinkingControls({ model, value, disabled, onChange }: {
 }) {
   const [lastEnabled, setLastEnabled] = useState<ThinkingLevel>("medium");
   const levels = availableThinkingLevels(model);
-  const enabledLevels = levels.filter(level => level !== "off");
-  const level = value?.thinkingLevel ?? (model ? thinkingLevelFor(model) : "off");
+  const enabledLevels = levels.filter((level) => level !== "off");
+  const level =
+    value?.thinkingLevel ?? (model ? thinkingLevelFor(model) : "off");
   const enabled = enabledLevels.length > 0 && level !== "off";
   const toggleOnly = enabledLevels.length === 1;
   const selectLevel = (next: ThinkingLevel) => {
@@ -387,10 +416,22 @@ function ThinkingControls({ model, value, disabled, onChange }: {
           size="small"
           aria-label="深度思考"
           checked={enabled}
-          disabled={disabled || !model || !enabledLevels.length || !levels.includes("off")}
-          onChange={checked => {
-            if (!checked) { setLastEnabled(level); selectLevel("off"); }
-            else selectLevel(enabledLevels.some(item => item === lastEnabled) ? lastEnabled : enabledLevels[0]);
+          disabled={
+            disabled ||
+            !model ||
+            !enabledLevels.length ||
+            !levels.includes("off")
+          }
+          onChange={(checked) => {
+            if (!checked) {
+              setLastEnabled(level);
+              selectLevel("off");
+            } else
+              selectLevel(
+                enabledLevels.some((item) => item === lastEnabled)
+                  ? lastEnabled
+                  : enabledLevels[0],
+              );
           }}
         />
         <span>深度思考</span>
@@ -398,28 +439,54 @@ function ThinkingControls({ model, value, disabled, onChange }: {
       <Select<ThinkingLevel>
         size="small"
         aria-label="思考等级"
-        placeholder={enabledLevels.length ? enabled ? "选择等级" : "已关闭" : "不支持"}
+        placeholder={
+          enabledLevels.length ? (enabled ? "选择等级" : "已关闭") : "不支持"
+        }
         value={enabled ? level : undefined}
         disabled={disabled || !enabled || toggleOnly}
-        options={enabledLevels.map(item => ({ value: item, label: toggleOnly ? "自动" : `${thinkingLabels[item]} · ${item}` }))}
-        onChange={next => { setLastEnabled(next); selectLevel(next); }}
+        options={enabledLevels.map((item) => ({
+          value: item,
+          label: toggleOnly ? "自动" : `${thinkingLabels[item]} · ${item}`,
+        }))}
+        onChange={(next) => {
+          setLastEnabled(next);
+          selectLevel(next);
+        }}
       />
-      {model && <span className={styles.hint}>
-        {!enabledLevels.length ? "此模型不支持深度思考" : toggleOnly
-          ? "思考强度由模型决定" : !levels.includes("off") ? "此模型始终启用深度思考" : "按所选等级进行推理"}
-      </span>}
+      {model && (
+        <span className={styles.hint}>
+          {!enabledLevels.length
+            ? "此模型不支持深度思考"
+            : toggleOnly
+              ? "思考强度由模型决定"
+              : !levels.includes("off")
+                ? "此模型始终启用深度思考"
+                : "按所选等级进行推理"}
+        </span>
+      )}
     </div>
   );
 }
 
-function WebControls({ model, value, disabled, onChange }: {
+function WebControls({
+  model,
+  value,
+  disabled,
+  onChange,
+}: {
   model?: ProviderModelView;
   value?: ModelSelection;
   disabled?: boolean;
   onChange(model: ModelSelection): void;
 }) {
-  if (!model || (!model.supportsWebTools && !model.supportsBrowserTools) || !value) return null;
-  const mode = value.webMode ?? (model.supportsBrowserTools ? "browser" : "provider");
+  if (
+    !model ||
+    (!model.supportsWebTools && !model.supportsBrowserTools) ||
+    !value
+  )
+    return null;
+  const mode =
+    value.webMode ?? (model.supportsBrowserTools ? "browser" : "provider");
   const extraction = model.supportsWebExtractor ?? model.supportsWebTools;
   const thinking = (value.thinkingLevel ?? thinkingLevelFor(model)) !== "off";
   return (
@@ -433,29 +500,59 @@ function WebControls({ model, value, disabled, onChange }: {
           value={mode}
           disabled={disabled}
           options={[
-            { value: "browser", label: "Mozi 浏览器", disabled: !model.supportsBrowserTools },
-            { value: "provider", label: "服务商原生", disabled: !model.supportsWebTools },
+            {
+              value: "browser",
+              label: "Mozi 浏览器",
+              disabled: !model.supportsBrowserTools,
+            },
+            {
+              value: "provider",
+              label: "服务商原生",
+              disabled: !model.supportsWebTools,
+            },
           ]}
-          onChange={webMode => onChange({ ...value, webMode })}
+          onChange={(webMode) => onChange({ ...value, webMode })}
         />
-        <span className={styles.hint}>{mode === "browser"
-          ? "通过可视窗口搜索和读取，服务商原生联网已停用"
-          : "通过服务商联网，Mozi 浏览器工具已停用"}</span>
-        {!model.supportsWebTools && <span className={styles.hint}>此模型尚未接入原生联网</span>}
+        <span className={styles.hint}>
+          {mode === "browser"
+            ? "通过可视窗口搜索和读取，服务商原生联网已停用"
+            : "通过服务商联网，Mozi 浏览器工具已停用"}
+        </span>
+        {!model.supportsWebTools && (
+          <span className={styles.hint}>此模型尚未接入原生联网</span>
+        )}
       </div>
       {mode === "provider" && model.supportsWebTools && (
         <div className={styles.thinking}>
           <label className={styles.thinkingSwitch}>
-            <Switch size="small" aria-label="联网搜索" checked={value.webSearch !== false}
-              disabled={disabled} onChange={webSearch => onChange({ ...value, webSearch })} />
+            <Switch
+              size="small"
+              aria-label="联网搜索"
+              checked={value.webSearch !== false}
+              disabled={disabled}
+              onChange={(webSearch) => onChange({ ...value, webSearch })}
+            />
             <span>联网搜索</span>
           </label>
-          {extraction && <label className={styles.thinkingSwitch}>
-            <Switch size="small" aria-label="网页提取" checked={thinking && value.webExtractor !== false}
-              disabled={disabled || !thinking} onChange={webExtractor => onChange({ ...value, webExtractor })} />
-            <span>网页提取</span>
-          </label>}
-          <span className={styles.hint}>{!extraction || thinking ? "开启后由模型按需调用" : "网页提取需开启深度思考，保留原开关设置"}</span>
+          {extraction && (
+            <label className={styles.thinkingSwitch}>
+              <Switch
+                size="small"
+                aria-label="网页提取"
+                checked={thinking && value.webExtractor !== false}
+                disabled={disabled || !thinking}
+                onChange={(webExtractor) =>
+                  onChange({ ...value, webExtractor })
+                }
+              />
+              <span>网页提取</span>
+            </label>
+          )}
+          <span className={styles.hint}>
+            {!extraction || thinking
+              ? "开启后由模型按需调用"
+              : "网页提取需开启深度思考，保留原开关设置"}
+          </span>
         </div>
       )}
     </>
@@ -463,18 +560,30 @@ function WebControls({ model, value, disabled, onChange }: {
 }
 
 function webToolPreferences(model: ProviderModelView, value?: ModelSelection) {
-  const webMode: WebMode | undefined = value?.webMode === "provider" && model.supportsWebTools ? "provider"
-    : model.supportsBrowserTools ? "browser" : model.supportsWebTools ? "provider" : undefined;
-  return { webMode, webSearch: value?.webSearch, webExtractor: value?.webExtractor };
+  const webMode: WebMode | undefined =
+    value?.webMode === "provider" && model.supportsWebTools
+      ? "provider"
+      : model.supportsBrowserTools
+        ? "browser"
+        : model.supportsWebTools
+          ? "provider"
+          : undefined;
+  return {
+    webMode,
+    webSearch: value?.webSearch,
+    webExtractor: value?.webExtractor,
+  };
 }
 
 function ModelChoices({
+  shortcuts = false,
   providers,
   loaded,
   value,
   onChange,
   disabled,
 }: {
+  shortcuts?: boolean;
   providers: ProviderView[];
   loaded: boolean;
   value?: ModelSelection;
@@ -483,11 +592,61 @@ function ModelChoices({
 }) {
   const provider = providers.find((item) => item.id === value?.providerId);
   const hiddenSelection = loaded && value && !provider;
+  const providerSelect = useRef<RefSelectProps>(null);
+  const modelSelect = useRef<RefSelectProps>(null);
+  const [opened, setOpened] = useState<"provider" | "model" | null>(null);
+  const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      !shortcuts ||
+      disabled ||
+      document.activeElement?.closest('[role="dialog"]')
+    )
+      return;
+    const target = matchesKeymap(event, getAction("model.provider").keymap)
+      ? "provider"
+      : matchesKeymap(event, getAction("model.select").keymap)
+        ? "model"
+        : null;
+    if (!target) return;
+    if (
+      target === "provider"
+        ? !providers.some((item) => item.configured && item.models.length)
+        : !provider?.configured || !provider.models.length
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    const select = (target === "provider" ? providerSelect : modelSelect)
+      .current;
+    // A model update can disable the input before Enter keyup reaches Select.
+    // Start a fresh focus cycle so its Enter repeat lock cannot survive reopening.
+    select?.blur();
+    select?.focus();
+    setOpened(target);
+  });
+  useEffect(() => {
+    if (!shortcuts) return;
+    const onKey = (event: KeyboardEvent) => handleShortcut(event);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [shortcuts]);
   return (
     <div className={styles.selection}>
       <div className={styles.choices}>
         <Select
           aria-label="服务提供商"
+          ref={providerSelect}
+          title={shortcuts ? actionHint("model.provider") : undefined}
+          aria-keyshortcuts={
+            shortcuts ? ariaKeymap("model.provider") : undefined
+          }
+          open={!disabled && opened === "provider"}
+          onOpenChange={(visible) =>
+            setOpened((current) =>
+              visible ? "provider" : current === "provider" ? null : current,
+            )
+          }
           placeholder="选择 provider"
           showSearch
           optionFilterProp="label"
@@ -498,13 +657,32 @@ function ModelChoices({
             disabled: !item.configured,
             label: `${item.name}${item.configured ? "" : "（未配置凭据）"}`,
           }))}
+          onSelect={() => setOpened(null)}
           onChange={(id) => {
+            // Release keyboard state before the async update disables the input.
+            providerSelect.current?.blur();
+            setOpened(null);
             const model = providers.find((item) => item.id === id)?.models[0];
-            if (model) onChange({ providerId: id, modelId: model.id, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel), ...webToolPreferences(model, value) });
+            if (model)
+              onChange({
+                providerId: id,
+                modelId: model.id,
+                thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel),
+                ...webToolPreferences(model, value),
+              });
           }}
         />
         <Select
           aria-label="模型"
+          ref={modelSelect}
+          title={shortcuts ? actionHint("model.select") : undefined}
+          aria-keyshortcuts={shortcuts ? ariaKeymap("model.select") : undefined}
+          open={!disabled && !!provider?.configured && opened === "model"}
+          onOpenChange={(visible) =>
+            setOpened((current) =>
+              visible ? "model" : current === "model" ? null : current,
+            )
+          }
           placeholder="选择该 provider 的模型"
           showSearch
           optionFilterProp="label"
@@ -516,21 +694,30 @@ function ModelChoices({
               label: model.name,
             })) ?? []
           }
+          onSelect={() => setOpened(null)}
           onChange={(modelId) => {
-            const model = provider?.models.find(item => item.id === modelId);
-            if (provider && model) onChange({ providerId: provider.id, modelId, thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel), ...webToolPreferences(model, value) });
+            modelSelect.current?.blur();
+            setOpened(null);
+            const model = provider?.models.find((item) => item.id === modelId);
+            if (provider && model)
+              onChange({
+                providerId: provider.id,
+                modelId,
+                thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel),
+                ...webToolPreferences(model, value),
+              });
           }}
         />
       </div>
       <ThinkingControls
         key={`${value?.providerId}/${value?.modelId}`}
-        model={provider?.models.find(item => item.id === value?.modelId)}
+        model={provider?.models.find((item) => item.id === value?.modelId)}
         value={value}
         disabled={disabled || !provider?.configured}
         onChange={onChange}
       />
       <WebControls
-        model={provider?.models.find(item => item.id === value?.modelId)}
+        model={provider?.models.find((item) => item.id === value?.modelId)}
         value={value}
         disabled={disabled || !provider?.configured}
         onChange={onChange}
@@ -579,6 +766,7 @@ export function ModelControls() {
     <div className={styles.root}>
       <div className={styles.toolbar}>
         <ModelChoices
+          shortcuts={!open && !editing}
           providers={providers}
           loaded={!!settings}
           value={selected}
@@ -620,9 +808,7 @@ export function ModelControls() {
           if (!saving) setOpen(false);
         }}
       >
-        <p>
-          默认模型、思考和联网方式用于新会话，已有会话保留自己的选择。
-        </p>
+        <p>默认模型、思考和联网方式用于新会话，已有会话保留自己的选择。</p>
         <ModelChoices
           providers={providers}
           loaded={!!settings}

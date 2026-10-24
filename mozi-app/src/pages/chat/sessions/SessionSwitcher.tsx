@@ -31,8 +31,11 @@ export function SessionSwitcher({
     kind: "rename" | "delete";
     id: string;
     title: string;
+    typedConfirmation?: boolean;
   } | null>(null);
   const [name, setName] = useState("");
+  const [deleteAnswer, setDeleteAnswer] = useState("");
+  const deleteInput = useRef<InputRef>(null);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const focusComposer = useRef(false);
@@ -104,8 +107,13 @@ export function SessionSwitcher({
     }
   };
 
-  const handlers: Record<ActionId, () => void | Promise<void>> = {
+  const handlers: Partial<Record<ActionId, () => void | Promise<void>>> = {
     "session.create": createSession,
+    "session.delete": () => {
+      const session = items[activeIndex];
+      if (!open || search.startsWith(">") || disabled || loading || !session || sessionActivity[session.sessionId]) return;
+      beginAction("delete", session.sessionId, session.title || "新会话", true);
+    },
     "session.switcher": () => {
       if (open) setOpen(false);
       else show();
@@ -113,14 +121,14 @@ export function SessionSwitcher({
   };
   const executeAction = (id: ActionId) => {
     if (action) return;
-    void handlers[id]();
+    void handlers[id]?.();
   };
   const executeShortcut = useEffectEvent(executeAction);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const config = actionConfig.find((item: ActionConfig) =>
-        matchesKeymap(event, item.keymap),
+        !item.scope && matchesKeymap(event, item.keymap),
       );
       if (!config) return;
       // Only the dialog holding focus owns the keyboard. Hidden/closing modal
@@ -158,8 +166,10 @@ export function SessionSwitcher({
     kind: "rename" | "delete",
     id: string,
     title: string,
+    typedConfirmation = false,
   ) => {
-    setAction({ kind, id, title });
+    setAction({ kind, id, title, typedConfirmation });
+    setDeleteAnswer("");
     setName(title);
     setActionError(null);
   };
@@ -169,6 +179,7 @@ export function SessionSwitcher({
       saving ||
       disabled ||
       deletingRunning ||
+      (action.typedConfirmation && deleteAnswer.trim().toLowerCase() !== "yes") ||
       (action.kind === "rename" && !name.trim())
     )
       return;
@@ -287,7 +298,10 @@ export function SessionSwitcher({
                 : undefined
             }
             onOpenAutoFocus={(event) => {
-              if (action?.kind === "rename") {
+              if (action?.typedConfirmation) {
+                event.preventDefault();
+                deleteInput.current?.focus();
+              } else if (action?.kind === "rename") {
                 event.preventDefault();
                 nameInput.current?.focus({ cursor: "all" });
               }
@@ -297,7 +311,10 @@ export function SessionSwitcher({
               input.current?.focus({ preventScroll: true });
             }}
             onEscapeKeyDown={(event) => {
-              if (saving) event.preventDefault();
+              // Keep Escape in the top dialog; the palette must stay open.
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              if (!saving) setAction(null);
             }}
             onInteractOutside={(event) => {
               if (saving) event.preventDefault();
@@ -324,6 +341,25 @@ export function SessionSwitcher({
                 用量记录，无法恢复。
               </DialogPrimitive.Description>
             )}
+            {action?.typedConfirmation && (
+              <Input
+                ref={deleteInput}
+                aria-label="删除确认"
+                placeholder="输入 yes 删除 / no 取消，按 Enter 确认"
+                value={deleteAnswer}
+                readOnly={saving}
+                autoComplete="off"
+                onChange={(event) => setDeleteAnswer(event.target.value)}
+                onPressEnter={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat || saving) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const answer = deleteAnswer.trim().toLowerCase();
+                  if (answer === "no") setAction(null);
+                  else if (answer === "yes") void confirmAction();
+                }}
+              />
+            )}
             {actionError && <p role="alert">{actionError}</p>}
             <div className={styles.actionFooter}>
               <DialogPrimitive.Close asChild>
@@ -342,6 +378,7 @@ export function SessionSwitcher({
                   saving ||
                   disabled ||
                   deletingRunning ||
+                  (action?.typedConfirmation && deleteAnswer.trim().toLowerCase() !== "yes") ||
                   (action?.kind === "rename" && !name.trim())
                 }
                 onClick={() => void confirmAction()}
