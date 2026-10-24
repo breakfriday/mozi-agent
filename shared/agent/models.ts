@@ -99,6 +99,8 @@ export type ApprovalView = {
 };
 
 export type SessionSummary = {
+  /** Live activity, derived from unfinished runs rather than persisted session metadata. */
+  activeRun?: Pick<RunView, "id" | "status">;
   model?: ModelSelection;
   sessionId: Id; // Pi 原生会话 ID
   title: string;

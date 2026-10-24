@@ -25,6 +25,8 @@ test('central palette keeps background running badge after switching and catalog
   const panel = page.getByRole('dialog', { name: '切换会话', exact: true });
   const first = panel.getByRole('option').filter({ hasText: '会话1' });
   await expect(first.getByLabel('正在运行')).toBeVisible();
+  await panel.getByRole('combobox').press('Control+d');
+  await expect(page.getByRole('dialog', { name: '永久删除会话', exact: true })).not.toBeVisible();
   await panel.getByRole('option').filter({ hasText: '会话2' }).click();
   await expect(page.getByRole('heading', { name: '会话2', exact: true })).toBeVisible();
   await page.keyboard.press('Control+k');

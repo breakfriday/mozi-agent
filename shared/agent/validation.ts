@@ -140,7 +140,7 @@ const approvalView = object<ApprovalView>({
   status: oneOf(...APPROVAL_STATUSES),
   createdAt: date, resolvedAt: optional(date),
 });
-const sessionSummary = object<SessionSummary>({ sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
+const sessionSummary = object<SessionSummary>({ activeRun: optional(object({ id, status: oneOf("accepted", "running", "waiting_approval", "cancelling") })), sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
 const tokenFields = { input: sequence, output: sequence, cacheRead: sequence, cacheWrite: sequence,
   totalTokens: sequence, reasoning: optional(sequence) };
 const tokenUsage = object<TokenUsage>(tokenFields);

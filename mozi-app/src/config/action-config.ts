@@ -1,6 +1,7 @@
 export type ActionConfig = {
   action: string;
   keymap?: string;
+  scope?: "session-list" | "model-controls";
   command?: readonly string[];
   desc: string;
 };
@@ -10,9 +11,12 @@ export const actionConfig = [
   {
     action: "session.create",
     keymap: "mod+n",
-    command: ["new", "新建"],
+    command: ["new", "session"],
     desc: "新建会话",
   },
+  { action: "session.delete", keymap: "mod+d", scope: "session-list", desc: "删除选中会话" },
+  { action: "model.provider", keymap: "alt+p", scope: "model-controls", desc: "切换模型服务商" },
+  { action: "model.select", keymap: "alt+m", scope: "model-controls", desc: "切换模型" },
   { action: "session.switcher", keymap: "mod+k", desc: "搜索和切换会话" },
 ] as const satisfies readonly ActionConfig[];
 
