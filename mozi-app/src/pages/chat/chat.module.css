@@ -19,6 +19,36 @@
   min-height: 0;
   overflow-y: auto;
   padding: 24px;
+  scrollbar-gutter: stable;
+}
+
+.viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.viewport::-webkit-scrollbar-track,
+.viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.viewport::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-border-hover-color) 65%, transparent);
+  background-clip: padding-box;
+}
+
+.viewport::-webkit-scrollbar-thumb:hover,
+.viewport::-webkit-scrollbar-thumb:active {
+  background-color: var(--app-border-hover-color);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .viewport {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-border-hover-color) transparent;
+  }
 }
 .messages,
 .welcome,
