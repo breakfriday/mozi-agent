@@ -1,4 +1,4 @@
-import type { ModelSelection } from "../../../../../../shared/agent";
+import type { ModelSelection } from "../../../../../../../shared/agent";
 import type {
   ProviderConfig,
   ModelRuntime,

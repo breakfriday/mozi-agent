@@ -89,11 +89,11 @@ async function agentWorkflow() {
     res.end('data: [DONE]\n\n');
   });
   await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
-  const piDir = path.join(directory, 'pi'); mkdirSync(piDir);
-  writeFileSync(path.join(piDir, 'settings.json'), JSON.stringify({ retry: { enabled: false }, compaction: { enabled: false }, cacheWarming: { enabled: false } }));
+  const piDir = path.join(directory, 'agent/providers'); mkdirSync(piDir, { recursive: true });
+  writeFileSync(path.join(piDir, 'auth.json'), JSON.stringify({ 'browser-fixture': { type: 'api_key', key: 'fixture-only' } }));
   writeFileSync(path.join(piDir, 'models.json'), JSON.stringify({ providers: { 'browser-fixture': { api: 'openai-completions',
-    apiKey: 'fixture-only', baseUrl: `http://127.0.0.1:${model.address().port}/v1`, models: [{ id: 'smoke', name: 'Smoke',
-      input: ['text'], reasoning: false, contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
+    baseUrl: `http://127.0.0.1:${model.address().port}/v1`, models: [{ id: 'smoke', name: 'Smoke',
+      vision: false, reasoning: false, contextWindow: 32000, maxTokens: 1024 }] } } }));
   const transport = new AgentTransport(undefined, (operation, ctx) => browser.execute(operation, ctx));
   const events = [];
   transport.onEvent(event => events.push(event));

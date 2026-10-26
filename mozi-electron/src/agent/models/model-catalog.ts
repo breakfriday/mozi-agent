@@ -8,6 +8,7 @@ export interface PreparedModel {
   openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession>;
 }
 export interface ModelCatalog {
+  startBackgroundWork?(): void;
   refreshProviderModels?(providerId: string): Promise<void>;
   auth?: {
     start(providerId: string): import("../../../../shared/agent").ProviderAuthState;

@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const directory = mkdtempSync(path.join(os.tmpdir(), 'mozi-pi-smoke-'));
-const piDir = path.join(directory, 'config'); mkdirSync(piDir);
+const piDir = path.join(directory, 'providers'); mkdirSync(piDir);
 const entry = process.env.MOZI_SMOKE_AGENT_ENTRY || path.resolve(__dirname, '../.vite/build/agent.mjs');
 let modelRequests = 0;
 const server = createServer(async (req, res) => {
@@ -60,8 +60,8 @@ async function until(check) {
 async function stop() { const exited = new Promise(resolve => child.once('exit', resolve)); child.postMessage({protocolVersion:1,kind:'control',action:'shutdown'}); await exited; }
 app.whenReady().then(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  writeFileSync(path.join(piDir, 'models.json'), JSON.stringify({ providers: { 'local-test': { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', apiKey: 'local-test-only', models: [{ id: 'smoke', name: 'Smoke', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
-  writeFileSync(path.join(piDir, 'settings.json'), JSON.stringify({ retry: { enabled: false }, compaction: { enabled: false }, cacheWarming: { enabled: false } }));
+  writeFileSync(path.join(piDir, 'models.json'), JSON.stringify({ providers: { 'local-test': { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', models: [{ id: 'smoke', name: 'Smoke', reasoning: false, vision: false, contextWindow: 32000, maxTokens: 1024 }] } } }));
+  writeFileSync(path.join(piDir, 'auth.json'), JSON.stringify({ 'local-test': { type: 'api_key', key: 'local-test-only' } }));
   let { call, events } = await spawn();
   const antigravity = (await call('model.settings', {})).providers.find(p => p.id === 'antigravity');
   assert.ok(antigravity.models.length > 0);

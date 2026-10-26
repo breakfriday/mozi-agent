@@ -189,7 +189,7 @@ test('one Pi browser tool carries all three operations, runtime scope, progress 
 
 test('visual browsing removes Bailian server search while preserving local tools and the shared catalog', async () => {
   const isolated = createLoader({ '@earendil-works/pi-coding-agent': {}, '@aiwayds/pi-bailian-token-plan': () => {} });
-  const { preserveBailianLocalTools } = isolated(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian.ts'));
+  const { preserveBailianLocalTools } = isolated(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian/provider.ts'));
   const model = { provider: 'bailian-tp', api: 'openai-responses', id: 'model', samplingParams: { tools: [{ type: 'web_search' }, { type: 'web_extractor' }] } };
   const original = JSON.stringify(model);
   let body;

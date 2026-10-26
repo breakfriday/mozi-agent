@@ -7,6 +7,7 @@ import { failure } from "../errors";
 export class ModelService {
   constructor(private readonly store: MetadataStore, private readonly control: ApplicationControl,
     private readonly catalog?: ModelCatalog, private readonly startupDefault?: ModelSelection) {}
+  startBackgroundWork(): void { this.catalog?.startBackgroundWork?.(); }
   async refreshProviderModels(providerId: string): Promise<ModelSettings> {
     const catalog = this.requireCatalog();
     if (!catalog.refreshProviderModels) throw failure("UNSUPPORTED_CAPABILITY", "当前运行时不支持动态模型目录。");

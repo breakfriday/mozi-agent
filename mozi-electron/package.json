@@ -11,7 +11,8 @@
   },
   "scripts": {
     "start": "electron-forge start",
-    "debug": "electron-forge start --inspect-electron ",
+    "debug": "node devDeug/start.cjs",
+    "debug:agent:brk": "node devDeug/start.cjs --agent-brk",
     "start:filelocal": "cross-env ELECTRON_RENDERER_MODE=filelocal electron-forge start",
     "build:renderer": "node scripts/build-renderer.cjs",
     "copy:renderer": "node scripts/copy-renderer.cjs",
@@ -22,12 +23,14 @@
     "test": "node --test tests/*.test.cjs tests/agent/*.test.cjs",
     "build:agent": "vite build --config vite.agent.config.ts --outDir .vite/build",
     "test:agent:smoke": "npm run build:agent && electron tests/agent-process.smoke.cjs",
+    "test:browser": "npm run build:agent && electron tests/browser.smoke.cjs",
     "test:agent:lifecycle": "npm run build:agent && node tests/agent-lifecycle.smoke.cjs"
   },
   "dependencies": {
     "@aiwayds/pi-bailian-token-plan": "1.1.2",
     "@earendil-works/pi-coding-agent": "1.0.3",
-    "electron-squirrel-startup": "^1.0.1"
+    "electron-squirrel-startup": "^1.0.1",
+    "pi-antigravity": "0.11.0"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",

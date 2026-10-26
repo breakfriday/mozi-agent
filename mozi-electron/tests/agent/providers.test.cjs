@@ -8,14 +8,14 @@ async function fixture(t) {
   const sdk = await import('@earendil-works/pi-coding-agent');
   const packageLoad = createLoader();
   const extension = packageLoad(path.resolve(__dirname, '../../node_modules/@aiwayds/pi-bailian-token-plan/index.ts'));
-  const load = createLoader({ './antigravity/provider': await require('../helpers/antigravity.cjs')(), '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
-  const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/provider-manager.ts'));
+  const load = createLoader({ [path.resolve(__dirname, '../../src/agent/runtime/pi/providers/antigravity/provider.ts')]: await require('../helpers/antigravity.cjs')(), '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
+  const { createPiProviderManager: createManager } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/create-providers.ts'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-provider-'));
   const config = { dataDir: root, cwd: root, piDir: path.join(root, 'external-pi') };
   mkdirSync(config.piDir);
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const manager = new PiProviderManager(config);
-  return { manager, root, config, PiProviderManager, load };
+  const manager = createManager(config);
+  return { manager, root, config, createManager, load };
 }
 const custom = (name = 'custom', apiKey = 'fixture-only-key') => ({ providerId: name, name: 'Custom Service',
   api: 'openai-completions', baseUrl: 'http://127.0.0.1:12345/v1', apiKey,
@@ -33,7 +33,7 @@ test('DeepSeek registration sends thinking off and preserves local tools in nati
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const providers = new f.PiProviderManager(f.config, true);
+  const providers = f.createManager(f.config, true);
   await providers.saveProvider({ providerId: 'deepseek', apiKey: 'fixture-only-key',
     baseUrl: `http://127.0.0.1:${server.address().port}` });
   const catalog = (await providers.listProviders()).find(p => p.id === 'deepseek');
@@ -130,7 +130,7 @@ test('real Pi calls visual search then read, returns evidence to the model and p
   execution.dispose();
   const history = readHistory(sdk.SessionManager.open(manager.getSessionFile()).getBranch());
   assert.ok(history.flatMap(m => m.tools ?? []).some(tool => tool.toolName === 'mozi_browser' && tool.outputText.includes('Unique browser evidence 739')));
-  const visualProviders = new f.PiProviderManager(f.config, true);
+  const visualProviders = f.createManager(f.config, true);
   const visibleModel = (await visualProviders.listProviders()).find(p => p.id === 'bailian-tp').models[0];
   assert.equal(visibleModel.supportsWebTools, true);
   assert.equal(visibleModel.supportsBrowserTools, true);
@@ -207,7 +207,7 @@ test('real Responses tool calls execute locally and expose success and failure i
   const { readHistory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/history-reader.ts'));
   const manager = sdk.SessionManager.create(f.root, path.join(f.root, 'sessions'));
   const descriptor = { sessionId: manager.getSessionId(), engine: 'pi', cwd: f.root, locator: manager.getSessionFile() };
-  const session = await new PiSessionFactory(f.config).create(manager, descriptor, { runtime, model: runtime.getModel('fixture', 'model'), version: 'fixture' });
+  const session = await new PiSessionFactory(f.config, undefined, f.manager.configureAgent).create(manager, descriptor, { runtime, model: runtime.getModel('fixture', 'model'), version: 'fixture' });
   const execution = new PiExecution(session, manager);
   t.after(() => execution.dispose());
   const events = [];
@@ -255,7 +255,7 @@ test('custom provider/key persist privately, are not returned, and edits do not 
   assert.equal((await first.runtime.getAuth(first.model)).auth.apiKey, 'fixture-only-key');
   assert.equal((await second.runtime.getAuth(second.model)).auth.apiKey, 'replacement-secret');
   assert.equal(first.model.baseUrl, 'http://127.0.0.1:12345/v1');
-  const reopened = new f.PiProviderManager(f.config);
+  const reopened = f.createManager(f.config);
   assert.equal((await reopened.prepare(selection)).model.id, 'model');
   const response = JSON.stringify(await reopened.listProviders());
   assert.equal(response.includes('replacement-secret'), false);
@@ -317,12 +317,12 @@ test('legacy Token Plan settings upgrade to Responses without rewriting files on
   assert.equal(binding.model.maxTokens, 2048);
   assert.equal(readFileSync(filename, 'utf8'), contents);
   await f.manager.saveProvider({ providerId: 'bailian-tp', api: 'openai-responses' });
-  const reopened = new f.PiProviderManager(f.config);
+  const reopened = f.createManager(f.config);
   assert.equal((await reopened.prepare({ providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview' })).model.api, 'openai-responses');
   assert.equal(JSON.parse(readFileSync(filename, 'utf8')).providers['bailian-tp'].api, 'openai-responses');
 });
 
-test('external Pi configuration is read without rewriting it; plan registration keeps its dedicated endpoint', async t => {
+test('external Pi configuration is ignored without rewriting it; plan registration keeps its dedicated endpoint', async t => {
   const f = await fixture(t);
   const external = { providers: { 'bailian-tp': { baseUrl: 'https://example.com/wrong' } } };
   const filename = path.join(f.config.piDir, 'models.json');
@@ -427,7 +427,7 @@ test('Bailian model defaults coexist with local coding tools and follow provider
   }
   const { PiSessionFactory } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/session-factory.ts'));
   const manager = sdk.SessionManager.inMemory(f.root);
-  const session = await new PiSessionFactory(f.config).create(manager,
+  const session = await new PiSessionFactory(f.config, undefined, f.manager.configureAgent).create(manager,
     { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
     { runtime, model: runtime.getModel('bailian-tp', 'model'), version: 'fixture' });
   t.after(() => session.dispose());
@@ -459,7 +459,7 @@ test('Bailian model defaults coexist with local coding tools and follow provider
   session.dispose();
   const thinkingLevels = ['minimal', 'low', 'medium', 'high', 'off', 'high', 'xhigh', 'max', 'off'];
   for (const thinkingLevel of thinkingLevels) {
-    const next = await new PiSessionFactory(f.config).create(manager,
+    const next = await new PiSessionFactory(f.config, undefined, f.manager.configureAgent).create(manager,
       { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
       { runtime, model: runtime.getModel('bailian-tp', 'model'), version: 'fixture', thinkingLevel });
     try {
@@ -475,13 +475,13 @@ test('Bailian model defaults coexist with local coding tools and follow provider
     } finally { next.dispose(); }
   }
   assert.equal(requests.length, 3 + thinkingLevels.length);
-  const { withBailianWebTools } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian.ts'));
+  const { withBailianWebTools } = f.load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian/provider.ts'));
   const sharedModel = runtime.getModel('bailian-tp', 'model');
   const original = JSON.stringify(sharedModel);
   for (const thinkingLevel of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
     for (const webSearch of [false, true]) for (const webExtractor of [false, true]) {
       const model = withBailianWebTools(sharedModel, { providerId: 'bailian-tp', modelId: 'model', thinkingLevel, webSearch, webExtractor });
-      const next = await new PiSessionFactory(f.config).create(manager,
+      const next = await new PiSessionFactory(f.config, undefined, f.manager.configureAgent).create(manager,
         { sessionId: manager.getSessionId(), engine: 'pi', locator: '', cwd: f.root },
         { runtime, model, version: 'fixture', thinkingLevel });
       try {
@@ -502,19 +502,26 @@ test('Bailian model defaults coexist with local coding tools and follow provider
 });
 
 
-test('inherited credentials stay read-only and are never included in the catalog', async t => {
+test('external credentials cannot configure providers or return after deleting Mozi credentials', async t => {
   const f = await fixture(t);
   const filename = path.join(f.config.piDir, 'auth.json');
-  const contents = JSON.stringify({ 'bailian-tp': { type: 'api_key', key: 'external-plan-secret' } });
+  const contents = JSON.stringify({ 'bailian-tp': { type: 'api_key', key: 'external-plan-secret' }, deepseek: { type: 'api_key', key: 'external-deepseek' } });
   writeFileSync(filename, contents);
-  const binding = await f.manager.prepare({ providerId: 'bailian-tp', modelId: 'deepseek-v4-pro' });
-  assert.equal((await binding.runtime.getAuth(binding.model)).auth.apiKey, 'external-plan-secret');
+  const providers = await f.manager.listProviders();
+  for (const id of ['bailian-tp', 'deepseek']) assert.equal(providers.find(p => p.id === id).configured, false);
+  await assert.rejects(f.manager.prepare({ providerId: 'bailian-tp', modelId: 'deepseek-v4-pro' }));
   await f.manager.saveProvider({ providerId: 'bailian-tp', apiKey: 'managed-plan-secret' });
+  const binding = await f.manager.prepare({ providerId: 'bailian-tp', modelId: 'deepseek-v4-pro' });
+  assert.equal((await binding.runtime.getAuth(binding.model)).auth.apiKey, 'managed-plan-secret');
+  // Simulate clearing the locally managed credential file; external credentials must never return.
+  writeFileSync(path.join(f.root, 'providers/auth.json'), '{}');
+  f.manager.dispose();
+  for (const manager of [f.createManager(f.config)]) {
+    assert.equal((await manager.listProviders()).find(p => p.id === 'bailian-tp').configured, false);
+    await assert.rejects(manager.prepare({ providerId: 'bailian-tp', modelId: 'deepseek-v4-pro' }));
+    manager.dispose();
+  }
   assert.equal(readFileSync(filename, 'utf8'), contents);
-  assert.equal((await binding.runtime.getAuth(binding.model)).auth.apiKey, 'external-plan-secret');
-  const response = JSON.stringify(await f.manager.listProviders());
-  assert.equal(response.includes('external-plan-secret'), false);
-  assert.equal(response.includes('managed-plan-secret'), false);
 });
 
 test('response model evidence comes only from HTTP chunks, survives native history, and never leaks between requests', async t => {
@@ -673,7 +680,7 @@ test('session web tool choices reach prepared bindings and leave other sessions 
 test('desktop web modes are exclusive in real Responses payloads across switches on the same session', async t => {
   const f = await fixture(t);
   const sdk = await import('@earendil-works/pi-coding-agent');
-  const providers = new f.PiProviderManager(f.config, true);
+  const providers = f.createManager(f.config, true);
   await providers.saveProvider({ providerId: 'bailian-tp', apiKey: 'fixture-key' });
   const selection = { providerId: 'bailian-tp', modelId: 'qwen3.8-max-preview', thinkingLevel: 'high' };
   const browserBinding = await providers.prepare(selection);
@@ -735,7 +742,7 @@ test('Antigravity ignores external Pi credentials and refuses API-key or endpoin
   assert.equal((await f.manager.listProviders()).find(p => p.id === 'antigravity').configured, false);
   assert.equal(JSON.parse(readFileSync(path.join(f.config.piDir, 'auth.json'), 'utf8')).antigravity.access, 'external-only');
   writeFileSync(path.join(f.config.piDir, 'models.json'), JSON.stringify({ providers: { antigravity: { apiKey: 'bypass' } } }));
-  await assert.rejects(new f.PiProviderManager(f.config).listProviders(), e => e.code === 'INVALID_ARGUMENT');
+  assert.equal((await f.createManager(f.config).listProviders()).find(p => p.id === 'antigravity').configured, false);
 });
 
 test('dynamic Antigravity catalog publishes new Gemini models, preserves cache on failure and restores after restart', async t => {
@@ -756,10 +763,12 @@ test('dynamic Antigravity catalog publishes new Gemini models, preserves cache o
     type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3600000, projectId: 'fixture-project',
   } }));
   const notices = [];
-  const manager = new f.PiProviderManager(f.config, true, undefined, id => notices.push(id));
+  const manager = f.createManager(f.config, true, undefined, id => notices.push(id));
   t.after(() => manager.dispose());
   const before = (await manager.listProviders()).find(p => p.id === 'antigravity');
-  assert.equal(before.catalogStatus, 'refreshing');
+  assert.equal(before.catalogStatus, 'idle');
+  assert.equal(requests, 0, 'listing providers must not start network work');
+  manager.startBackgroundWork();
   await manager.refreshProviderModels('antigravity');
   const synced = (await manager.listProviders()).find(p => p.id === 'antigravity');
   assert.ok(requests > 0); assert.equal(synced.catalogStatus, 'ready');
@@ -772,7 +781,29 @@ test('dynamic Antigravity catalog publishes new Gemini models, preserves cache o
   const offline = (await manager.listProviders()).find(p => p.id === 'antigravity');
   assert.equal(offline.catalogStatus, 'failed');
   assert.ok(offline.models.some(m => m.id === 'gemini-4-fixture'));
-  const reopened = new f.PiProviderManager(f.config); t.after(() => reopened.dispose());
+  const reopened = f.createManager(f.config); t.after(() => reopened.dispose());
   assert.ok((await reopened.listProviders()).find(p => p.id === 'antigravity').models.some(m => m.id === 'gemini-4-fixture'));
   await reopened.refreshProviderModels('antigravity');
+});
+
+test('native SDK environment keys and malformed CLI files cannot configure Mozi', async t => {
+  const names = ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'BAILIAN_TP_API_KEY', 'ANTHROPIC_API_KEY'];
+  const previous = names.map(name => process.env[name]);
+  for (const name of names) process.env[name] = 'ambient-fixture-key';
+  t.after(() => names.forEach((name, i) => { if (previous[i] === undefined) delete process.env[name]; else process.env[name] = previous[i]; }));
+  const f = await fixture(t);
+  for (const name of ['auth.json', 'models.json', 'settings.json']) writeFileSync(path.join(f.config.piDir, name), '{invalid json');
+  const providers = await f.manager.listProviders();
+  for (const id of ['openai', 'deepseek', 'bailian-tp', 'anthropic']) {
+    assert.equal(providers.find(p => p.id === id).configured, false, id);
+  }
+  await f.manager.saveProvider({ providerId: 'openai', apiKey: 'owned-fixture-key' });
+  const provider = (await f.manager.listProviders()).find(p => p.id === 'openai');
+  const binding = await f.manager.prepare({ providerId: 'openai', modelId: provider.models[0].id });
+  assert.equal((await binding.runtime.getAuth(binding.model)).auth.apiKey, 'owned-fixture-key');
+  writeFileSync(path.join(f.root, 'providers/auth.json'), '{}');
+  const reopened = f.createManager(f.config);
+  t.after(() => reopened.dispose());
+  assert.equal((await reopened.listProviders()).find(p => p.id === 'openai').configured, false);
+  assert.equal(readFileSync(path.join(f.config.piDir, 'auth.json'), 'utf8'), '{invalid json');
 });

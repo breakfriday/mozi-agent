@@ -4,7 +4,8 @@ import { PiSessionFactory } from "./sessions/session-factory";
 import type { PiConfig, PiModelBinding } from "./types";
 import type { ModelSelection, ProviderSaveInput } from "../../../../../shared/agent";
 import type { ModelCatalog, PreparedModel } from "../../models/model-catalog";
-import { PiProviderManager } from "./providers/provider-manager";
+import { createPiProviderManager } from "./providers/create-providers";
+import type { PiProviderManager } from "./providers/provider-manager";
 import { PiExecution } from "./sessions/execution";
 import type { BrowserCall } from "../../../../../shared/browser";
 
@@ -13,11 +14,12 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
   private readonly providers: PiProviderManager;
   private readonly store: PiSessionStore;
   private readonly factory: PiSessionFactory;
-  constructor(config: PiConfig, browser?: BrowserCall, emitAuth?: (state: import("../../../../../shared/agent").ProviderAuthState) => void, emitCatalog?: (providerId: string) => void) {
-    this.providers = new PiProviderManager(config, !!browser, emitAuth, emitCatalog);
+  constructor(private readonly config: PiConfig, browser?: BrowserCall, emitAuth?: (state: import("../../../../../shared/agent").ProviderAuthState) => void, emitCatalog?: (providerId: string) => void) {
+    this.providers = createPiProviderManager(config, !!browser, emitAuth, emitCatalog);
     this.store = new PiSessionStore(config);
-    this.factory = new PiSessionFactory(config, browser);
+    this.factory = new PiSessionFactory(config, browser, this.providers.configureAgent);
   }
+  startBackgroundWork() { this.providers.startBackgroundWork(); }
   refreshProviderModels(providerId: string) { return this.providers.refreshProviderModels(providerId); }
   get auth() { return this.providers.auth; }
   listProviders() { return this.providers.listProviders(); }
@@ -34,7 +36,10 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
   readHistory(descriptor: RuntimeSessionDescriptor): Promise<RuntimeHistoryMessage[]> { return this.store.readHistory(descriptor); }
   readUsage(descriptor: RuntimeSessionDescriptor) { return this.store.readUsage(descriptor); }
   async openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession> {
-    return this.openExecution(descriptor);
+    const { provider, modelId } = this.config;
+    if (!provider || !modelId) throw new Error("请先在 Mozi 中选择并配置模型。");
+    const binding = await this.providers.prepare({ providerId: provider, modelId });
+    return this.openExecution(descriptor, binding);
   }
   private async openExecution(descriptor: RuntimeSessionDescriptor, binding?: PiModelBinding): Promise<RuntimeSession> {
     // The adapter owns the reservation until creation succeeds; execution then owns release.

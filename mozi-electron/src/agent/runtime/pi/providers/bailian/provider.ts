@@ -1,4 +1,4 @@
-import { THINKING_LEVELS, type ModelSelection } from "../../../../../../shared/agent";
+import { THINKING_LEVELS, type ModelSelection } from "../../../../../../../shared/agent";
 import registerBailian from "@aiwayds/pi-bailian-token-plan";
 import {
   DefaultResourceLoader,

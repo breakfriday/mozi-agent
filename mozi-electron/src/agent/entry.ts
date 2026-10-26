@@ -39,6 +39,7 @@ async function start(): Promise<void> {
   await initialized;
   if (stopping) return;
   send({ protocolVersion: AGENT_PROTOCOL_VERSION, kind: "runtime", state: "ready" });
+  application.models.startBackgroundWork();
   log.info("service.ready");
 }
 void start().catch(fatal);

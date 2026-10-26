@@ -14,6 +14,7 @@ module.exports = function createLoader(overrides = {}) {
     const resolved = [filename, `${filename}.ts`, path.join(filename, "index.ts")]
       .find((candidate) => existsSync(candidate) && require("node:fs").statSync(candidate).isFile());
     if (!resolved) throw new Error(`Cannot resolve ${filename}`);
+    if (Object.hasOwn(overrides, resolved)) return overrides[resolved];
     if (cache.has(resolved)) return cache.get(resolved).exports;
     const module = { exports: {} };
     cache.set(resolved, module);

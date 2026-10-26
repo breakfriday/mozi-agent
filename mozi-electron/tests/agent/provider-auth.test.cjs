@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const load = require('../helpers/load-ts.cjs')();
+const load = require('../helpers/load-ts.cjs')({ [path.resolve(__dirname, '../../src/agent/runtime/pi/providers/antigravity/provider.ts')]: { getAntigravityProviderConfig() {} } });
+const { antigravityPlugin } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/antigravity/index.ts'));
+const credentialPolicy = id => ({ shared: id === antigravityPlugin.id });
 const { ProviderAuthManager } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/provider-auth-manager.ts'));
 const { CredentialRepository } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/credential-repository.ts'));
 const { isAgentRequest, isProviderAuthEvent, isResponseFor } = load(path.resolve(__dirname, '../../../shared/agent/validation.ts'));
@@ -11,9 +13,10 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const credential = { type: 'oauth', access: 'expired', refresh: 'refresh', expires: 0, projectId: 'fixture' };
 function fixture(t, login, timeout = 10000) {
   const events = []; let committed = 0, removed = 0;
-  const manager = new ProviderAuthManager(async () => ({ login }), s => {
+  const manager = new ProviderAuthManager({ policy: id => id === antigravityPlugin.id ? antigravityPlugin.oauth : undefined,
+    runtime: async () => ({ login }), emit: s => {
     assert.equal(isProviderAuthEvent({ protocolVersion: 1, kind: 'provider.auth', state: s }), true); events.push(s);
-  }, async () => { committed++; }, async () => { removed++; }, timeout);
+  }, committed: async () => { committed++; }, removeCredential: async () => { removed++; }, timeoutMs: timeout });
   t.after(() => manager.dispose());
   return { manager, events, get committed() { return committed; }, get removed() { return removed; } };
 }
@@ -65,19 +68,19 @@ test('timeouts abort login and provider errors are sanitized', async t => {
 });
 function repository(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mozi-auth-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'auth.json'); return { repo: new CredentialRepository(file), file };
+  const file = path.join(dir, 'auth.json'); return { repo: new CredentialRepository(file, credentialPolicy), file };
 }
 test('runtime snapshots share refresh serialization and never inherit Antigravity after logout', async t => {
   const { repo, file } = repository(t); await repo.modify('antigravity', async () => credential);
-  const a = repo.snapshot(repo.readAll(), { antigravity: { ...credential, access: 'external' } });
-  const b = repo.snapshot(repo.readAll(), {}); a.activate(); b.activate(); let refreshed = 0;
+  const a = repo.snapshot(repo.readAll());
+  const b = repo.snapshot(repo.readAll()); a.activate(); b.activate(); let refreshed = 0;
   const refresh = async current => {
     if (current.expires === 0) { refreshed++; await tick(); return { ...current, access: 'new', expires: Date.now() + 100000 }; } return current;
   };
   await Promise.all([a.store.modify('antigravity', refresh), b.store.modify('antigravity', refresh)]);
   assert.equal(refreshed, 1); assert.equal((await a.store.read('antigravity')).access, 'new');
   await repo.delete('antigravity'); assert.equal(await a.store.read('antigravity'), undefined); assert.equal(await b.store.read('antigravity'), undefined);
-  const reopened = repo.snapshot(repo.readAll(), { antigravity: credential }); reopened.activate();
+  const reopened = repo.snapshot(repo.readAll()); reopened.activate();
   assert.equal(await reopened.store.read('antigravity'), undefined); assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
 test('logout removes the result of an in-flight refresh', async t => {

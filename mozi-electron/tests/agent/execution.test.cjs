@@ -230,7 +230,7 @@ test('adapter rolls back a failed creation and transfers reservation ownership a
   let acquired = false, attempts = 0, releases = 0;
   const error = new Error('SDK creation failed');
   const loadAdapter = createLoader({
-    './providers/provider-manager': { PiProviderManager: class {} },
+    './providers/create-providers': { createPiProviderManager: () => ({ prepare: async () => ({}) }) },
     './sessions/session-store': { PiSessionStore: class {
       acquire() { assert.equal(acquired, false); acquired = true; return f.manager; }
       release() { assert.equal(acquired, true); acquired = false; releases++; }
@@ -240,7 +240,7 @@ test('adapter rolls back a failed creation and transfers reservation ownership a
     } },
   });
   const { PiAdapter } = loadAdapter(path.resolve(__dirname, '../../src/agent/runtime/pi/pi-adapter.ts'));
-  const adapter = new PiAdapter({});
+  const adapter = new PiAdapter({ provider: 'fixture', modelId: 'requested' });
   await assert.rejects(adapter.openSession({}), value => value === error);
   assert.equal(acquired, false);
   const execution = await adapter.openSession({});

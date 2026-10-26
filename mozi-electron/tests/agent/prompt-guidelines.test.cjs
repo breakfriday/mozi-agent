@@ -32,8 +32,6 @@ test('session factory appends only enabled tool rules to the actual Pi prompt', 
         return { session: { agent: {} } };
       },
     },
-    '../providers/bailian': { preserveBailianLocalTools() {} },
-    '../providers/deepSeek': { preserveDeepSeekLocalTools() {} },
   });
   const { PiSessionFactory } = load(path.resolve(promptRoot, '../session-factory.ts'));
   const factory = new PiSessionFactory(

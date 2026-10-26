@@ -13,7 +13,7 @@
     ],
     "paths": {
       "@aiwayds/pi-bailian-token-plan": [
-        "./src/agent/runtime/pi/providers/bailian-package.d.ts"
+        "./src/agent/runtime/pi/providers/bailian/package.d.ts"
       ],
       "pi-antigravity/src/*": [
         "./src/agent/runtime/pi/providers/antigravity/package.d.ts"
