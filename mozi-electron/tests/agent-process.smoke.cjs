@@ -12,7 +12,8 @@ const server = createServer(async (req, res) => {
   let body = ''; for await (const chunk of req) body += chunk;
   const request = JSON.parse(body); modelRequests++;
   assert.equal(req.url, '/v1/chat/completions');
-  assert.ok(!request.tools?.length);
+  const toolNames = request.tools?.map(tool => tool.function?.name) ?? [];
+  for (const name of ['read', 'bash', 'edit', 'write', 'mozi_browser']) assert.ok(toolNames.includes(name), name);
   if (modelRequests > 1) {
     assert.ok(request.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('hello')), 'Pi restores the original user context: ' + JSON.stringify(request.messages));
     assert.ok(request.messages.some(message => message.role === 'assistant' && JSON.stringify(message.content).includes('真实 SDK')), 'Pi restores assistant context');
@@ -39,7 +40,7 @@ async function spawn() {
     child.on('message', packet => {
       if (packet.kind === 'runtime' && packet.state === 'ready') { clearTimeout(timeout); resolve(); }
       if (packet.kind === 'response') { pending.get(packet.requestId)?.(packet); pending.delete(packet.requestId); }
-      if (packet.kind === 'event') events.push(packet);
+      if (packet.kind === 'event' || packet.kind === 'provider.auth') events.push(packet);
     });
   });
   await ready;
@@ -62,6 +63,16 @@ app.whenReady().then(async () => {
   writeFileSync(path.join(piDir, 'models.json'), JSON.stringify({ providers: { 'local-test': { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', apiKey: 'local-test-only', models: [{ id: 'smoke', name: 'Smoke', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
   writeFileSync(path.join(piDir, 'settings.json'), JSON.stringify({ retry: { enabled: false }, compaction: { enabled: false }, cacheWarming: { enabled: false } }));
   let { call, events } = await spawn();
+  const antigravity = (await call('model.settings', {})).providers.find(p => p.id === 'antigravity');
+  assert.ok(antigravity.models.length > 0);
+  assert.deepEqual(antigravity.authMethods, ['oauth']);
+  assert.equal(antigravity.configured, false);
+  const login = await call('provider.auth.start', { providerId: 'antigravity' });
+  await until(() => events.some(e => e.kind === 'provider.auth' && e.state.authUrl));
+  assert.equal((await call('provider.auth.cancel', { providerId: 'antigravity', loginId: login.loginId })).phase, 'cancelled');
+  await call('provider.auth.logout', { providerId: 'antigravity' });
+  assert.equal((await call('provider.auth.status', { providerId: 'antigravity' })).phase, 'idle');
+
   const { sessionId } = await call('session.create', { clientOperationId: 'op' });
   assert.equal((await call('session.list', {})).items[0].title, '新会话');
   const input = { sessionId, clientMessageId: 'client', content: [{ type: 'text', text: 'hello' }] };

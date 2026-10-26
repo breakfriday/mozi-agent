@@ -1,5 +1,6 @@
 import {
   ipcMain,
+  shell,
   type IpcMainInvokeEvent,
   type WebContents,
   type WebFrameMain,
@@ -163,6 +164,26 @@ export function registerAgentIpc(
     }
   }
 
+  const offCatalog = transport.onProviderModelsChanged(providerId => {
+    for (const client of clients.values()) send(client, AGENT_CHANNELS.catalog, providerId);
+  });
+  let lastOpenedAuth = "";
+  const offAuth = transport.onProviderAuth(state => {
+    for (const client of clients.values()) send(client, AGENT_CHANNELS.auth, state);
+    if (!state.authUrl || !state.openRequest) return;
+    const key = `${state.loginId}:${state.openRequest}`;
+    if (key === lastOpenedAuth) return;
+    try {
+      const url = new URL(state.authUrl);
+      if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password) return;
+      lastOpenedAuth = key;
+      void shell.openExternal(url.href).catch(() => {
+        for (const client of clients.values()) send(client, AGENT_CHANNELS.auth, {
+          ...state, message: "无法打开系统浏览器，请点击重新打开浏览器重试。",
+        });
+      });
+    } catch { /* Never open malformed or untrusted URLs. */ }
+  });
   const offState = transport.onState((notice: RuntimeNotice) => {
     log.info("runtime.changed", notice, { generation });
     if (notice.state === "unavailable") {
@@ -387,6 +408,8 @@ export function registerAgentIpc(
       if (disposed) return;
       disposed = true;
       ipcMain.removeHandler(AGENT_CHANNELS.request);
+      offCatalog();
+      offAuth();
       offEvent();
       offState();
       for (const client of clients.values()) release(client);

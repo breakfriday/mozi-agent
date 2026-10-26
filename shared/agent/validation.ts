@@ -14,6 +14,8 @@ import { PROVIDER_APIS, THINKING_LEVELS, WEB_MODES } from "./providers";
 import type { ModelSelection, ProviderModel, ProviderModelView, ProviderView, ModelSettings, ThinkingLevel } from "./providers";
 import type { ModelCallView, TokenUsage, UsageTotals, UsageMonitorView, ServerStepView } from "./usage";
 
+import type { ProviderAuthState, ProviderAuthEvent, ProviderCatalogEvent } from "./auth";
+
 type Guard<T> = (value: unknown) => value is T;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -102,6 +104,8 @@ const providerModelView = object<ProviderModelView>({ ...providerModelShape,
 });
 const providerView = object<ProviderView>({
   id, name: string, source: oneOf("builtin", "extension", "configured", "custom"), configured: boolean,
+  catalogStatus: optional(oneOf("idle", "refreshing", "ready", "failed")), catalogMessage: optional(string),
+  authMethods: optional(array(oneOf("api_key", "oauth"))), authStatus: optional(oneOf("disconnected", "connected", "reauth_required")),
   baseUrl: string, api: string, endpointLocked: boolean, removable: boolean,
   models: array(providerModelView), customModels: array(providerModel),
 });
@@ -189,7 +193,25 @@ const outcomeValidators = {
 const runOutcome: Guard<RunOutcome> = (value): value is RunOutcome =>
   isRecord(value) && terminalStatus(value.status) && outcomeValidators[value.status](value);
 
+export const isProviderAuthState = object<ProviderAuthState>({
+  providerId: id, loginId: string, revision: sequence,
+  phase: oneOf("idle", "starting", "waiting", "completing", "succeeded", "failed", "cancelled", "expired"),
+  openRequest: optional(sequence), authUrl: optional(string), message: optional(string),
+  prompt: optional(object({ id, message: string, placeholder: optional(string) })),
+});
+export const isProviderAuthEvent = object<ProviderAuthEvent>({ protocolVersion: oneOf(1), kind: oneOf("provider.auth"), state: isProviderAuthState });
+
+export const isProviderCatalogEvent = object<ProviderCatalogEvent>({ protocolVersion: oneOf(1), kind: oneOf("provider.catalog"), providerId });
+
 const paramsValidators = {
+  "provider.refreshModels": object<ParamsOf<"provider.refreshModels">>({ providerId }),
+  "provider.auth.start": object<ParamsOf<"provider.auth.start">>({ providerId }),
+  "provider.auth.status": object<ParamsOf<"provider.auth.status">>({ providerId }),
+  "provider.auth.submit": object<ParamsOf<"provider.auth.submit">>({ providerId, loginId: id, promptId: id, callbackUrl: (v): v is string => string(v) && v.length > 0 && v.length <= 16384 }),
+  "provider.auth.cancel": object<ParamsOf<"provider.auth.cancel">>({ providerId, loginId: id }),
+  "provider.auth.open": object<ParamsOf<"provider.auth.open">>({ providerId, loginId: id }),
+  "provider.auth.logout": object<ParamsOf<"provider.auth.logout">>({ providerId }),
+
   "model.settings": object<ParamsOf<"model.settings">>({}),
   "provider.save": object<ParamsOf<"provider.save">>({ providerId,
     name: optional(id), baseUrl: optional(endpoint), api: optional(oneOf(...PROVIDER_APIS)),
@@ -231,6 +253,14 @@ const cancelFinished = object<Extract<ResultOf<"run.cancel">, { disposition: "al
   sessionId: id, runId: id, disposition: oneOf("already_finished"), status: terminalStatus,
 });
 const resultValidators = {
+  "provider.refreshModels": modelSettings,
+  "provider.auth.start": isProviderAuthState,
+  "provider.auth.status": isProviderAuthState,
+  "provider.auth.submit": isProviderAuthState,
+  "provider.auth.cancel": isProviderAuthState,
+  "provider.auth.open": isProviderAuthState,
+  "provider.auth.logout": modelSettings,
+
   "model.settings": modelSettings,
   "provider.save": modelSettings,
   "provider.remove": modelSettings,

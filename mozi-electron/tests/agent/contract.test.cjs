@@ -22,6 +22,7 @@ test("thinking levels are validated throughout model selection", () => {
 
 test("every public method has matching parameter and result validation", () => {
   const cases = {
+    "provider.refreshModels": [{ providerId: "antigravity" }, { providers: [] }],
     "model.settings": [{}, { providers: [] }],
     "provider.save": [{ providerId: "bailian-tp", apiKey: "test-only" }, { providers: [] }],
     "provider.remove": [{ providerId: "custom" }, { providers: [] }],
@@ -54,6 +55,12 @@ test("every public method has matching parameter and result validation", () => {
       disposition: "applied",
     }],
   };
+  for (const action of ["start", "status", "cancel", "open", "submit", "logout"]) {
+    cases[`provider.auth.${action}`] = [{ providerId: "antigravity",
+      ...(["cancel", "open", "submit"].includes(action) ? { loginId: "login" } : {}),
+      ...(action === "submit" ? { promptId: "prompt", callbackUrl: "http://localhost:51121/oauth-callback?code=x&state=y" } : {}),
+    }, action === "logout" ? { providers: [] } : { providerId: "antigravity", loginId: "login", phase: "waiting", revision: 1 }];
+  }
   assert.deepEqual(Object.values(contract.AGENT_API_METHODS).sort(), Object.keys(cases).sort());
   for (const [method, [params, result]] of Object.entries(cases)) {
     assert.equal(contract.isAgentRequest(request(method, params)), true, method);

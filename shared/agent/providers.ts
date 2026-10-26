@@ -38,6 +38,10 @@ export type ProviderView = {
   name: string;
   source: "builtin" | "extension" | "configured" | "custom";
   configured: boolean;
+  authMethods?: ("api_key" | "oauth")[];
+  catalogStatus?: "idle" | "refreshing" | "ready" | "failed";
+  catalogMessage?: string;
+  authStatus?: "disconnected" | "connected" | "reauth_required";
   baseUrl: string;
   api: string;
   endpointLocked: boolean;

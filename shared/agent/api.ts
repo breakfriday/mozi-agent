@@ -11,6 +11,13 @@ export type ApiResult<T> =
 
 export const AGENT_API_METHODS = {
   getRuntimeState: "runtime.getState",
+  startProviderAuth: "provider.auth.start",
+  statusProviderAuth: "provider.auth.status",
+  submitProviderAuth: "provider.auth.submit",
+  cancelProviderAuth: "provider.auth.cancel",
+  openProviderAuth: "provider.auth.open",
+  logoutProviderAuth: "provider.auth.logout",
+  refreshProviderModels: "provider.refreshModels",
   getModelSettings: "model.settings",
   saveProvider: "provider.save",
   removeProvider: "provider.remove",
@@ -37,6 +44,8 @@ type ArgumentsFor<M extends Method> = M extends "runtime.getState" | "model.sett
     : [input: ParamsOf<M>];
 
 interface AgentListeners {
+  onProviderModelsChanged(listener: (providerId: string) => void): () => void;
+  onProviderAuth(listener: (state: import("./auth").ProviderAuthState) => void): () => void;
   onEvent(listener: (event: AgentEvent) => void): () => void;
   onRuntimeState(listener: (notice: RuntimeNotice) => void): () => void;
 }

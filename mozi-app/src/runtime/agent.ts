@@ -81,6 +81,13 @@ export function createAgentApi(getBridge: () => AgentBridgeApi | undefined = get
     getRuntimeState: () => getBridge()
       ? call("runtime.getState", {}, (api) => api.getRuntimeState())
       : Promise.resolve({ state: "unavailable", reason: "Agent is available only in the Mozi desktop app." }),
+    startProviderAuth: (input) => call("provider.auth.start", input, api => api.startProviderAuth(input)),
+    statusProviderAuth: (input) => call("provider.auth.status", input, api => api.statusProviderAuth(input)),
+    submitProviderAuth: (input) => call("provider.auth.submit", input, api => api.submitProviderAuth(input)),
+    cancelProviderAuth: (input) => call("provider.auth.cancel", input, api => api.cancelProviderAuth(input)),
+    openProviderAuth: (input) => call("provider.auth.open", input, api => api.openProviderAuth(input)),
+    logoutProviderAuth: (input) => call("provider.auth.logout", input, api => api.logoutProviderAuth(input)),
+    refreshProviderModels: input => call("provider.refreshModels", input, api => api.refreshProviderModels(input)),
     getModelSettings: () => call("model.settings", {}, (api) => api.getModelSettings()),
     saveProvider: (input) => call("provider.save", input, (api) => api.saveProvider(input)),
     removeProvider: (input) => call("provider.remove", input, (api) => api.removeProvider(input)),
@@ -97,6 +104,8 @@ export function createAgentApi(getBridge: () => AgentBridgeApi | undefined = get
     cancelRun: (input) => call("run.cancel", input, (api) => api.cancelRun(input)),
     getRun: (input) => call("run.get", input, (api) => api.getRun(input)),
     respondApproval: (input) => call("approval.respond", input, (api) => api.respondApproval(input)),
+    onProviderModelsChanged: listener => getBridge()?.onProviderModelsChanged?.(listener) ?? (() => {}),
+    onProviderAuth: listener => getBridge()?.onProviderAuth(listener) ?? (() => {}),
     onEvent: (listener) => listen("event", listener, (api, callback) => api.onEvent(callback)),
     onRuntimeState: (listener) => listen("runtime", listener, (api, callback) => api.onRuntimeState(callback)),
   };

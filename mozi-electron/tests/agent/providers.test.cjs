@@ -8,7 +8,7 @@ async function fixture(t) {
   const sdk = await import('@earendil-works/pi-coding-agent');
   const packageLoad = createLoader();
   const extension = packageLoad(path.resolve(__dirname, '../../node_modules/@aiwayds/pi-bailian-token-plan/index.ts'));
-  const load = createLoader({ '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
+  const load = createLoader({ './antigravity/provider': await require('../helpers/antigravity.cjs')(), '@earendil-works/pi-coding-agent': sdk, '@aiwayds/pi-bailian-token-plan': extension });
   const { PiProviderManager } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/provider-manager.ts'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'mozi-provider-'));
   const config = { dataDir: root, cwd: root, piDir: path.join(root, 'external-pi') };
@@ -720,4 +720,59 @@ test('desktop web modes are exclusive in real Responses payloads across switches
   await providers.saveProvider(custom());
   await assert.rejects(providers.prepare({ providerId: 'custom', modelId: 'model', webMode: 'provider' }), e => e.code === 'UNSUPPORTED_CAPABILITY');
   await assert.rejects(f.manager.prepare({ ...selection, webMode: 'browser' }), e => e.code === 'UNSUPPORTED_CAPABILITY');
+});
+
+test('Antigravity ignores external Pi credentials and refuses API-key or endpoint bypasses', async t => {
+  const f = await fixture(t);
+  writeFileSync(path.join(f.config.piDir, 'auth.json'), JSON.stringify({ antigravity: {
+    type: 'oauth', access: 'external-only', refresh: 'external-refresh', expires: Date.now() + 3600000,
+  } }));
+  const provider = (await f.manager.listProviders()).find(p => p.id === 'antigravity');
+  assert.equal(provider.configured, false);
+  assert.equal(JSON.stringify(provider.authMethods), '["oauth"]');
+  await assert.rejects(f.manager.saveProvider({ providerId: 'antigravity', apiKey: 'forbidden' }), e => e.code === 'INVALID_ARGUMENT');
+  await f.manager.auth.logout('antigravity');
+  assert.equal((await f.manager.listProviders()).find(p => p.id === 'antigravity').configured, false);
+  assert.equal(JSON.parse(readFileSync(path.join(f.config.piDir, 'auth.json'), 'utf8')).antigravity.access, 'external-only');
+  writeFileSync(path.join(f.config.piDir, 'models.json'), JSON.stringify({ providers: { antigravity: { apiKey: 'bypass' } } }));
+  await assert.rejects(new f.PiProviderManager(f.config).listProviders(), e => e.code === 'INVALID_ARGUMENT');
+});
+
+test('dynamic Antigravity catalog publishes new Gemini models, preserves cache on failure and restores after restart', async t => {
+  const f = await fixture(t);
+  const originalFetch = globalThis.fetch;
+  let requests = 0, fail = false;
+  globalThis.fetch = async (url, init) => {
+    assert.ok(String(url).endsWith('/v1internal:fetchAvailableModels'));
+    assert.equal(JSON.parse(init.body).project, 'fixture-project');
+    requests++;
+    if (fail) throw new Error('fixture offline');
+    return new Response(JSON.stringify({ models: {
+      'gemini-4-fixture': { displayName: 'Gemini 4 Fixture', supportsThinking: true, supportsImages: true, maxTokens: 1048576, maxOutputTokens: 65536 },
+    } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; f.manager.dispose(); });
+  writeFileSync(path.join(f.root, 'providers/auth.json'), JSON.stringify({ antigravity: {
+    type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3600000, projectId: 'fixture-project',
+  } }));
+  const notices = [];
+  const manager = new f.PiProviderManager(f.config, true, undefined, id => notices.push(id));
+  t.after(() => manager.dispose());
+  const before = (await manager.listProviders()).find(p => p.id === 'antigravity');
+  assert.equal(before.catalogStatus, 'refreshing');
+  await manager.refreshProviderModels('antigravity');
+  const synced = (await manager.listProviders()).find(p => p.id === 'antigravity');
+  assert.ok(requests > 0); assert.equal(synced.catalogStatus, 'ready');
+  assert.ok(synced.models.some(m => m.id === 'gemini-4-fixture'));
+  assert.ok(notices.length >= 2);
+  const count = requests;
+  fail = true;
+  await manager.refreshProviderModels('antigravity');
+  assert.ok(requests > count);
+  const offline = (await manager.listProviders()).find(p => p.id === 'antigravity');
+  assert.equal(offline.catalogStatus, 'failed');
+  assert.ok(offline.models.some(m => m.id === 'gemini-4-fixture'));
+  const reopened = new f.PiProviderManager(f.config); t.after(() => reopened.dispose());
+  assert.ok((await reopened.listProviders()).find(p => p.id === 'antigravity').models.some(m => m.id === 'gemini-4-fixture'));
+  await reopened.refreshProviderModels('antigravity');
 });

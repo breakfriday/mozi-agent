@@ -37,13 +37,14 @@ async function mutate(action: () => Promise<ModelSettings>) {
 }
 export const modelActions = {
   initialize() {
+    const offCatalog = bridgeApi.agent.onProviderModelsChanged(() => { void refresh(); });
     const off = useAgentStore.subscribe((state, previous) => {
       if (state.runtime === previous.runtime) return;
       if (state.runtime.state === "ready") void refresh();
       else { connection++; request++; useModelStore.setState({ saving: false, loading: false }); }
     });
     if (useAgentStore.getState().runtime.state === "ready") void refresh();
-    return () => { off(); connection++; request++; useModelStore.setState({ saving: false, loading: false }); };
+    return () => { offCatalog(); off(); connection++; request++; useModelStore.setState({ saving: false, loading: false }); };
   },
   refresh,
   saveProvider: (input: ProviderSaveInput) => mutate(() => bridgeApi.agent.saveProvider(input)),

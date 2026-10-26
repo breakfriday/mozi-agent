@@ -128,7 +128,7 @@ function capturePayload(sources: unknown[]): { payload: string; payloadTruncated
       if (!descriptor.enumerable) continue;
       if (budget <= 0) { truncated = true; break; }
       budget -= key.length;
-      result[key] = /^(apiKey|authorization|credentials|password|secret|accessToken|refreshToken)$/i.test(key)
+      result[key] = /^(apiKey|authorization|credentials|password|secret|accessToken|refreshToken|callbackUrl|authUrl|access|refresh)$/i.test(key)
         ? "[redacted]" : "value" in descriptor ? copy(descriptor.value, depth + 1) : "[accessor omitted]";
     }
     seen.delete(value);

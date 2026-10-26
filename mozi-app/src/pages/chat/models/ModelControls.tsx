@@ -1,3 +1,4 @@
+import { OAuthProviderEditor } from "./OAuthProviderEditor";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   getAction,
@@ -34,7 +35,7 @@ import {
   type ThinkingLevel,
   type WebMode,
 } from "../../../../../shared/agent";
-import { useAgentStore } from "@/agent/agentStore";
+import { selectAgentBusy, useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
 import { agentActions } from "@/agent/agentActions";
 import { modelActions } from "@/agent/modelActions";
@@ -58,7 +59,13 @@ const apiLabels: Record<ProviderApi, string> = {
   "anthropic-messages": "Anthropic Messages 兼容",
 };
 
-function ProviderEditor({
+function ProviderEditor(props: { provider?: ProviderView; onClose(): void }) {
+  return props.provider?.authMethods?.includes("oauth")
+    ? <OAuthProviderEditor provider={props.provider} onClose={props.onClose} />
+    : <ApiKeyProviderEditor {...props} />;
+}
+
+function ApiKeyProviderEditor({
   provider,
   onClose,
 }: {
@@ -406,6 +413,23 @@ function ThinkingControls({
     value?.thinkingLevel ?? (model ? thinkingLevelFor(model) : "off");
   const enabled = enabledLevels.length > 0 && level !== "off";
   const toggleOnly = enabledLevels.length === 1;
+
+  let thinkingHint = "按所选等级进行推理";
+  if (!enabledLevels.length) {
+    thinkingHint = "此模型不支持深度思考";
+  } else if (toggleOnly) {
+    thinkingHint = "思考强度由模型决定";
+  } else if (!levels.includes("off")) {
+    thinkingHint = "此模型始终启用深度思考";
+  }
+
+  let levelPlaceholder = "不支持";
+  if (enabled) {
+    levelPlaceholder = "选择等级";
+  } else if (enabledLevels.length) {
+    levelPlaceholder = "已关闭";
+  }
+
   const selectLevel = (next: ThinkingLevel) => {
     if (value) onChange({ ...value, thinkingLevel: next });
   };
@@ -439,9 +463,7 @@ function ThinkingControls({
       <Select<ThinkingLevel>
         size="small"
         aria-label="思考等级"
-        placeholder={
-          enabledLevels.length ? (enabled ? "选择等级" : "已关闭") : "不支持"
-        }
+        placeholder={levelPlaceholder}
         value={enabled ? level : undefined}
         disabled={disabled || !enabled || toggleOnly}
         options={enabledLevels.map((item) => ({
@@ -453,17 +475,7 @@ function ThinkingControls({
           selectLevel(next);
         }}
       />
-      {model && (
-        <span className={styles.hint}>
-          {!enabledLevels.length
-            ? "此模型不支持深度思考"
-            : toggleOnly
-              ? "思考强度由模型决定"
-              : !levels.includes("off")
-                ? "此模型始终启用深度思考"
-                : "按所选等级进行推理"}
-        </span>
-      )}
+      {model && <span className={styles.hint}>{thinkingHint}</span>}
     </div>
   );
 }
@@ -575,6 +587,19 @@ function webToolPreferences(model: ProviderModelView, value?: ModelSelection) {
   };
 }
 
+function buildModelSelection(
+  providerId: string,
+  model: ProviderModelView,
+  previous?: ModelSelection,
+): ModelSelection {
+  return {
+    providerId,
+    modelId: model.id,
+    thinkingLevel: thinkingLevelFor(model, previous?.thinkingLevel),
+    ...webToolPreferences(model, previous),
+  };
+}
+
 function ModelChoices({
   shortcuts = false,
   providers,
@@ -663,13 +688,7 @@ function ModelChoices({
             providerSelect.current?.blur();
             setOpened(null);
             const model = providers.find((item) => item.id === id)?.models[0];
-            if (model)
-              onChange({
-                providerId: id,
-                modelId: model.id,
-                thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel),
-                ...webToolPreferences(model, value),
-              });
+            if (model) onChange(buildModelSelection(id, model, value));
           }}
         />
         <Select
@@ -700,12 +719,7 @@ function ModelChoices({
             setOpened(null);
             const model = provider?.models.find((item) => item.id === modelId);
             if (provider && model)
-              onChange({
-                providerId: provider.id,
-                modelId,
-                thinkingLevel: thinkingLevelFor(model, value?.thinkingLevel),
-                ...webToolPreferences(model, value),
-              });
+              onChange(buildModelSelection(provider.id, model, value));
           }}
         />
       </div>
@@ -743,16 +757,7 @@ export function ModelControls() {
   const loadError = useModelStore((state) => state.error);
   const selection = useAgentStore((state) => state.modelSelection);
   const connected = useAgentStore((state) => state.runtime.state === "ready");
-  const busy = useAgentStore(
-    (state) =>
-      !!state.activeRunId ||
-      !!state.inFlightSubmissionId ||
-      !!state.sessionOperation ||
-      state.syncStatus === "syncing" ||
-      Object.values(state.pendingSubmissions).some(
-        (item) => item.status === "unknown",
-      ),
-  );
+  const busy = useAgentStore(selectAgentBusy);
   const selected = selection ?? settings?.defaultModel;
   async function select(model: ModelSelection) {
     setError(null);
@@ -819,8 +824,7 @@ export function ModelControls() {
           }}
         />
         <p className={styles.hint}>
-          上方选择为全局默认模型。凭据仅在桌面端后台保存；当前配置表单支持 API
-          Key。
+          上方选择为全局默认模型。凭据仅在桌面端后台保存；支持 API Key 和 Google OAuth 登录。
         </p>
         {loadError && <Alert type="error" showIcon title={loadError} />}
         <div className={styles.settingsActions}>

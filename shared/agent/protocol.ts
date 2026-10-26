@@ -24,7 +24,17 @@ export type CancelRunResult = {
   | { disposition: "already_finished"; status: TerminalStatus }
 );
 
+import type { ProviderAuthState, ProviderAuthEvent, ProviderCatalogEvent } from "./auth";
+
 export type MethodMap = {
+  "provider.refreshModels": { params: { providerId: string }; result: ModelSettings };
+  "provider.auth.start": { params: { providerId: string }; result: ProviderAuthState };
+  "provider.auth.status": { params: { providerId: string }; result: ProviderAuthState };
+  "provider.auth.submit": { params: { providerId: string; loginId: string; promptId: string; callbackUrl: string }; result: ProviderAuthState };
+  "provider.auth.cancel": { params: { providerId: string; loginId: string }; result: ProviderAuthState };
+  "provider.auth.open": { params: { providerId: string; loginId: string }; result: ProviderAuthState };
+  "provider.auth.logout": { params: { providerId: string }; result: ModelSettings };
+
   "model.settings": { params: Record<string, never>; result: ModelSettings };
   "provider.save": { params: ProviderSaveInput; result: ModelSettings };
   "provider.remove": { params: { providerId: string }; result: ModelSettings };
@@ -189,7 +199,7 @@ export type RuntimeControl = {
   kind: "runtime";
 } & RuntimeNotice;
 
-export type RuntimePacket = RuntimeResponse | AgentEvent | RuntimeControl;
+export type RuntimePacket = RuntimeResponse | AgentEvent | RuntimeControl | ProviderAuthEvent | ProviderCatalogEvent;
 
 /** Main → utility process lifecycle command; never exposed through window.mozi. */
 export type RuntimeShutdown = { protocolVersion: 1; kind: "control"; action: "shutdown" };

@@ -13,11 +13,13 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
   private readonly providers: PiProviderManager;
   private readonly store: PiSessionStore;
   private readonly factory: PiSessionFactory;
-  constructor(config: PiConfig, browser?: BrowserCall) {
-    this.providers = new PiProviderManager(config, !!browser);
+  constructor(config: PiConfig, browser?: BrowserCall, emitAuth?: (state: import("../../../../../shared/agent").ProviderAuthState) => void, emitCatalog?: (providerId: string) => void) {
+    this.providers = new PiProviderManager(config, !!browser, emitAuth, emitCatalog);
     this.store = new PiSessionStore(config);
     this.factory = new PiSessionFactory(config, browser);
   }
+  refreshProviderModels(providerId: string) { return this.providers.refreshProviderModels(providerId); }
+  get auth() { return this.providers.auth; }
   listProviders() { return this.providers.listProviders(); }
   saveProvider(input: ProviderSaveInput) { return this.providers.saveProvider(input); }
   removeProvider(providerId: string) { return this.providers.removeProvider(providerId); }
@@ -42,5 +44,5 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
       return new PiExecution(session, manager, () => this.store.release(descriptor));
     } catch (error) { this.store.release(descriptor); throw error; }
   }
-  dispose(): void { /* RunService releases every execution; ModelRuntime has no dispose API. */ }
+  dispose(): void { this.providers.dispose(); }
 }

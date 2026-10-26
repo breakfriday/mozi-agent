@@ -7,6 +7,17 @@ import { failure } from "../errors";
 export class ModelService {
   constructor(private readonly store: MetadataStore, private readonly control: ApplicationControl,
     private readonly catalog?: ModelCatalog, private readonly startupDefault?: ModelSelection) {}
+  async refreshProviderModels(providerId: string): Promise<ModelSettings> {
+    const catalog = this.requireCatalog();
+    if (!catalog.refreshProviderModels) throw failure("UNSUPPORTED_CAPABILITY", "当前运行时不支持动态模型目录。");
+    await catalog.refreshProviderModels(providerId);
+    return this.settings();
+  }
+  get auth() {
+    const auth = this.requireCatalog().auth;
+    if (!auth) throw failure("UNSUPPORTED_CAPABILITY", "当前运行时不支持 OAuth。");
+    return auth;
+  }
   defaultSelection(): ModelSelection | undefined { return this.store.getDefaultModel() ?? this.startupDefault; }
   async settings(): Promise<ModelSettings> {
     this.control.assertAvailable();

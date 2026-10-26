@@ -1,6 +1,6 @@
 import {
   AGENT_CHANNELS, AGENT_PROTOCOL_VERSION, AGENT_REQUEST_TIMEOUT_MS,
-  isAgentEvent, isAgentRequest, isResponseFor, isRuntimeNotice, isWirePayload, responseMatchesRequest,
+  isProviderAuthState, isAgentEvent, isAgentRequest, isResponseFor, isRuntimeNotice, isWirePayload, responseMatchesRequest,
 } from "../../../shared/agent";
 import { createAgentLogger } from "../../../shared/agent/logging";
 
@@ -108,6 +108,13 @@ export function createAgentPreloadApi(
 
   const api = {
     getRuntimeState: () => request("runtime.getState", {}),
+    startProviderAuth: (input) => request("provider.auth.start", input),
+    statusProviderAuth: (input) => request("provider.auth.status", input),
+    submitProviderAuth: (input) => request("provider.auth.submit", input),
+    cancelProviderAuth: (input) => request("provider.auth.cancel", input),
+    openProviderAuth: (input) => request("provider.auth.open", input),
+    logoutProviderAuth: (input) => request("provider.auth.logout", input),
+    refreshProviderModels: input => request("provider.refreshModels", input),
     getModelSettings: () => request("model.settings", {}),
     saveProvider: (input) => request("provider.save", input),
     removeProvider: (input) => request("provider.remove", input),
@@ -124,6 +131,23 @@ export function createAgentPreloadApi(
     cancelRun: (input) => request("run.cancel", input),
     getRun: (input) => request("run.get", input),
     respondApproval: (input) => request("approval.respond", input),
+    onProviderModelsChanged(listener) {
+      if (disposed) return () => {};
+      const handler = (_event: unknown, value: unknown) => { if (value === "antigravity") listener(value); };
+      ipc.on(AGENT_CHANNELS.catalog, handler);
+      const off = () => { ipc.removeListener(AGENT_CHANNELS.catalog, handler); eventCleanups.delete(off); };
+      eventCleanups.add(off); return off;
+    },
+    onProviderAuth(listener) {
+      if (disposed) return () => {};
+      const handler = (_event: unknown, value: unknown) => {
+        if (isWirePayload(value) && isProviderAuthState(value)) listener(value);
+      };
+      ipc.on(AGENT_CHANNELS.auth, handler);
+      const off = () => { ipc.removeListener(AGENT_CHANNELS.auth, handler); eventCleanups.delete(off); };
+      eventCleanups.add(off);
+      return off;
+    },
     onEvent(listener: (event: AgentEvent) => void) {
       if (disposed) return () => {};
       const handler = (_event: unknown, payload: unknown) => {

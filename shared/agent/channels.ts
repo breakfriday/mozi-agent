@@ -1,6 +1,8 @@
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export const AGENT_CHANNELS = {
+  catalog: "mozi:agent:catalog",
+  auth: "mozi:agent:auth",
   request: "mozi:agent:request",
   event: "mozi:agent:event",
   runtime: "mozi:agent:runtime",

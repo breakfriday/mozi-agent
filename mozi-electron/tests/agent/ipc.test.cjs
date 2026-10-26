@@ -11,7 +11,8 @@ function setup(t, allow = () => true, rendererEntry = entry) {
     handle: (channel, handler) => handlers.set(channel, handler),
     removeHandler: (channel) => handlers.delete(channel),
   };
-  const load = createLoader({ electron: { ipcMain } });
+  const opened = [];
+  const load = createLoader({ electron: { ipcMain, shell: { openExternal: async url => { opened.push(url); } } } });
   const { registerAgentIpc } = load(path.resolve(__dirname, "../../src/main/agent-ipc.ts"));
   const windows = new Set();
   const closedWindows = [];
@@ -43,7 +44,7 @@ function setup(t, allow = () => true, rendererEntry = entry) {
     child.reply = (requestId, result) => child.onMessage({ protocolVersion: 1, kind: "response", requestId, ok: true, result });
     return child;
   }
-  return { closedWindows, router, window, call, connect, load, handlers };
+  return { opened, closedWindows, router, window, call, connect, load, handlers };
 }
 const events = (sender) => sender.sent.filter((item) => item.channel === "mozi:agent:event");
 
@@ -221,4 +222,19 @@ test("only successful deletion closes its monitor and removes subscriptions", as
   assert.deepEqual(closedWindows, ['token-monitor:s']);
   child.emit("s", 2); assert.equal(events(monitor).length, 1);
   child.emit("other"); assert.equal(events(monitor).length, 2);
+});
+
+
+test("OAuth events reach trusted windows; main opens only Google authorization URLs once per request", async t => {
+  const f = setup(t); const sender = f.window(); const child = f.connect();
+  await f.call(sender, "runtime.getState");
+  const state = { providerId: "antigravity", loginId: "login", phase: "waiting", revision: 1,
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=fixture", openRequest: 1 };
+  const emit = patch => child.onMessage({ protocolVersion: 1, kind: "provider.auth", state: { ...state, ...patch } });
+  emit({}); emit({ revision: 2 }); assert.equal(f.opened.length, 1);
+  assert.equal(sender.sent.filter(x => x.channel === "mozi:agent:auth").length, 2);
+  emit({ openRequest: 2 }); assert.equal(f.opened.length, 2);
+  emit({ openRequest: 3, authUrl: "https://evil.example/auth" }); assert.equal(f.opened.length, 2);
+  sender.mainFrame.url = "https://evil.example/";
+  const count = sender.sent.length; emit({ authUrl: undefined }); assert.equal(sender.sent.length, count);
 });

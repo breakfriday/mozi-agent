@@ -8,6 +8,13 @@ export class AgentController {
     this.application.assertAvailable();
     const { sessions, runs, models } = this.application;
     switch (request.method) {
+      case "provider.auth.start": return models.auth.start(request.params.providerId);
+      case "provider.auth.status": return models.auth.status(request.params.providerId);
+      case "provider.auth.submit": return models.auth.submit(request.params);
+      case "provider.auth.cancel": return models.auth.cancel(request.params.providerId, request.params.loginId);
+      case "provider.auth.open": return models.auth.open(request.params.providerId, request.params.loginId);
+      case "provider.auth.logout": await models.auth.logout(request.params.providerId); return models.settings();
+      case "provider.refreshModels": return models.refreshProviderModels(request.params.providerId);
       case "model.settings": return models.settings();
       case "provider.save": return models.save(request.params);
       case "provider.remove": return models.remove(request.params.providerId);

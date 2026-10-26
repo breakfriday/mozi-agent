@@ -2,6 +2,8 @@ import {
   AGENT_MAX_PENDING_REQUESTS,
   AGENT_PROTOCOL_VERSION,
   AGENT_REQUEST_TIMEOUT_MS,
+  isProviderCatalogEvent,
+  isProviderAuthEvent,
   isAgentEvent,
   isAgentRequest,
   isRecord,
@@ -58,6 +60,14 @@ export class AgentTransport {
     reason: "Agent runtime is not connected.",
   };
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly catalogListeners = new Set<(providerId: string) => void>();
+  onProviderModelsChanged(listener: (providerId: string) => void): () => void {
+    this.catalogListeners.add(listener); return () => { this.catalogListeners.delete(listener); };
+  }
+  private readonly authListeners = new Set<(state: import("../../../../shared/agent").ProviderAuthState) => void>();
+  onProviderAuth(listener: (state: import("../../../../shared/agent").ProviderAuthState) => void): () => void {
+    this.authListeners.add(listener); return () => { this.authListeners.delete(listener); };
+  }
   private readonly eventListeners = new Set<(event: AgentEvent) => void>();
   private readonly stateListeners = new Set<(notice: RuntimeNotice) => void>();
   private cleanups: (() => void)[] = [];
@@ -245,6 +255,14 @@ export class AgentTransport {
       );
       return;
     }
+    if (isProviderCatalogEvent(packet)) {
+      for (const listener of this.catalogListeners) listener(packet.providerId);
+      return;
+    }
+    if (isProviderAuthEvent(packet)) {
+      for (const listener of this.authListeners) listener(packet.state);
+      return;
+    }
     if (isBrowserToMain(packet)) {
       if (packet.kind === "browser.cancel") this.browserPending.get(packet.requestId)?.abort(new BrowserFailure("CANCELLED", "浏览器任务已取消。"));
       else void this.executeBrowser(packet);
@@ -327,6 +345,8 @@ export class AgentTransport {
 
   dispose(): void {
     this.disconnect("Agent transport disposed.");
+    this.catalogListeners.clear();
+    this.authListeners.clear();
     this.eventListeners.clear();
     this.stateListeners.clear();
   }

@@ -1,4 +1,5 @@
 export * from "./models";
+export * from "./auth";
 export * from "./providers";
 export * from "./protocol";
 export * from "./api";

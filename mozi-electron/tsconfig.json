@@ -8,12 +8,21 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
       "@aiwayds/pi-bailian-token-plan": [
         "./src/agent/runtime/pi/providers/bailian-package.d.ts"
+      ],
+      "pi-antigravity/src/*": [
+        "./src/agent/runtime/pi/providers/antigravity/package.d.ts"
       ]
     }
   },
-  "include": ["src", "forge.config.ts", "vite.*.config.ts"]
+  "include": [
+    "src",
+    "forge.config.ts",
+    "vite.*.config.ts"
+  ]
 }
