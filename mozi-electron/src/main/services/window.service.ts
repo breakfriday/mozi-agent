@@ -123,6 +123,14 @@ export class WindowService {
     win.on("enter-full-screen", publishState);
     win.on("leave-full-screen", publishState);
     win.webContents.on("before-input-event", (event, input) => {
+      const closeModifier = process.platform === "darwin"
+        ? input.meta && !input.control
+        : input.control && !input.meta;
+      if (input.type === "keyDown" && input.key.toLowerCase() === "w" && closeModifier && !input.alt && !input.shift) {
+        event.preventDefault();
+        win.close();
+        return;
+      }
       if (input.type === "keyDown" && input.key === "Escape" && win.isFullScreen()) {
         win.setFullScreen(false);
         event.preventDefault();
