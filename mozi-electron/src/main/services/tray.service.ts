@@ -1,7 +1,7 @@
 import { Menu, Tray, app, nativeImage } from "electron";
 import path from "node:path";
 
-import type { BrowserWindow, NativeImage } from "electron";
+import type { BrowserWindow, NativeImage, MenuItemConstructorOptions } from "electron";
 import type { RendererEntry } from "../../env_config.types";
 import { MAIN_WINDOW_CHANNEL_ID, WindowService } from "./window.service";
 
@@ -40,7 +40,7 @@ export class TrayService {
     private readonly mainWindowEntry: RendererEntry,
   ) {}
 
-  start(): void {
+  start(additionalItems: MenuItemConstructorOptions[] = []): void {
     if (this.tray) {
       return;
     }
@@ -50,6 +50,7 @@ export class TrayService {
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: "唤起应用", click: () => this.showApplication() },
+        ...additionalItems,
         { type: "separator" },
         { label: "退出应用", click: () => this.quitApplication() },
       ]),

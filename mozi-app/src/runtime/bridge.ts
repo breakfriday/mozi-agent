@@ -8,6 +8,7 @@ function getElectronApi(): ElectronApi | undefined {
 /** The only renderer entry point to preload. Safe to call in a regular browser. */
 export const bridgeApi = {
   agent: agentApi,
+  get particleSettings() { return getElectronApi()?.particleSettings; },
   get available() {
     return Boolean(getElectronApi());
   },

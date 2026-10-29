@@ -15,6 +15,9 @@ import { createAgentLogger } from "../../shared/agent/logging";
 import { MoziBrowser } from "./main/services/browser.service";
 import { AgentTransport } from "./main/agent/transport";
 
+import { installParticleSettings } from "./main/particles/settings";
+import { installParticleSidecar } from "./main/particles";
+
 const log = createAgentLogger("main");
 
 function resolveRendererEntry(): RendererEntry {
@@ -70,6 +73,8 @@ if (started) {
       const browser = new MoziBrowser();
       const transport = new AgentTransport(undefined, (operation, context) => browser.execute(operation, context));
       const agentIpc = registerAgentIpc(windowService, rendererEntry, transport);
+      const particles = installParticleSidecar({ subscribe: listener => transport.onEvent(listener) });
+      const particleSettings = installParticleSettings({ windows: windowService, entry: rendererEntry, filePath: path.join(app.getPath("userData"), "particle-settings.json"), apply: particles.applySettings });
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
         dataDir: path.join(app.getPath("userData"), "agent"),
@@ -78,13 +83,19 @@ if (started) {
           : undefined,
       });
       stopAgent = () => agentProcess.stop();
-      disposeAgentIpc = () => { agentIpc.dispose(); browser.dispose(); };
+      disposeAgentIpc = () => { particleSettings.dispose(); particles.dispose(); agentIpc.dispose(); browser.dispose(); };
       registerAgentShutdown(agentProcess, disposeAgentIpc);
       app.on("will-quit", () => browser.dispose());
       agentProcess.start();
       // ========== Agent 初始化与启动：结束 ==========
 
-      trayService.start();
+      trayService.start([
+        { label: "粒子场", submenu: [
+          { label: "开启粒子场", click: () => { particles.open(); } },
+          { label: "粒子场设置", click: () => particleSettings.open() },
+          { label: "关闭粒子场", click: () => particles.close() },
+        ] },
+      ]);
       trayService.showApplication();
       app.on("activate", () => trayService.showApplication());
       app.on("second-instance", () => {

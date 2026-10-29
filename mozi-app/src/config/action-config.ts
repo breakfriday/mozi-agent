@@ -14,6 +14,21 @@ export const actionConfig = [
     command: ["new", "session"],
     desc: "新建会话",
   },
+  {
+    action: "dsh.open",
+    command: ["new dsh -w"],
+    desc: "打开 dsh",
+  },
+  {
+    action: "gmail.open",
+    command: ["new gmail"],
+    desc: "打开 Gmail",
+  },
+  {
+    action: "gpt.open",
+    command: ["new gpt"],
+    desc: "打开 ChatGPT",
+  },
   { action: "session.delete", keymap: "mod+d", scope: "session-list", desc: "删除选中会话" },
   { action: "model.provider", keymap: "alt+p", scope: "model-controls", desc: "切换模型服务商" },
   { action: "model.select", keymap: "alt+m", scope: "model-controls", desc: "切换模型" },

@@ -4,7 +4,13 @@ import type { MoziApi } from "../../shared/mozi-api";
 import { createAgentPreloadApi } from "./preload/agent";
 import { createAgentLogger } from "../../shared/agent/logging";
 
+
 const electronApi = {
+  particleSettings: {
+    get: () => ipcRenderer.invoke("particle-settings:get"),
+    save: (settings: import("../../shared/particles").ParticleSettings) => ipcRenderer.invoke("particle-settings:save", settings),
+    chooseWallpaper: () => ipcRenderer.invoke("particle-settings:choose"),
+  },
   app: { quit: () => ipcRenderer.send("app:quit") },
   window: {
     openWindow: (payload: WindowCreatePayload) => ipcRenderer.invoke("window:open", payload) as Promise<boolean>,

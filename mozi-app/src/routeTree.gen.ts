@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AngetTokenMonitorRouteImport } from './routes/angetTokenMonitor'
 import { Route as ChatRouteImport } from './routes/chat'
+import { Route as ParticleSettingsRouteImport } from './routes/particleSettings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const ChatRoute = ChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ParticleSettingsRoute = ParticleSettingsRouteImport.update({
+  id: '/particleSettings',
+  path: '/particleSettings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/particleSettings': typeof ParticleSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/particleSettings': typeof ParticleSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/particleSettings': typeof ParticleSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/angetTokenMonitor' | '/chat'
+  fullPaths: '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/angetTokenMonitor' | '/chat'
-  id: '__root__' | '/' | '/angetTokenMonitor' | '/chat'
+  to: '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
+  id: '__root__' | '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AngetTokenMonitorRoute: typeof AngetTokenMonitorRoute
   ChatRoute: typeof ChatRoute
+  ParticleSettingsRoute: typeof ParticleSettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/particleSettings': {
+      id: '/particleSettings'
+      path: '/particleSettings'
+      fullPath: '/particleSettings'
+      preLoaderRoute: typeof ParticleSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AngetTokenMonitorRoute: AngetTokenMonitorRoute,
   ChatRoute: ChatRoute,
+  ParticleSettingsRoute: ParticleSettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

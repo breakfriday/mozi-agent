@@ -56,6 +56,7 @@ export function AppLayout() {
   const appTheme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
   const selectedPath = location.pathname.replace(/\/+$/, "") || "/";
+  const particleSettings = selectedPath === "/particleSettings";
   const monitor = selectedPath === "/angetTokenMonitor";
 
   return (
@@ -63,12 +64,12 @@ export function AppLayout() {
       className={styles.appShell}
       data-collapsed={menuCollapsed}
       data-desktop={bridgeApi.available}
-      data-monitor={monitor}
+      data-monitor={monitor || particleSettings}
       data-chat={selectedPath === "/chat"}
     >
       <header className={styles.header}>
         <div className={styles.brand}>
-          {!monitor && (
+          {!monitor && !particleSettings && (
             <Button
               type="text"
               icon={
@@ -84,7 +85,7 @@ export function AppLayout() {
             />
           )}
           <span className={styles.brandName}>
-            {monitor ? "Mozi · 用量监控" : "Mozi"}
+            {monitor ? "Mozi · 用量监控" : particleSettings ? "粒子场设置" : "Mozi"}
           </span>
         </div>
         <div className={styles.headerActions}>
@@ -106,7 +107,7 @@ export function AppLayout() {
         </div>
       </header>
       <div className={styles.mainLayout}>
-        {!monitor && (
+        {!monitor && !particleSettings && (
           <aside className={styles.sideBar}>
             <nav id="app-menu" className={styles.menu} aria-label="主导航">
               {menuItems.map((item) => (

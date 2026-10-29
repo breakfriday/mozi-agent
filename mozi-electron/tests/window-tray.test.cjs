@@ -20,6 +20,7 @@ function setup(platform = "linux", packaged = false) {
   const exposed = {};
   const app = new EventEmitter();
   const mainProcess = Object.assign(new EventEmitter(), { platform, resourcesPath: "/packaged/resources", env: {} });
+  const particleLifecycle = { opens: 0, closes: 0, settings: 0 };
   const agentLifecycle = { stops: 0, forced: 0 };
   Object.assign(app, {
     isPackaged: packaged,
@@ -104,6 +105,7 @@ function setup(platform = "linux", packaged = false) {
 
   const electron = {
     app, BrowserWindow, Tray, ipcMain, ipcRenderer,
+    screen: { getPrimaryDisplay: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     shell: { openExternal: async () => {} },
     contextBridge: { exposeInMainWorld: (key, value) => { exposed[key] = value; } },
     Menu: { buildFromTemplate: (items) => items },
@@ -151,6 +153,8 @@ function setup(platform = "linux", packaged = false) {
   const trayService = new TrayService(windowService, entry);
   const startMain = () => load("src/main.ts", {
     "electron-squirrel-startup": false,
+    "./main/particles/settings": { installParticleSettings: () => ({ open() { particleLifecycle.settings++; }, dispose() {} }) },
+    "./main/particles": { installParticleSidecar: () => ({ open() { particleLifecycle.opens++; }, close() { particleLifecycle.closes++; }, dispose() {} }) },
     "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
     "../devDeug/config.json": require("../devDeug/config.json"),
     "./main/services/window.service": windowModule,
@@ -164,7 +168,7 @@ function setup(platform = "linux", packaged = false) {
   });
   return {
     app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers, mainProcess, agentLifecycle,
-    startMain,
+    startMain, particleLifecycle,
     registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication(), entry),
     loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
   };
@@ -499,4 +503,19 @@ test("preload wraps window notifications, filters payloads, and removes listener
     ["window:open-token-monitor", { sessionId: "s", runId: "r" }],
     ["window:minimize"], ["window:close"],
   ]);
+});
+
+test("tray controls the particle sidecar without creating a renderer window", async () => {
+  const { windows, trays, startMain, particleLifecycle } = setup();
+  startMain();
+  await new Promise(setImmediate);
+  const actions = trays[0].menu.find(item => item.label === "粒子场").submenu;
+  actions.find(item => item.label === "开启粒子场").click();
+  actions.find(item => item.label === "关闭粒子场").click();
+  actions.find(item => item.label === "粒子场设置").click();
+  assert.equal(particleLifecycle.settings, 1);
+  assert.equal(particleLifecycle.opens, 1);
+  assert.equal(particleLifecycle.closes, 1);
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].destroyed, false);
 });

@@ -14,6 +14,7 @@ import { Modal, Input, type InputRef } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
+import { bridgeApi } from "@/runtime/bridge";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { dateGroup, revealSelection } from "./session-navigation";
 import { SessionPaletteList } from "./SessionPaletteList";
@@ -109,6 +110,30 @@ export function SessionSwitcher({
 
   const handlers: Partial<Record<ActionId, () => void | Promise<void>>> = {
     "session.create": createSession,
+    "dsh.open": async () => {
+      const opened = await bridgeApi.window.openWindow({
+        channelId: "dsh",
+        url: "http://127.0.0.1:3080/",
+        options: { title: "dsh", frame: true },
+      });
+      if (opened) setOpen(false);
+    },
+    "gmail.open": async () => {
+      const opened = await bridgeApi.window.openWindow({
+        channelId: "gmail",
+        url: "https://www.google.com/gmail",
+        options: { title: "Gmail", frame: true },
+      });
+      if (opened) setOpen(false);
+    },
+    "gpt.open": async () => {
+      const opened = await bridgeApi.window.openWindow({
+        channelId: "gpt",
+        url: "https://chatgpt.com/",
+        options: { title: "ChatGPT", frame: true },
+      });
+      if (opened) setOpen(false);
+    },
     "session.delete": () => {
       const session = items[activeIndex];
       if (!open || search.startsWith(">") || disabled || loading || !session || sessionActivity[session.sessionId]) return;

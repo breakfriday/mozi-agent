@@ -35,6 +35,7 @@ export interface WindowCreatePayload {
 
 // Shared data-only contract for the renderer facade and Electron preload.
 export interface ElectronApi {
+  particleSettings: import("./particles").ParticleSettingsApi;
   app: { quit(): void };
   window: {
     openWindow(payload: WindowCreatePayload): Promise<boolean>;
