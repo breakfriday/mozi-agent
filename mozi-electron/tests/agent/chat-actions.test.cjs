@@ -27,7 +27,7 @@ function setup(t, options = {}) {
     cancelRun: async (input) => { calls.push(["cancel", input]); return { ...input, disposition: "requested" }; },
     ...options.api,
   };
-  const actions = createAgentActions(api, store);
+  const actions = createAgentActions(api, store, undefined, options.projection);
   t.after(() => actions.dispose());
   let seq = 0;
   const emit = (type, data, sequence = ++seq) => {
@@ -447,4 +447,23 @@ test('switching preserves accepted activity when the catalog omits it, then clea
   status = 'completed';
   await f.actions.listSessions();
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun, undefined);
+});
+
+test("actions project user input and only applied selected-session events, then clear on dispose", async (t) => {
+  const calls = [];
+  const projection = { user: p => calls.push(["user", p.content[0].text]), receive: (e, s) => calls.push([e.type, s.lastSeq]), failed() {}, reset: () => calls.push(["reset"]), sync() {} };
+  const { actions, emit, eventListeners } = setup(t, { sessionId: "s", projection });
+  actions.initialize(); await tick();
+  await actions.submit("投影我的输入");
+  assert.ok(calls.some(c => c[0] === "user" && c[1] === "投影我的输入"));
+  emit("message.started", { messageId: "a", role: "assistant" });
+  emit("message.text.delta", { messageId: "a", partId: "p", delta: "回复" });
+  assert.ok(calls.some(c => c[0] === "message.text.delta" && c[1] === 2));
+  const count = calls.length;
+  for (const listener of eventListeners) listener({ sessionId: "other", seq: 1, type: "message.text.delta", data: { messageId: "x", partId: "p", delta: "后台会话" } });
+  assert.equal(calls.length, count);
+  emit("message.text.delta", { messageId: "a", partId: "p", delta: "重复" }, 2);
+  assert.equal(calls.length, count);
+  actions.dispose();
+  assert.equal(calls.at(-1)[0], "reset");
 });

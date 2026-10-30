@@ -6,6 +6,7 @@ import { createAgentLogger } from "../../shared/agent/logging";
 
 
 const electronApi = {
+  projectParticles: (content: import("../../shared/particles").ParticleProjection | null) => ipcRenderer.send("particles:project", content),
   particleSettings: {
     get: () => ipcRenderer.invoke("particle-settings:get"),
     save: (settings: import("../../shared/particles").ParticleSettings) => ipcRenderer.invoke("particle-settings:save", settings),

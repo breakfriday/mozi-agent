@@ -5,9 +5,11 @@ const test = require("node:test");
 const createLoader = require("./helpers/load-ts.cjs");
 
 function setup(exists = true) {
-  const children = [], errors = [], listeners = new Set();
+  const children = [], errors = [];
+  const ipcMain = new EventEmitter();
+  const sender = { mainFrame: {} };
   const load = createLoader({
-    electron: { dialog: { showErrorBox: (...args) => errors.push(args) } },
+    electron: { ipcMain, dialog: { showErrorBox: (...args) => errors.push(args) } },
     "node:fs": { existsSync: () => exists },
     "node:child_process": { spawn: () => {
       const child = new EventEmitter();
@@ -19,54 +21,60 @@ function setup(exists = true) {
     } },
   });
   const { installParticleSidecar } = load(path.resolve(__dirname, "../src/main/particles/index.ts"));
-  const controller = installParticleSidecar({ nativeBin: "/native/mozi-particles", subscribe: fn => {
-    listeners.add(fn); return () => listeners.delete(fn);
-  } });
-  return { controller, children, errors, listeners };
+  const controller = installParticleSidecar({ nativeBin: "/native/mozi-particles", windows: { getWindowForWebContents: value => value === sender ? {} : undefined } });
+  return { controller, children, errors, ipcMain, project: content => ipcMain.emit("particles:project", { sender, senderFrame: sender.mainFrame }, content) };
 }
 
-test("native sidecar is lazy, singleton and releases subscriptions across close/reopen", () => {
+test("native sidecar is lazy, singleton and owns projection IPC across close/reopen", () => {
   const s = setup();
   assert.equal(s.children.length, 0);
   assert.equal(s.controller.open(), true);
   s.controller.open();
   assert.equal(s.children.length, 1);
   assert.equal(s.children[0].commands[2].type, "focus");
-  for (const send of s.listeners) {
-    send({ type: "tool.started", sessionId: "s", runId: "r", data: { toolName: "bash" } });
-    send({ type: "message.text.delta", data: { delta: "token" } });
-  }
+  s.project({ key: "m1", text: "你好", role: "user", streaming: false });
   assert.equal(s.children[0].commands.length, 4);
-  assert.equal(s.children[0].commands[3].text, "正在执行 · bash");
+  assert.equal(s.children[0].commands[3].type, "project");
+  assert.equal(s.children[0].commands[3].content.text, "你好");
   s.controller.close();
-  assert.equal(s.listeners.size, 0);
   assert.equal(s.children[0].killed, true);
   s.controller.open();
   assert.equal(s.children.length, 2);
   s.controller.dispose();
-  assert.equal(s.listeners.size, 0);
+  assert.equal(s.ipcMain.listenerCount("particles:project"), 0);
+});
+
+test("clear sends null without closing or opening the renderer; later updates resume", () => {
+  const s = setup();
+  s.controller.clear();
+  assert.equal(s.children.length, 0);
+  s.controller.open();
+  s.controller.clear();
+  assert.deepEqual(s.children[0].commands.at(-1), { type: "project", content: null });
+  assert.equal(s.children[0].killed, undefined);
+  s.project({ key: "next", text: "新状态", role: "activity", streaming: true });
+  assert.equal(s.children[0].commands.at(-1).content.text, "新状态");
+  s.controller.dispose();
 });
 
 test("missing native binary reports failure without a fallback", () => {
   const s = setup(false);
   assert.equal(s.controller.open(), false);
   assert.equal(s.children.length, 0);
-  assert.equal(s.listeners.size, 0);
   assert.equal(s.errors.length, 1);
 });
 
-test("spawn failure and native exit release the subscription and allow retry", () => {
+test("spawn failure and native exit allow retry", () => {
   const s = setup();
   s.controller.open();
   s.children[0].emit("error", new Error("EACCES"));
-  assert.equal(s.listeners.size, 0);
   assert.equal(s.errors.length, 1);
   s.controller.open();
   s.children[1].emit("exit", 1);
-  assert.equal(s.listeners.size, 0);
   s.controller.open();
   assert.equal(s.children.length, 3);
   s.controller.dispose();
+  assert.equal(s.ipcMain.listenerCount("particles:project"), 0);
 });
 
 test("settings synchronize on launch and while running without restarting the renderer", () => {
@@ -82,6 +90,7 @@ test("settings synchronize on launch and while running without restarting the re
   assert.equal(s.children[0].commands.length, 3);
   assert.equal(s.children[0].commands[2].paused, false);
   s.controller.dispose();
+  assert.equal(s.ipcMain.listenerCount("particles:project"), 0);
 });
 
 test("settings persist independently, validate at the boundary and reopen from disk", async () => {

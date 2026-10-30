@@ -1,10 +1,3 @@
-/** Small, presentation-only contract. Agent payloads stay in the main process. */
-export type ParticleNotice = {
-  key: string;
-  text: string;
-  tone: "activity" | "success" | "attention";
-};
-
 export const PARTICLE_STYLES = ["auto", "meteor", "firework", "ink", "vortex", "aurora", "ring", "still"] as const;
 export type ParticleSettings = {
   style: typeof PARTICLE_STYLES[number];
@@ -31,4 +24,16 @@ export function parseParticleSettings(value: unknown): ParticleSettings {
     throw new Error("Invalid particle settings");
   }
   return { style: s.style as ParticleSettings["style"], wallpaper: s.wallpaper as string | null, paused: s.paused, cruise: s.cruise, depth: s.depth };
+}
+
+/** Current visible content, independent of Agent event schemas. Null clears the field. */
+export type ParticleProjection = { key: string; text: string; role: "user" | "assistant" | "activity"; streaming: boolean };
+export const PARTICLE_PROJECTION_CHANNEL = "particles:project";
+export function parseParticleProjection(input: unknown): ParticleProjection | null {
+  if (input === null) return null;
+  if (!input || typeof input !== "object") throw new Error("Invalid projection");
+  const p = input as Record<string, unknown>;
+  if (typeof p.key !== "string" || p.key.length > 1024 || typeof p.text !== "string" || p.text.length > 131072 ||
+      !["user", "assistant", "activity"].includes(p.role as string) || typeof p.streaming !== "boolean") throw new Error("Invalid projection");
+  return { key: p.key, text: p.text, role: p.role as ParticleProjection["role"], streaming: p.streaming };
 }

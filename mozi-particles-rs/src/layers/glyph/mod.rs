@@ -77,6 +77,7 @@ impl NoticeQueue {
 
 pub struct GlyphLayer {
     pub style: &'static ParticleStyle,
+    urgent: Option<Notice>,
     queue: NoticeQueue,
     bags: BagPicker,
     rng: LcgRng,
@@ -96,6 +97,7 @@ impl GlyphLayer {
     pub fn new(font: Option<FontArc>, style_id: Option<&str>) -> Self {
         Self {
             style: find_style(style_id.unwrap_or("auto")),
+            urgent: None,
             queue: NoticeQueue::default(),
             bags: BagPicker::new(),
             rng: LcgRng::new(0x0DDB_A11C_0FFE_E000),
@@ -125,6 +127,11 @@ impl GlyphLayer {
         self.queue.push(notice);
     }
 
+    /// Preempts any in-flight notice so a freshly sent user message plays immediately in the center.
+    pub fn play_now(&mut self, notice: Notice) {
+        self.urgent = Some(notice);
+    }
+
     fn age(&self, now: f32) -> f32 {
         now - self.start
     }
@@ -133,9 +140,12 @@ impl GlyphLayer {
         (0.0..=GLYPH_DURATION).contains(&self.age(now))
     }
 
-    /// Starts the next queued notice once the current one has fully dispersed.
+    /// Starts an urgent notice immediately, or the next queued notice once the current one has dispersed.
     /// Returns the instance buffer to upload when a new notice begins.
     pub fn update(&mut self, now: f32, field: &FieldSamples) -> Option<Vec<GlyphInstance>> {
+        if let Some(notice) = self.urgent.take() {
+            return Some(self.start(notice, now, field));
+        }
         if self.visible(now) {
             return None;
         }
@@ -229,5 +239,13 @@ mod tests {
         assert!(glyph.update(after, &field).is_some());
         assert!(glyph.update(after + GLYPH_DURATION + 0.01, &field).is_none(), "queue drained");
         assert!(!glyph.visible(after + GLYPH_DURATION + 0.01));
+
+        // Urgent user message preempts an in-flight notice immediately without waiting for dispersal.
+        glyph.enqueue(n("c", "background", Tone::Activity));
+        assert!(glyph.update(20.0, &field).is_some());
+        assert_eq!(glyph.focus(20.5).age, 0.5);
+        glyph.play_now(n("u1", "用户新消息", Tone::Activity));
+        assert!(glyph.update(20.5, &field).is_some(), "urgent notice starts immediately");
+        assert_eq!(glyph.focus(20.5).age, 0.0);
     }
 }

@@ -17,6 +17,8 @@ import {
 import { interruptSubmissions, putSubmission } from "./submissionState";
 import type { AgentState, PendingSubmission } from "./types";
 
+import type { ChatProjection } from "./particleProjection";
+
 interface AgentStore {
   getState(): AgentState;
   setState(
@@ -46,6 +48,7 @@ export function createAgentActions(
   api: AgentApi,
   store: AgentStore,
   rememberSession: (id: string | null) => void = () => {},
+  projection?: ChatProjection,
 ) {
   let attached = false;
   let lifecycle = 0;
@@ -143,6 +146,7 @@ export function createAgentActions(
         await synchronize().catch(() => {});
       return;
     }
+    projection?.reset();
     localSessions.set(state.sessionId ?? "draft", {
       localSessionId: state.localSessionId,
       pendingSubmissions: state.pendingSubmissions,
@@ -351,6 +355,7 @@ export function createAgentActions(
             syncStatus: complete ? "ready" : "syncing",
           });
           if (complete) {
+            projection?.sync(state);
             log.info("snapshot.installed", {
               sessionId,
               lastSeq: state.lastSeq,
@@ -392,6 +397,7 @@ export function createAgentActions(
     if (state.syncStatus === "ready" && event.seq === state.lastSeq + 1) {
       try {
         store.setState(applyAgentEvent(state, event));
+        projection?.receive(event, store.getState());
         log.debug("event.applied", event);
         return;
       } catch {
@@ -406,6 +412,7 @@ export function createAgentActions(
   function receiveRuntime(notice: RuntimeNotice) {
     noticeVersion++;
     if (notice.state === "unavailable") {
+      projection?.reset();
       generation++;
       connection++;
       listVersion++;
@@ -448,6 +455,7 @@ export function createAgentActions(
   function dispose() {
     if (!attached) return;
     attached = false;
+    projection?.reset();
     clearInterval(activityTimer);
     activityTimer = undefined;
     lifecycle++;
@@ -509,6 +517,7 @@ export function createAgentActions(
       inFlightSubmissionId: pending.clientMessageId,
       error: null,
     }));
+    projection?.user(pending);
     log.info("chat.submit", {
       clientMessageId: pending.clientMessageId,
       content: pending.content,
@@ -603,6 +612,7 @@ export function createAgentActions(
             }
           : state.pendingSubmissions,
       }));
+      projection?.failed(pending, uncertain ? "发送结果待确认" : failure.message);
       log.warn("chat.submit.failed", {
         clientMessageId: pending.clientMessageId,
         code: failure.code,

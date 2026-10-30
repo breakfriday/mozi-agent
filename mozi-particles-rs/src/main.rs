@@ -19,7 +19,7 @@ use crate::core::camera::OrbitCamera;
 use crate::layers::field::FieldLayer;
 use crate::layers::glyph::{load_system_font, styles::PARTICLE_STYLES, GlyphLayer, Notice, Tone};
 use crate::layers::markdown::Panel;
-use crate::protocol::{reply, spawn_stdin_reader, Command, Reply, UserEvent};
+use crate::protocol::{reply, spawn_stdin_reader, Command, ProjectionRole, Reply, UserEvent};
 use crate::render::gpu::Gpu;
 use crate::render::uniforms::{CameraFrame, FocusSignal, Globals};
 
@@ -161,13 +161,18 @@ impl App {
     }
 
     /// One frame uniform from one camera — every layer sees the same view.
-    /// The background reacts to whichever text layer (short GLYPH notice or board block) landed last.
+    /// While a center GLYPH short message is active, the background stays focused on it;
+    /// otherwise it follows whichever text layer landed most recently.
     fn frame_globals(&self, width: f32, height: f32, dpr: f32) -> Globals {
         let (projection, view) = self.camera.matrices(self.time, width, height);
         let camera = CameraFrame { view_proj: projection * view, view, viewport: [width, height], dpr, time: self.time };
-        let focus = FocusSignal::newest(
-            std::iter::once(self.glyph.focus(self.time)).chain(self.markdown.focus(self.time, width, height)),
-        );
+        let focus = if self.glyph.visible(self.time) {
+            self.glyph.focus(self.time)
+        } else {
+            FocusSignal::newest(
+                std::iter::once(self.glyph.focus(self.time)).chain(self.markdown.focus(self.time, width, height)),
+            )
+        };
         Globals::compose(
             &camera,
             &focus,
@@ -182,8 +187,18 @@ impl App {
             Command::Project { content } => {
                 match content {
                     Some(content) => {
-                        if let Err(message) = self.markdown.project(&content.key, &content.text, content.role) {
-                            Self::report(&message);
+                        let is_user = content.role == ProjectionRole::User;
+                        match self.markdown.project(&content.key, &content.text, content.role) {
+                            Ok(added) => {
+                                if added && is_user {
+                                    self.glyph.play_now(Notice {
+                                        key: content.key,
+                                        text: content.text,
+                                        tone: Tone::Activity,
+                                    });
+                                }
+                            }
+                            Err(message) => Self::report(&message),
                         }
                     }
                     None => self.markdown.clear(),

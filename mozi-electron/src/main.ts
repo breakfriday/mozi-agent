@@ -73,7 +73,7 @@ if (started) {
       const browser = new MoziBrowser();
       const transport = new AgentTransport(undefined, (operation, context) => browser.execute(operation, context));
       const agentIpc = registerAgentIpc(windowService, rendererEntry, transport);
-      const particles = installParticleSidecar({ subscribe: listener => transport.onEvent(listener) });
+      const particles = installParticleSidecar({ windows: windowService });
       const particleSettings = installParticleSettings({ windows: windowService, entry: rendererEntry, filePath: path.join(app.getPath("userData"), "particle-settings.json"), apply: particles.applySettings });
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
@@ -93,6 +93,7 @@ if (started) {
         { label: "粒子场", submenu: [
           { label: "开启粒子场", click: () => { particles.open(); } },
           { label: "粒子场设置", click: () => particleSettings.open() },
+          { label: "清空投影文字", click: () => particles.clear() },
           { label: "关闭粒子场", click: () => particles.close() },
         ] },
       ]);

@@ -94,18 +94,22 @@ impl Panel {
         self.refresh()
     }
 
-    pub fn project(&mut self, key: &str, text: &str, role: ProjectionRole) -> Result<()> {
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.key == key) {
+    /// Inserts or updates a conversation block; returns `true` when this `key` is a newly added block.
+    pub fn project(&mut self, key: &str, text: &str, role: ProjectionRole) -> Result<bool> {
+        let added = if let Some(entry) = self.entries.iter_mut().find(|e| e.key == key) {
             if entry.text == text && entry.role == role {
-                return Ok(());
+                return Ok(false);
             }
             entry.text = text.into();
             entry.role = role;
+            false
         } else {
             self.entries.push(Entry { id: self.next_id, key: key.into(), text: text.into(), role });
             self.next_id += 1;
-        }
-        self.refresh()
+            true
+        };
+        self.refresh()?;
+        Ok(added)
     }
 
     pub fn clear(&mut self) {

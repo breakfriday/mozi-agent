@@ -43,7 +43,8 @@ pub fn load_system_font() -> Option<FontArc> {
 
 /// Rasterizes a single-line notice into 3D target coordinates.
 pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
-    let clean: String = text.trim().chars().take(TEXT_MAX_CHARS).collect();
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let clean: String = normalized.chars().take(TEXT_MAX_CHARS).collect();
     let label = if clean.is_empty() { "MOZI" } else { &clean };
     let mut points = Vec::new();
 

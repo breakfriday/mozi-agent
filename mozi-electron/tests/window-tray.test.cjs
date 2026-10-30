@@ -154,7 +154,7 @@ function setup(platform = "linux", packaged = false) {
   const startMain = () => load("src/main.ts", {
     "electron-squirrel-startup": false,
     "./main/particles/settings": { installParticleSettings: () => ({ open() { particleLifecycle.settings++; }, dispose() {} }) },
-    "./main/particles": { installParticleSidecar: () => ({ open() { particleLifecycle.opens++; }, close() { particleLifecycle.closes++; }, dispose() {} }) },
+    "./main/particles": { installParticleSidecar: () => ({ open() { particleLifecycle.opens++; }, clear() { particleLifecycle.clears = (particleLifecycle.clears ?? 0) + 1; }, close() { particleLifecycle.closes++; }, dispose() {} }) },
     "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
     "../devDeug/config.json": require("../devDeug/config.json"),
     "./main/services/window.service": windowModule,
@@ -511,6 +511,8 @@ test("tray controls the particle sidecar without creating a renderer window", as
   await new Promise(setImmediate);
   const actions = trays[0].menu.find(item => item.label === "粒子场").submenu;
   actions.find(item => item.label === "开启粒子场").click();
+  actions.find(item => item.label === "清空投影文字").click();
+  assert.equal(particleLifecycle.clears, 1);
   actions.find(item => item.label === "关闭粒子场").click();
   actions.find(item => item.label === "粒子场设置").click();
   assert.equal(particleLifecycle.settings, 1);

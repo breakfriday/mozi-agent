@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { dialog } from "electron";
-import type { AgentEvent } from "../../../../shared/agent";
-import { DEFAULT_PARTICLE_SETTINGS, type ParticleSettings } from "../../../../shared/particles";
-import { toParticleNotice } from "./notices";
+import { dialog, ipcMain } from "electron";
+import type { WindowService } from "../services/window.service";
+import { DEFAULT_PARTICLE_SETTINGS, type ParticleSettings, parseParticleProjection, PARTICLE_PROJECTION_CHANNEL } from "../../../../shared/particles";
 
 type Dependencies = {
-  subscribe: (listener: (event: AgentEvent) => void) => () => void;
+  windows: Pick<WindowService, "getWindowForWebContents">;
   nativeBin?: string;
 };
 
@@ -20,10 +19,10 @@ function resolveNativeBinary(explicit?: string): string | undefined {
   ].find(candidate => fs.existsSync(candidate));
 }
 
-/** Owns the native renderer process and its Agent event subscription. */
-export function installParticleSidecar({ subscribe, nativeBin }: Dependencies) {
+/** Owns the native renderer process and its renderer projection inlet. */
+export function installParticleSidecar({ windows, nativeBin }: Dependencies) {
   let settings = { ...DEFAULT_PARTICLE_SETTINGS };
-  let active: { child: ReturnType<typeof spawn>; unsubscribe: () => void } | undefined;
+  let active: { child: ReturnType<typeof spawn> } | undefined;
   const reportError = (message: string) => dialog.showErrorBox("粒子场启动失败", message);
 
   function open(): boolean {
@@ -37,14 +36,9 @@ export function installParticleSidecar({ subscribe, nativeBin }: Dependencies) {
       return false;
     }
     const child = spawn(bin, [], { stdio: ["pipe", "ignore", "inherit"] });
-    const unsubscribe = subscribe(event => {
-      const notice = toParticleNotice(event);
-      if (notice) child.stdin!.write(`${JSON.stringify({ type: "notice", ...notice })}\n`);
-    });
-    active = { child, unsubscribe };
+    active = { child };
     const cleanup = () => {
       if (active?.child !== child) return;
-      active.unsubscribe();
       active = undefined;
     };
     child.once("exit", cleanup);
@@ -63,13 +57,24 @@ export function installParticleSidecar({ subscribe, nativeBin }: Dependencies) {
     if (wallpaperChanged) write({ type: "wallpaper", path: next.wallpaper });
   }
 
+  function clear(): void {
+    active?.child.stdin!.write(`${JSON.stringify({ type: "project", content: null })}\n`);
+  }
+
   function close(): void {
     if (!active) return;
-    const { child, unsubscribe } = active;
+    const { child } = active;
     active = undefined;
-    unsubscribe();
     child.kill();
   }
 
-  return { open, close, applySettings, dispose: close };
+  const project = (event: Electron.IpcMainEvent, input: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame || !windows.getWindowForWebContents(event.sender)) return;
+    try {
+      const content = parseParticleProjection(input);
+      active?.child.stdin!.write(`${JSON.stringify({ type: "project", content })}\n`);
+    } catch (error) { console.error("Invalid particle projection:", error); }
+  };
+  ipcMain.on(PARTICLE_PROJECTION_CHANNEL, project);
+  return { open, close, clear, applySettings, dispose() { ipcMain.removeListener(PARTICLE_PROJECTION_CHANNEL, project); close(); } };
 }
