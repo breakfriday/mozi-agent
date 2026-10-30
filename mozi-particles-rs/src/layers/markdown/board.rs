@@ -78,6 +78,11 @@ pub struct Raster {
 pub struct PixelId(u64, u32, u32);
 
 impl PixelId {
+    /// Which board entry this ink pixel belongs to.
+    pub fn entry(self) -> u64 {
+        self.0
+    }
+
     fn seed(self) -> f32 {
         // Integer mixing is independent of world position and GPU sine precision.
         let mut h = self.0.wrapping_mul(0x9e3779b97f4a7c15) ^ ((self.1 as u64) << 32) ^ self.2 as u64;
@@ -158,6 +163,23 @@ pub struct Composition {
     pub considered: Vec<u64>,
     /// Blocks that fit; considered-but-not-retained blocks were evicted by newer ones.
     pub retained: Vec<u64>,
+}
+
+impl Composition {
+    /// Board-space ink extent of one entry: [center.x, center.y, half.x, half.y].
+    pub fn bounds_of(&self, entry: u64) -> Option<[f32; 4]> {
+        let mut min = [f32::INFINITY; 2];
+        let mut max = [f32::NEG_INFINITY; 2];
+        for sample in self.particles.iter().filter(|s| s.id.entry() == entry) {
+            for axis in 0..2 {
+                min[axis] = min[axis].min(sample.vertex.position[axis]);
+                max[axis] = max[axis].max(sample.vertex.position[axis]);
+            }
+        }
+        min[0].is_finite().then(|| {
+            [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (max[0] - min[0]) * 0.5, (max[1] - min[1]) * 0.5]
+        })
+    }
 }
 
 pub fn compose(blocks: &[(&Entry, &Raster)], layout: Layout) -> Composition {

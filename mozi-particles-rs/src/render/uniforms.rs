@@ -47,6 +47,17 @@ impl Default for FocusSignal {
     }
 }
 
+impl FocusSignal {
+    /// Several text layers may publish; the background follows whichever started most recently.
+    pub fn newest(signals: impl IntoIterator<Item = FocusSignal>) -> FocusSignal {
+        signals
+            .into_iter()
+            .filter(|s| s.age >= 0.0)
+            .min_by(|a, b| a.age.total_cmp(&b.age))
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FieldParams {
     pub depth: f32,
@@ -92,5 +103,23 @@ impl Globals {
 
     pub fn markdown_visible(&self) -> bool {
         self.panel[0] > 0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(age: f32, x: f32) -> FocusSignal {
+        FocusSignal { age, bounds: [x, 0.0, 1.0, 1.0], ..FocusSignal::default() }
+    }
+
+    #[test]
+    fn newest_started_focus_wins() {
+        assert_eq!(FocusSignal::newest([at(3.0, 1.0), at(0.5, 2.0)]).bounds[0], 2.0);
+        assert_eq!(FocusSignal::newest([at(0.2, 1.0), at(4.0, 2.0)]).bounds[0], 1.0);
+        // Negative age (not started yet) never wins; nothing published → inert default.
+        assert_eq!(FocusSignal::newest([at(-1.0, 9.0), at(2.0, 3.0)]).bounds[0], 3.0);
+        assert_eq!(FocusSignal::newest([]).age, FocusSignal::default().age);
     }
 }

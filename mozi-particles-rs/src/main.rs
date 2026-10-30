@@ -21,7 +21,7 @@ use crate::layers::glyph::{load_system_font, styles::PARTICLE_STYLES, GlyphLayer
 use crate::layers::markdown::Panel;
 use crate::protocol::{reply, spawn_stdin_reader, Command, Reply, UserEvent};
 use crate::render::gpu::Gpu;
-use crate::render::uniforms::{CameraFrame, Globals};
+use crate::render::uniforms::{CameraFrame, FocusSignal, Globals};
 
 const DEMO_NOTICES: &[(&str, Tone)] = &[
     ("粒子演示 · 星河浮现", Tone::Activity),
@@ -161,12 +161,16 @@ impl App {
     }
 
     /// One frame uniform from one camera — every layer sees the same view.
+    /// The background reacts to whichever text layer (short GLYPH notice or board block) landed last.
     fn frame_globals(&self, width: f32, height: f32, dpr: f32) -> Globals {
         let (projection, view) = self.camera.matrices(self.time, width, height);
         let camera = CameraFrame { view_proj: projection * view, view, viewport: [width, height], dpr, time: self.time };
+        let focus = FocusSignal::newest(
+            std::iter::once(self.glyph.focus(self.time)).chain(self.markdown.focus(self.time, width, height)),
+        );
         Globals::compose(
             &camera,
-            &self.glyph.focus(self.time),
+            &focus,
             &self.field.params(self.glyph.style.pulse_alpha),
             &self.glyph.motion(),
             &self.markdown.params(width, height),

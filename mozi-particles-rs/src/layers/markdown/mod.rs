@@ -7,7 +7,10 @@ pub mod board;
 pub mod plain_text;
 pub mod wordcraft;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use ab_glyph::FontArc;
 
@@ -18,8 +21,9 @@ use board::{Animation, Entry, Layout, Raster};
 use plain_text::PlainTextRenderer;
 use wordcraft::{Job, Worker};
 
+use crate::core::rng::BagPicker;
 use crate::protocol::ProjectionRole;
-use crate::render::uniforms::PanelParams;
+use crate::render::uniforms::{FocusSignal, PanelParams};
 use crate::render_config::*;
 
 type Result<T> = std::result::Result<T, String>;
@@ -30,6 +34,14 @@ struct Cached {
     column: Layout,
     /// `None` when rendering failed: the block is resolved but has nothing to show.
     raster: Option<Raster>,
+}
+
+/// The newest block to land on the board, in board space (text plane, before `world_scale`).
+struct BoardFocus {
+    bounds: [f32; 4],
+    born: f32,
+    dance_mode: f32,
+    dance_dir: [f32; 2],
 }
 
 pub struct Panel {
@@ -44,6 +56,10 @@ pub struct Panel {
     animation: Animation,
     layout: Layout,
     displayed_layout: Layout,
+    /// Entries that already triggered a background reaction (re-layouts and streaming growth don't retrigger).
+    announced: HashSet<u64>,
+    focus: Option<BoardFocus>,
+    bags: BagPicker,
 }
 
 impl Panel {
@@ -60,6 +76,9 @@ impl Panel {
             animation: Animation::default(),
             layout: Layout::default(),
             displayed_layout: Layout::default(),
+            announced: HashSet::new(),
+            focus: None,
+            bags: BagPicker::new(),
         }
     }
 
@@ -93,6 +112,8 @@ impl Panel {
         self.animation.clear();
         self.entries.clear();
         self.cache.clear();
+        self.announced.clear();
+        self.focus = None;
         self.visible = false;
         self.dirty = true;
         // Ids are never reused, so late Wordcraft results for cleared entries are simply ignored.
@@ -200,9 +221,41 @@ impl Panel {
         if !evicted.is_empty() {
             self.entries.retain(|e| !evicted.contains(&e.id));
             self.cache.retain(|id, _| !evicted.contains(id));
+            self.announced.retain(|id| !evicted.contains(id));
         }
+        // The newest block that just landed becomes the background's focus (once per block).
+        if let Some(&id) = composition.retained.iter().filter(|id| !self.announced.contains(id)).max() {
+            if let Some(bounds) = composition.bounds_of(id) {
+                let dances: Vec<u32> = (0..6).collect();
+                self.focus = Some(BoardFocus {
+                    bounds,
+                    born: now,
+                    dance_mode: self.bags.pick("board-dance", &dances) as f32,
+                    dance_dir: self.bags.next_unit_dir(),
+                });
+            }
+        }
+        self.announced.extend(composition.retained.iter().copied());
         self.visible = !composition.particles.is_empty();
         Some(self.animation.update(&composition.particles, now))
+    }
+
+    /// The latest landed block as a `FocusSignal` on the background plane (z = 0).
+    /// Board space is scaled by `world_scale` on the text plane; the extra D/(D − z) factor projects
+    /// it along the initial camera's view rays, so the reaction sits behind the message on screen.
+    pub fn focus(&self, now: f32, width: f32, height: f32) -> Option<FocusSignal> {
+        let focus = self.focus.as_ref()?;
+        let k = self.displayed_layout.world_scale(width, height) * CAMERA_INITIAL_DISTANCE
+            / (CAMERA_INITIAL_DISTANCE - MARKDOWN_PLANE_Z);
+        let [cx, cy, hx, hy] = focus.bounds.map(|v| v * k);
+        Some(FocusSignal {
+            bounds: [cx, cy, hx, hy],
+            age: now - focus.born,
+            dance_mode: focus.dance_mode,
+            dance_dir: focus.dance_dir,
+            // The ripple fires as the block's ink finishes assembling.
+            ripple: [cx, cy, focus.born + MARKDOWN_ASSEMBLE_SECONDS],
+        })
     }
 
     pub fn params(&self, width: f32, height: f32) -> PanelParams {
@@ -288,6 +341,60 @@ mod tests {
         panel.clear();
         assert!(panel.take_frame(1.2).unwrap().is_empty());
         assert_eq!(panel.params(1280.0, 860.0).panel[0], 0.0);
+    }
+
+    #[test]
+    fn each_new_block_moves_the_background_focus_once() {
+        let Some(font) = load_system_font() else { return };
+        let mut panel = Panel::new(Some(font), |_| {});
+        panel.resize(1280, 860, 1.0).unwrap();
+        assert!(panel.focus(0.0, 1280.0, 860.0).is_none(), "no board focus before any message");
+
+        panel.project("u1", "第一个问题", ProjectionRole::User).unwrap();
+        panel.take_frame(1.0).unwrap();
+        let first = panel.focus(1.5, 1280.0, 860.0).unwrap();
+        assert!((first.age - 0.5).abs() < 1e-6);
+        assert!(first.bounds[0] > 0.0, "user lane is on the right");
+
+        // Same block growing / re-composing does not retrigger.
+        panel.project("u1", "第一个问题（补充）", ProjectionRole::User).unwrap();
+        panel.take_frame(2.0).unwrap();
+        assert!((panel.focus(2.0, 1280.0, 860.0).unwrap().age - 1.0).abs() < 1e-6);
+
+        // A new block does, and it is the one on the left this time.
+        panel.project("t1", "执行 bash", ProjectionRole::Activity).unwrap();
+        panel.take_frame(3.0).unwrap();
+        let second = panel.focus(3.0, 1280.0, 860.0).unwrap();
+        assert_eq!(second.age, 0.0);
+        assert!(second.bounds[0] < 0.0, "activity lane is on the left");
+        assert_eq!(second.ripple[2], 3.0 + MARKDOWN_ASSEMBLE_SECONDS);
+
+        panel.clear();
+        assert!(panel.focus(4.0, 1280.0, 860.0).is_none());
+    }
+
+    #[test]
+    fn background_focus_sits_behind_the_message_on_screen() {
+        let Some(font) = load_system_font() else { return };
+        let (width, height) = (1920.0, 1080.0);
+        let mut panel = Panel::new(Some(font), |_| {});
+        panel.resize(width as u32, height as u32, 1.0).unwrap();
+        panel.project("u1", "屏幕上的位置要对齐", ProjectionRole::User).unwrap();
+        panel.take_frame(1.0).unwrap();
+        let board = panel.focus.as_ref().unwrap().bounds;
+        let focus = panel.focus(1.0, width, height).unwrap();
+
+        // Initial camera pose (the same pose world_scale fits against).
+        let matrix = glam::Mat4::perspective_rh(CAMERA_FOV_DEGREES.to_radians(), width / height, 0.1, 100.0)
+            * glam::Mat4::look_at_rh(glam::Vec3::Z * CAMERA_INITIAL_DISTANCE, glam::Vec3::ZERO, glam::Vec3::Y);
+        let scale = panel.displayed_layout.world_scale(width, height);
+        for (dx, dy) in [(0.0, 0.0), (1.0, 1.0), (-1.0, -1.0)] {
+            // Text as drawn by vs_markdown: board space scaled around the text plane.
+            let text = glam::Vec3::new((board[0] + dx * board[2]) * scale, (board[1] + dy * board[3]) * scale, MARKDOWN_PLANE_Z);
+            let field = glam::Vec3::new(focus.bounds[0] + dx * focus.bounds[2], focus.bounds[1] + dy * focus.bounds[3], 0.0);
+            let (a, b) = (matrix.project_point3(text), matrix.project_point3(field));
+            assert!((a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() < 1e-4, "{a:?} vs {b:?}");
+        }
     }
 
     #[test]
