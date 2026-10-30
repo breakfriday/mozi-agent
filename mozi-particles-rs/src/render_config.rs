@@ -22,11 +22,15 @@ pub const TEXT_PLANE_Z: f32 = 2.3;
 pub const TEXT_DEPTH_JITTER: f32 = 0.06; // Z 抖动总跨度，实际为 ± 此值 / 2
 pub const TEXT_TARGET_JITTER: f32 = 0.01; // XY 抖动总跨度
 
-// ── 短消息展示节奏（秒）；Markdown 页面持续显示，不使用此计时 ──
-// 接收频率不变；成形后保留阅读时间，期间只保存最新内容，不排队播放增量。
-pub const PROJECTION_MIN_READ_SECONDS: f32 = 2.5;
-pub const PROJECTION_READ_CHARS_PER_SECOND: f32 = 12.0;
-pub const PROJECTION_TRANSITION_SECONDS: f32 = 0.35;
+// ── 短消息文字（GLYPH）聚散节奏（秒）──
+// 唯一来源：创建 Shader 时这些值会生成到 WGSL 常量，无需在 .wgsl 里手动同步。
+pub const GLYPH_ASSEMBLE_SECONDS: f32 = 1.0;
+pub const GLYPH_STAGGER_SECONDS: f32 = 0.45;
+pub const GLYPH_HOLD_SECONDS: f32 = 2.0;
+pub const GLYPH_DISPERSE_SECONDS: f32 = 1.5;
+pub const GLYPH_LANDING: f32 = GLYPH_ASSEMBLE_SECONDS + GLYPH_STAGGER_SECONDS;
+pub const GLYPH_RELEASE: f32 = GLYPH_LANDING + GLYPH_HOLD_SECONDS;
+pub const GLYPH_DURATION: f32 = GLYPH_RELEASE + GLYPH_DISPERSE_SECONDS + GLYPH_STAGGER_SECONDS;
 
 // ── 粒子尺寸系数 ──
 // 无单位系数，最终屏幕尺寸还经过 Shader 的相机距离衰减与像素上限裁剪。
@@ -64,9 +68,8 @@ const _: () = {
     assert!(PULSE_GRID_W >= 2 && PULSE_GRID_H >= 2);
     assert!(EVENT_PARTICLE_COUNT >= 2 && EVENT_PARTICLE_COUNT <= u32::MAX as usize);
     assert!(TEXT_SAMPLE_STRIDE >= 1);
-    assert!(PROJECTION_MIN_READ_SECONDS > 0.0);
-    assert!(PROJECTION_READ_CHARS_PER_SECOND > 0.0);
-    assert!(PROJECTION_TRANSITION_SECONDS > 0.0);
+    assert!(GLYPH_ASSEMBLE_SECONDS > 0.0 && GLYPH_DISPERSE_SECONDS > 0.0);
+    assert!(GLYPH_STAGGER_SECONDS >= 0.0 && GLYPH_HOLD_SECONDS >= 0.0);
 };
 
 // Wordcraft page in points; raster scale and sampling are independent of window DPI.
@@ -94,6 +97,8 @@ pub const PROJECTION_USER_SHORT_FONT_PT: f32 = 18.0;
 pub const PROJECTION_USER_LONG_FONT_PT: f32 = 13.0;
 pub const PROJECTION_USER_SHORT_CHARS: usize = 18;
 pub const PROJECTION_ACTIVITY_FONT_PT: f32 = 10.0;
+// 用户消息 / 工具活动是纯字符串：本地 ab_glyph 排版，不经过 Wordcraft，也不解析 Markdown。
+pub const PLAIN_TEXT_LINE_HEIGHT: f32 = 1.4; // 行高 = 字号 × 此值
 pub const MARKDOWN_REFLOW_SECONDS: f32 = 0.4;
 
 // Shared scene camera; viewport fitting uses its initial pose, never the current zoom.
@@ -115,6 +120,7 @@ const _: () = {
     assert!(MARKDOWN_COVERAGE_THRESHOLD > 0.0 && MARKDOWN_COVERAGE_THRESHOLD < 1.0);
     assert!(MARKDOWN_CORE_ALPHA > 0.0 && MARKDOWN_CORE_ALPHA <= 1.0);
     assert!(MARKDOWN_HALO_ALPHA >= 0.0 && MARKDOWN_HALO_ALPHA <= 1.0);
+    assert!(PLAIN_TEXT_LINE_HEIGHT >= 1.0);
 };
 
 // Minimum raster footprint only; alpha compensates area so distant strokes do not thicken.

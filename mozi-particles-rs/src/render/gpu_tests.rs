@@ -1,4 +1,11 @@
-use super::*;
+use wgpu::util::DeviceExt;
+
+use super::pipeline::{Material, PipelineFactory, BLEND_PREMULTIPLIED_OVER};
+use super::uniforms::{CameraFrame, FieldParams, FocusSignal, Globals, GlyphMotion, PanelParams};
+use crate::core::camera::OrbitCamera;
+use crate::layers::markdown::board;
+use crate::protocol::ProjectionRole;
+use crate::render_config::*;
 
 #[test]
 #[ignore = "requires a Vulkan/GL adapter"]
@@ -13,72 +20,24 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
             .request_device(&wgpu::DeviceDescriptor::default(), None)
             .await
             .unwrap();
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("actual text material"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-        let uniform_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[uniform_entry(0), uniform_entry(1)],
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_markdown",
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<crate::projection_board::Particle>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &MARKDOWN_ATTRS,
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_markdown",
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: Some(BLEND_PREMULTIPLIED_OVER),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview: None,
-            cache: None,
-        });
-        let entry = crate::projection_board::Entry {
+        // The real pipeline factory: this test exercises exactly what the renderer builds.
+        let factory = PipelineFactory::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        let pipeline = factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_OVER);
+        let bgl = &factory.bind_group_layout;
+        let entry = board::Entry {
             id: 1,
             key: "test".into(),
             text: String::new(),
-            role: crate::scene::ProjectionRole::Assistant,
+            role: ProjectionRole::Assistant,
         };
-        let raster = crate::projection_board::Raster {
+        let raster = board::Raster {
             image: image::RgbImage::from_pixel(1, 1, image::Rgb([204; 3])),
             source_y: 0,
         };
-        let mut samples = crate::projection_board::samples(&entry, &raster, 0, 0, 1, 1);
+        let mut samples = board::samples(&entry, &raster, 0, 0, 1, 1);
         samples[0].vertex.position = [0.0, 0.0, MARKDOWN_PLANE_Z];
         samples[0].vertex.color = [1.0; 3];
-        let mut animation = crate::projection_board::Animation::default();
+        let mut animation = board::Animation::default();
         let mut subpixel_energy = Vec::new();
         let mut cases = vec![(0.0, false, 0.0), (1.0, false, 0.0)];
         cases.extend((0..8).map(|i| (0.0, true, i as f32 / 8.0)));
@@ -89,23 +48,15 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
                 contents: bytemuck::cast_slice(animation.update(&samples, 0.0)),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-            let mut scene = crate::scene::Scene::new(None, None);
-            scene.cruise = false;
-            scene.time = 3.0;
-            scene.camera.yaw = yaw;
-            let mut globals = scene.globals(256.0, 256.0, 1.0);
-            globals.panel = [
-                1.0,
-                if subpixel { 0.025 } else { 0.8 },
-                MARKDOWN_ASSEMBLE_SECONDS,
-                MARKDOWN_DISPERSE_SECONDS,
-            ];
-            globals.panel_motion = [
-                MARKDOWN_REFLOW_SECONDS,
-                1.0,
-                MARKDOWN_PLANE_Z,
-                MARKDOWN_MIN_RADIUS_PX,
-            ];
+            let mut camera = OrbitCamera { cruise: false, ..OrbitCamera::default() };
+            camera.yaw = yaw;
+            let (projection, view) = camera.matrices(3.0, 256.0, 256.0);
+            let panel = PanelParams {
+                panel: [1.0, if subpixel { 0.025 } else { 0.8 }, MARKDOWN_ASSEMBLE_SECONDS, MARKDOWN_DISPERSE_SECONDS],
+                motion: [MARKDOWN_REFLOW_SECONDS, 1.0, MARKDOWN_PLANE_Z, MARKDOWN_MIN_RADIUS_PX],
+            };
+            let frame = CameraFrame { view_proj: projection * view, view, viewport: [256.0, 256.0], dpr: 1.0, time: 3.0 };
+            let mut globals = Globals::compose(&frame, &FocusSignal::default(), &FieldParams::default(), &GlyphMotion::default(), &panel);
             if subpixel {
                 let translation =
                     glam::Mat4::from_translation(glam::Vec3::new(shift * 2.0 / 256.0, 0.0, 0.0));
@@ -131,7 +82,7 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
             });
             let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &bgl,
+                layout: bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,

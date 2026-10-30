@@ -1,8 +1,10 @@
 //! JSON Lines protocol over stdio, driven by the mozi-electron main process.
 //!
 //! stdin  (one JSON object per line):
+//!   {"type":"project","content":{"key":"s1:m1","text":"...","role":"assistant","streaming":true}}
+//!   {"type":"project","content":null}                  // clear the conversation board
 //!   {"type":"notice","key":"s1:r1","text":"正在执行 · bash","tone":"activity"}
-//!   {"type":"style","id":"firework"}
+//!   {"type":"configure","style":"firework","paused":false,"cruise":true,"depth":1.0}
 //!   {"type":"wallpaper","path":"/home/me/wall.jpg"}   // path omitted => system wallpaper
 //!   {"type":"focus"}
 //!   {"type":"quit"}
@@ -16,10 +18,31 @@ use std::io::{BufRead, Write};
 use serde::{Deserialize, Serialize};
 use winit::event_loop::EventLoopProxy;
 
+/// Who authored a projected block. Only `Assistant` is Markdown; the others are plain strings.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectionRole {
+    User,
+    Assistant,
+    Activity,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Projection {
+    pub key: String,
+    pub text: String,
+    pub role: ProjectionRole,
+    /// Part of the wire contract; the board re-renders on every update regardless.
+    #[allow(dead_code)]
+    pub streaming: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Command {
-    Project { content: Option<crate::scene::Projection> },
+    Project {
+        content: Option<Projection>,
+    },
     Notice {
         #[serde(default)]
         key: Option<String>,
@@ -27,9 +50,11 @@ pub enum Command {
         #[serde(default)]
         tone: Option<String>,
     },
-    Configure { style: String, paused: bool, cruise: bool, depth: f32 },
-    Style {
-        id: String,
+    Configure {
+        style: String,
+        paused: bool,
+        cruise: bool,
+        depth: f32,
     },
     Wallpaper {
         #[serde(default)]
@@ -49,7 +74,7 @@ pub enum Reply<'a> {
 
 #[derive(Debug)]
 pub enum UserEvent {
-    Markdown(crate::markdown::Completed),
+    Markdown(crate::layers::markdown::Completed),
     Command(Command),
     StdinClosed,
 }
@@ -101,6 +126,9 @@ mod tests {
         assert!(matches!(serde_json::from_str::<Command>(r#"{"type":"quit"}"#).unwrap(), Command::Quit));
         let cmd = serde_json::from_str::<Command>(r#"{"type":"configure","style":"ink","paused":true,"cruise":false,"depth":1.5}"#).unwrap();
         assert!(matches!(cmd, Command::Configure { paused: true, cruise: false, depth, .. } if depth == 1.5));
+        let cmd = serde_json::from_str::<Command>(r##"{"type":"project","content":{"key":"u","text":"# 不是标题","role":"user","streaming":false}}"##).unwrap();
+        assert!(matches!(cmd, Command::Project { content: Some(Projection { role: ProjectionRole::User, .. }) }));
+        assert!(serde_json::from_str::<Command>(r#"{"type":"style","id":"ink"}"#).is_err(), "style is folded into configure");
         assert_eq!(serde_json::to_string(&Reply::Ready).unwrap(), r#"{"type":"ready"}"#);
     }
 }

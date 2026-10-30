@@ -1,5 +1,5 @@
+//! Terse GLYPH presets: 9 assembly/dispersal moves, 6 field dances, 8 named styles.
 use crate::render_config;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -29,7 +29,10 @@ pub enum DanceMode {
 #[derive(Debug, Clone, Copy)]
 pub struct ParticleStyle {
     pub id: &'static str,
+    /// Display metadata for settings UIs; the engine itself only keys on `id`.
+    #[allow(dead_code)]
     pub name: &'static str,
+    #[allow(dead_code)]
     pub desc: &'static str,
     pub in_modes: &'static [GlyphMove],
     pub out_modes: &'static [GlyphMove],
@@ -172,71 +175,6 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
     },
 ];
 
-pub struct LcgRng(u64);
-
-impl LcgRng {
-    pub fn new(seed: u64) -> Self {
-        Self(seed.max(1))
-    }
-
-    pub fn next_f32(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        ((self.0 >> 32) as u32 as f32) / (u32::MAX as f32)
-    }
-
-    pub fn next_usize(&mut self, bound: usize) -> usize {
-        if bound <= 1 {
-            return 0;
-        }
-        (self.next_f32() * (bound as f32)).floor().min((bound - 1) as f32) as usize
-    }
-}
-
-/// Non-repeating shuffled bag picker (matching Terse's `_bagPick`).
-pub struct BagPicker {
-    bags: HashMap<&'static str, Vec<u32>>,
-    last: HashMap<&'static str, u32>,
-    rng: LcgRng,
-}
-
-impl BagPicker {
-    pub fn new() -> Self {
-        Self {
-            bags: HashMap::new(),
-            last: HashMap::new(),
-            rng: LcgRng::new(0x5EED_CAFE_1234_5678),
-        }
-    }
-
-    pub fn pick(&mut self, key: &'static str, pool: &[u32]) -> u32 {
-        if pool.is_empty() {
-            return 0;
-        }
-        if pool.len() == 1 {
-            return pool[0];
-        }
-        let bag = self.bags.entry(key).or_default();
-        if bag.is_empty() {
-            let mut refilled = pool.to_vec();
-            for i in (1..refilled.len()).rev() {
-                let j = self.rng.next_usize(i + 1);
-                refilled.swap(i, j);
-            }
-            if let Some(&prev) = self.last.get(key) {
-                if refilled.len() > 1 && refilled.last() == Some(&prev) {
-                    let len = refilled.len();
-                    refilled.swap(0, len - 1);
-                }
-            }
-            *bag = refilled;
-        }
-        let chosen = bag.pop().unwrap_or(pool[0]);
-        self.last.insert(key, chosen);
-        chosen
-    }
-
-    pub fn next_unit_dir(&mut self) -> [f32; 2] {
-        let angle = self.rng.next_f32() * std::f32::consts::TAU;
-        [angle.cos(), angle.sin()]
-    }
+pub fn find_style(id: &str) -> &'static ParticleStyle {
+    PARTICLE_STYLES.iter().find(|s| s.id == id).unwrap_or(&PARTICLE_STYLES[0])
 }

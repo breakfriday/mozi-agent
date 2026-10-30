@@ -1,87 +1,38 @@
-//! wgpu renderer: core + soft halo per geometry; Markdown uses premultiplied output.
-
+//! wgpu device/surface and per-frame draw. Core + soft halo per geometry (Twin Bloom);
+//! the Markdown board uses premultiplied output.
 use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::sampling::{FieldInstance, GlyphInstance, PulseInstance};
-use crate::scene::Globals;
-
+use super::pipeline::{Material, PipelineFactory, BLEND_ADD, BLEND_OVER, BLEND_PREMULTIPLIED_ADD, BLEND_PREMULTIPLIED_OVER};
+use super::uniforms::Globals;
+use crate::layers::field::{FieldInstance, PulseInstance};
+use crate::layers::glyph::GlyphInstance;
+use crate::layers::markdown::Particle;
 use crate::render_config::*;
 
-const MARKDOWN_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32x2];
-const FIELD_ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-const PULSE_ATTRS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32, 2 => Float32x3];
-const GLYPH_ATTRS: [wgpu::VertexAttribute; 4] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32];
-
-/// Straight-alpha "over" that keeps the framebuffer valid premultiplied (RGB <= A).
-const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::SrcAlpha,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
-/// Additive glow; alpha accumulates with factor One so RGB never outgrows A (no compositor garbage).
-const BLEND_ADD: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::SrcAlpha,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
-// Markdown fragment output already includes all coverage, shape and animation alpha.
-const BLEND_PREMULTIPLIED_OVER: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, ..BLEND_OVER.color },
-    alpha: BLEND_OVER.alpha,
-};
-const BLEND_PREMULTIPLIED_ADD: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, ..BLEND_ADD.color },
-    alpha: BLEND_ADD.alpha,
-};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Geometry {
-    Pulse,
-    Field,
-    Glyph,
-    Markdown,
-}
-
 #[derive(Clone, Copy)]
-pub struct LayerSpec {
-    pub geometry: Geometry,
-    pub additive: bool,
+struct LayerSpec {
+    material: Material,
+    additive: bool,
     /// bloom_scale, soft, layer_alpha, size
-    pub params: [f32; 4],
+    params: [f32; 4],
 }
 
-/// Background, legacy glyphs, then the Markdown halo and core.
-pub const LAYERS: [LayerSpec; 8] = [
-    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [PULSE_HALO_SCALE, 1.0, PULSE_HALO_ALPHA, PULSE_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [1.0, 0.0, PULSE_CORE_ALPHA, PULSE_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Field, additive: true, params: [FIELD_HALO_SCALE, 1.0, FIELD_HALO_ALPHA, FIELD_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Field, additive: false, params: [1.0, 0.0, FIELD_CORE_ALPHA, FIELD_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [AUTO_GLYPH_HALO_SCALE, 1.0, GLYPH_HALO_ALPHA, GLYPH_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [1.0, 0.0, GLYPH_CORE_ALPHA, GLYPH_PARTICLE_SIZE] },
-    LayerSpec { geometry: Geometry::Markdown, additive: true, params: [MARKDOWN_HALO_SCALE, 1.0, MARKDOWN_HALO_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
-    LayerSpec { geometry: Geometry::Markdown, additive: false, params: [1.0, 0.0, MARKDOWN_CORE_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
+/// Draw order: background, short-message glyphs, then the Markdown halo and core.
+const LAYERS: [LayerSpec; 8] = [
+    LayerSpec { material: Material::Pulse, additive: true, params: [PULSE_HALO_SCALE, 1.0, PULSE_HALO_ALPHA, PULSE_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Pulse, additive: true, params: [1.0, 0.0, PULSE_CORE_ALPHA, PULSE_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Field, additive: true, params: [FIELD_HALO_SCALE, 1.0, FIELD_HALO_ALPHA, FIELD_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Field, additive: false, params: [1.0, 0.0, FIELD_CORE_ALPHA, FIELD_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Glyph, additive: true, params: [AUTO_GLYPH_HALO_SCALE, 1.0, GLYPH_HALO_ALPHA, GLYPH_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Glyph, additive: true, params: [1.0, 0.0, GLYPH_CORE_ALPHA, GLYPH_PARTICLE_SIZE] },
+    LayerSpec { material: Material::Markdown, additive: true, params: [MARKDOWN_HALO_SCALE, 1.0, MARKDOWN_HALO_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
+    LayerSpec { material: Material::Markdown, additive: false, params: [1.0, 0.0, MARKDOWN_CORE_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
 ];
-pub const GLYPH_BLOOM_LAYER: usize = 4;
+/// The glyph halo follows the active style's bloom size.
+const GLYPH_HALO_LAYER: usize = 4;
 
 struct Layer {
     spec: LayerSpec,
@@ -111,7 +62,6 @@ pub struct Gpu {
     pulse: (wgpu::Buffer, u32),
     glyph: wgpu::Buffer,
     markdown: (wgpu::Buffer, u32),
-    pub translucent: bool,
 }
 
 impl Gpu {
@@ -174,38 +124,13 @@ impl Gpu {
             wgpu::Color { r: BACKDROP_RGB[0], g: BACKDROP_RGB[1], b: BACKDROP_RGB[2], a: 1.0 }
         };
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particles.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
-        let uniform_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globals+layer"),
-            entries: &[uniform_entry(0), uniform_entry(1)],
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("particles"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
-
+        let factory = PipelineFactory::new(&device, format);
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: std::mem::size_of::<Globals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         let layers = LAYERS
             .iter()
             .map(|spec| {
@@ -216,7 +141,7 @@ impl Gpu {
                 });
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("layer"),
-                    layout: &bgl,
+                    layout: &factory.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
                         wgpu::BindGroupEntry { binding: 1, resource: uniform.as_entire_binding() },
@@ -226,53 +151,13 @@ impl Gpu {
             })
             .collect();
 
-        let vb = |stride: usize, attributes: &'static [wgpu::VertexAttribute]| wgpu::VertexBufferLayout {
-            array_stride: stride as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes,
-        };
-        let markdown_vb = [vb(std::mem::size_of::<crate::projection_board::Particle>(), &MARKDOWN_ATTRS)];
-        let field_vb = [vb(std::mem::size_of::<FieldInstance>(), &FIELD_ATTRS)];
-        let pulse_vb = [vb(std::mem::size_of::<PulseInstance>(), &PULSE_ATTRS)];
-        let glyph_vb = [vb(std::mem::size_of::<GlyphInstance>(), &GLYPH_ATTRS)];
-        let make = |vs: &str, fs: &str, buffers: &[wgpu::VertexBufferLayout], blend: wgpu::BlendState| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(vs),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: vs,
-                    compilation_options: Default::default(),
-                    buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: fs,
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(blend),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-        };
         let pipelines = Pipelines {
-            pulse: make("vs_pulse", "fs_pulse", &pulse_vb, BLEND_ADD),
-            field_add: make("vs_field", "fs_field", &field_vb, BLEND_ADD),
-            field_over: make("vs_field", "fs_field", &field_vb, BLEND_OVER),
-            glyph: make("vs_glyph", "fs_glyph", &glyph_vb, BLEND_ADD),
-            markdown_core: make("vs_markdown", "fs_markdown", &markdown_vb, BLEND_PREMULTIPLIED_OVER),
-            markdown_halo: make("vs_markdown", "fs_markdown", &markdown_vb, BLEND_PREMULTIPLIED_ADD),
+            pulse: factory.build(&device, Material::Pulse, BLEND_ADD),
+            field_add: factory.build(&device, Material::Field, BLEND_ADD),
+            field_over: factory.build(&device, Material::Field, BLEND_OVER),
+            glyph: factory.build(&device, Material::Glyph, BLEND_ADD),
+            markdown_core: factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_OVER),
+            markdown_halo: factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_ADD),
         };
 
         let empty = |label| {
@@ -293,7 +178,7 @@ impl Gpu {
             mapped_at_creation: false,
         });
 
-        Ok(Self { surface, device, queue, config, clear, globals, layers, pipelines, field, pulse, glyph, markdown, translucent })
+        Ok(Self { surface, device, queue, config, clear, globals, layers, pipelines, field, pulse, glyph, markdown })
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -311,21 +196,19 @@ impl Gpu {
 
     pub fn set_field(&mut self, field: &[FieldInstance], pulse: &[PulseInstance]) {
         let init = |label, contents: &[u8]| {
-            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents,
-                usage: wgpu::BufferUsages::VERTEX,
-            })
+            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::VERTEX })
         };
         self.field = (init("field", bytemuck::cast_slice(field)), field.len() as u32);
         self.pulse = (init("pulse", bytemuck::cast_slice(pulse)), pulse.len() as u32);
     }
 
-    pub fn set_markdown(&mut self, particles: &[crate::projection_board::Particle]) {
+    pub fn set_markdown(&mut self, particles: &[Particle]) {
         self.markdown.1 = particles.len() as u32;
         if !particles.is_empty() {
             self.markdown.0 = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("markdown"), contents: bytemuck::cast_slice(particles), usage: wgpu::BufferUsages::VERTEX,
+                label: Some("markdown"),
+                contents: bytemuck::cast_slice(particles),
+                usage: wgpu::BufferUsages::VERTEX,
             });
         }
     }
@@ -335,11 +218,10 @@ impl Gpu {
         self.queue.write_buffer(&self.glyph, 0, bytemuck::cast_slice(&glyph[..n]));
     }
 
-    pub fn set_layer_bloom(&mut self, index: usize, bloom_scale: f32) {
-        if let Some(layer) = self.layers.get_mut(index) {
-            layer.spec.params[0] = bloom_scale;
-            self.queue.write_buffer(&layer.uniform, 0, bytemuck::cast_slice(&layer.spec.params));
-        }
+    pub fn set_glyph_bloom(&mut self, bloom_scale: f32) {
+        let layer = &mut self.layers[GLYPH_HALO_LAYER];
+        layer.spec.params[0] = bloom_scale;
+        self.queue.write_buffer(&layer.uniform, 0, bytemuck::cast_slice(&layer.spec.params));
     }
 
     pub fn render(&mut self, globals: &Globals, glyph_visible: bool) {
@@ -358,6 +240,7 @@ impl Gpu {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(globals));
 
+        let markdown_visible = globals.markdown_visible();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -372,17 +255,17 @@ impl Gpu {
                 occlusion_query_set: None,
             });
             for layer in &self.layers {
-                let (pipeline, buffer, count) = match layer.spec.geometry {
-                    Geometry::Pulse => (&self.pipelines.pulse, &self.pulse.0, self.pulse.1),
-                    Geometry::Field if layer.spec.additive => (&self.pipelines.field_add, &self.field.0, self.field.1),
-                    Geometry::Field => (&self.pipelines.field_over, &self.field.0, self.field.1),
-                    Geometry::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, EVENT_PARTICLE_COUNT as u32),
-                    Geometry::Glyph => continue,
-                    Geometry::Markdown if globals.panel[0] > 0.0 => (
+                let (pipeline, buffer, count) = match layer.spec.material {
+                    Material::Pulse => (&self.pipelines.pulse, &self.pulse.0, self.pulse.1),
+                    Material::Field if layer.spec.additive => (&self.pipelines.field_add, &self.field.0, self.field.1),
+                    Material::Field => (&self.pipelines.field_over, &self.field.0, self.field.1),
+                    Material::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, EVENT_PARTICLE_COUNT as u32),
+                    Material::Markdown if markdown_visible => (
                         if layer.spec.additive { &self.pipelines.markdown_halo } else { &self.pipelines.markdown_core },
-                        &self.markdown.0, self.markdown.1,
+                        &self.markdown.0,
+                        self.markdown.1,
                     ),
-                    Geometry::Markdown => continue,
+                    Material::Glyph | Material::Markdown => continue,
                 };
                 if count == 0 {
                     continue;
@@ -392,7 +275,6 @@ impl Gpu {
                 pass.set_vertex_buffer(0, buffer.slice(..));
                 pass.draw(0..6, 0..count);
             }
-
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
@@ -408,7 +290,3 @@ fn pick_alpha_mode(supported: &[wgpu::CompositeAlphaMode], want_transparent: boo
     };
     order.iter().copied().find(|m| supported.contains(m)).unwrap_or(supported[0])
 }
-
-#[cfg(test)]
-#[path = "text_material_tests.rs"]
-mod text_material_tests;
