@@ -1,18 +1,16 @@
-//! wgpu renderer: six instanced sprite layers (Twin Bloom = core + soft halo per geometry).
+//! wgpu renderer: core + soft halo per geometry; Markdown uses premultiplied output.
 
 use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::sampling::{FieldInstance, GlyphInstance, PulseInstance, EVENT_PARTICLE_COUNT};
+use crate::sampling::{FieldInstance, GlyphInstance, PulseInstance};
 use crate::scene::Globals;
 
-/// Wallpaper backdrop #060a0f.
-const BG: [f64; 3] = [6.0 / 255.0, 10.0 / 255.0, 15.0 / 255.0];
-/// Safe translucent backdrop when the compositor supports per-pixel alpha.
-const TRANSLUCENT_ALPHA: f64 = 0.78;
+use crate::render_config::*;
 
+const MARKDOWN_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32x2];
 const FIELD_ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 const PULSE_ATTRS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32, 2 => Float32x3];
 const GLYPH_ATTRS: [wgpu::VertexAttribute; 4] =
@@ -46,11 +44,22 @@ const BLEND_ADD: wgpu::BlendState = wgpu::BlendState {
     },
 };
 
+// Markdown fragment output already includes all coverage, shape and animation alpha.
+const BLEND_PREMULTIPLIED_OVER: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, ..BLEND_OVER.color },
+    alpha: BLEND_OVER.alpha,
+};
+const BLEND_PREMULTIPLIED_ADD: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, ..BLEND_ADD.color },
+    alpha: BLEND_ADD.alpha,
+};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Geometry {
     Pulse,
     Field,
     Glyph,
+    Markdown,
 }
 
 #[derive(Clone, Copy)]
@@ -61,14 +70,16 @@ pub struct LayerSpec {
     pub params: [f32; 4],
 }
 
-/// Draw order matches the Three.js scene renderOrder 0..5.
-pub const LAYERS: [LayerSpec; 6] = [
-    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [2.5, 1.0, 0.36, 1.55] },
-    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [1.0, 0.0, 0.85, 1.55] },
-    LayerSpec { geometry: Geometry::Field, additive: true, params: [2.2, 1.0, 0.22, 1.65] },
-    LayerSpec { geometry: Geometry::Field, additive: false, params: [1.0, 0.0, 1.0, 1.65] },
-    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [2.35, 1.0, 0.52, 1.9] },
-    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [1.0, 0.0, 0.95, 1.9] },
+/// Background, legacy glyphs, then the Markdown halo and core.
+pub const LAYERS: [LayerSpec; 8] = [
+    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [PULSE_HALO_SCALE, 1.0, PULSE_HALO_ALPHA, PULSE_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Pulse, additive: true, params: [1.0, 0.0, PULSE_CORE_ALPHA, PULSE_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Field, additive: true, params: [FIELD_HALO_SCALE, 1.0, FIELD_HALO_ALPHA, FIELD_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Field, additive: false, params: [1.0, 0.0, FIELD_CORE_ALPHA, FIELD_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [AUTO_GLYPH_HALO_SCALE, 1.0, GLYPH_HALO_ALPHA, GLYPH_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Glyph, additive: true, params: [1.0, 0.0, GLYPH_CORE_ALPHA, GLYPH_PARTICLE_SIZE] },
+    LayerSpec { geometry: Geometry::Markdown, additive: true, params: [MARKDOWN_HALO_SCALE, 1.0, MARKDOWN_HALO_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
+    LayerSpec { geometry: Geometry::Markdown, additive: false, params: [1.0, 0.0, MARKDOWN_CORE_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
 ];
 pub const GLYPH_BLOOM_LAYER: usize = 4;
 
@@ -83,6 +94,8 @@ struct Pipelines {
     field_add: wgpu::RenderPipeline,
     field_over: wgpu::RenderPipeline,
     glyph: wgpu::RenderPipeline,
+    markdown_core: wgpu::RenderPipeline,
+    markdown_halo: wgpu::RenderPipeline,
 }
 
 pub struct Gpu {
@@ -97,6 +110,7 @@ pub struct Gpu {
     field: (wgpu::Buffer, u32),
     pulse: (wgpu::Buffer, u32),
     glyph: wgpu::Buffer,
+    markdown: (wgpu::Buffer, u32),
     pub translucent: bool,
 }
 
@@ -153,11 +167,11 @@ impl Gpu {
 
         let clear = if translucent {
             // Premultiplied clear: RGB scaled by A so the compositor never sees RGB > A.
-            let a = TRANSLUCENT_ALPHA;
+            let a = BACKDROP_ALPHA;
             let k = if alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied { a } else { 1.0 };
-            wgpu::Color { r: BG[0] * k, g: BG[1] * k, b: BG[2] * k, a }
+            wgpu::Color { r: BACKDROP_RGB[0] * k, g: BACKDROP_RGB[1] * k, b: BACKDROP_RGB[2] * k, a }
         } else {
-            wgpu::Color { r: BG[0], g: BG[1], b: BG[2], a: 1.0 }
+            wgpu::Color { r: BACKDROP_RGB[0], g: BACKDROP_RGB[1], b: BACKDROP_RGB[2], a: 1.0 }
         };
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -217,6 +231,7 @@ impl Gpu {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes,
         };
+        let markdown_vb = [vb(std::mem::size_of::<crate::projection_board::Particle>(), &MARKDOWN_ATTRS)];
         let field_vb = [vb(std::mem::size_of::<FieldInstance>(), &FIELD_ATTRS)];
         let pulse_vb = [vb(std::mem::size_of::<PulseInstance>(), &PULSE_ATTRS)];
         let glyph_vb = [vb(std::mem::size_of::<GlyphInstance>(), &GLYPH_ATTRS)];
@@ -256,6 +271,8 @@ impl Gpu {
             field_add: make("vs_field", "fs_field", &field_vb, BLEND_ADD),
             field_over: make("vs_field", "fs_field", &field_vb, BLEND_OVER),
             glyph: make("vs_glyph", "fs_glyph", &glyph_vb, BLEND_ADD),
+            markdown_core: make("vs_markdown", "fs_markdown", &markdown_vb, BLEND_PREMULTIPLIED_OVER),
+            markdown_halo: make("vs_markdown", "fs_markdown", &markdown_vb, BLEND_PREMULTIPLIED_ADD),
         };
 
         let empty = |label| {
@@ -268,6 +285,7 @@ impl Gpu {
         };
         let field = (empty("field"), 0);
         let pulse = (empty("pulse"), 0);
+        let markdown = (empty("markdown"), 0);
         let glyph = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph"),
             size: (EVENT_PARTICLE_COUNT * std::mem::size_of::<GlyphInstance>()) as u64,
@@ -275,7 +293,7 @@ impl Gpu {
             mapped_at_creation: false,
         });
 
-        Ok(Self { surface, device, queue, config, clear, globals, layers, pipelines, field, pulse, glyph, translucent })
+        Ok(Self { surface, device, queue, config, clear, globals, layers, pipelines, field, pulse, glyph, markdown, translucent })
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -301,6 +319,15 @@ impl Gpu {
         };
         self.field = (init("field", bytemuck::cast_slice(field)), field.len() as u32);
         self.pulse = (init("pulse", bytemuck::cast_slice(pulse)), pulse.len() as u32);
+    }
+
+    pub fn set_markdown(&mut self, particles: &[crate::projection_board::Particle]) {
+        self.markdown.1 = particles.len() as u32;
+        if !particles.is_empty() {
+            self.markdown.0 = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("markdown"), contents: bytemuck::cast_slice(particles), usage: wgpu::BufferUsages::VERTEX,
+            });
+        }
     }
 
     pub fn set_glyph(&self, glyph: &[GlyphInstance]) {
@@ -351,6 +378,11 @@ impl Gpu {
                     Geometry::Field => (&self.pipelines.field_over, &self.field.0, self.field.1),
                     Geometry::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, EVENT_PARTICLE_COUNT as u32),
                     Geometry::Glyph => continue,
+                    Geometry::Markdown if globals.panel[0] > 0.0 => (
+                        if layer.spec.additive { &self.pipelines.markdown_halo } else { &self.pipelines.markdown_core },
+                        &self.markdown.0, self.markdown.1,
+                    ),
+                    Geometry::Markdown => continue,
                 };
                 if count == 0 {
                     continue;
@@ -360,6 +392,7 @@ impl Gpu {
                 pass.set_vertex_buffer(0, buffer.slice(..));
                 pass.draw(0..6, 0..count);
             }
+
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
@@ -375,3 +408,7 @@ fn pick_alpha_mode(supported: &[wgpu::CompositeAlphaMode], want_transparent: boo
     };
     order.iter().copied().find(|m| supported.contains(m)).unwrap_or(supported[0])
 }
+
+#[cfg(test)]
+#[path = "text_material_tests.rs"]
+mod text_material_tests;

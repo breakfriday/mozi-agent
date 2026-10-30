@@ -5,11 +5,7 @@ use std::path::Path;
 
 use crate::styles::LcgRng;
 
-pub const FIELD_GRID_W: u32 = 320;
-pub const FIELD_GRID_H: u32 = 200;
-pub const PULSE_GRID_W: u32 = 160;
-pub const PULSE_GRID_H: u32 = 96;
-pub const EVENT_PARTICLE_COUNT: usize = 4000;
+use crate::render_config::*;
 
 // Must stay in sync with the constants at the top of shader.wgsl.
 pub const EVENT_ASSEMBLE: f32 = 1.0;
@@ -272,12 +268,12 @@ pub fn load_system_font() -> Option<FontArc> {
 
 /// Rasterizes notice text into 3D target coordinates.
 pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
-    let clean: String = text.trim().chars().take(38).collect();
+    let clean: String = text.trim().chars().take(TEXT_MAX_CHARS).collect();
     let label = if clean.is_empty() { "MOZI" } else { &clean };
     let mut points = Vec::new();
 
     if let Some(font) = font {
-        let scale = PxScale::from(76.0);
+        let scale = PxScale::from(TEXT_RASTER_SIZE_PX);
         let scaled = font.as_scaled(scale);
         let mut cursor_x = 0.0f32;
         let mut glyphs = Vec::new();
@@ -285,25 +281,25 @@ pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
         for ch in label.chars() {
             let glyph_id = scaled.glyph_id(ch);
             let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(cursor_x, scaled.ascent()));
-            cursor_x += scaled.h_advance(glyph_id) + 3.0;
+            cursor_x += scaled.h_advance(glyph_id) + TEXT_LETTER_SPACING_PX;
             glyphs.push(glyph);
         }
 
         let total_w = cursor_x.max(1.0);
         let total_h = (scaled.ascent() - scaled.descent()).max(1.0);
-        let world_scale = (8.8 / total_w).min(1.65 / total_h);
+        let world_scale = (TEXT_MAX_WIDTH / total_w).min(TEXT_MAX_HEIGHT / total_h);
         let mut rng = LcgRng::new(0x9E37_79B9_7F4A_7C15);
 
         for glyph in glyphs {
             if let Some(outlined) = font.outline_glyph(glyph) {
                 let bounds = outlined.px_bounds();
                 outlined.draw(|gx, gy, coverage| {
-                    if coverage > 0.32 && ((gx + gy) % 2 == 0) {
+                    if coverage > TEXT_COVERAGE_THRESHOLD && ((gx + gy) % TEXT_SAMPLE_STRIDE == 0) {
                         let px = bounds.min.x + gx as f32;
                         let py = bounds.min.y + gy as f32;
                         let wx = (px - total_w * 0.5) * world_scale;
                         let wy = (total_h * 0.5 - py) * world_scale;
-                        let wz = 2.3 + (rng.next_f32() - 0.5) * 0.14;
+                        let wz = TEXT_PLANE_Z + (rng.next_f32() - 0.5) * TEXT_DEPTH_JITTER;
                         points.push([wx, wy, wz]);
                     }
                 });
@@ -317,7 +313,7 @@ pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
             let t = i as f32 / EVENT_PARTICLE_COUNT as f32;
             let x = (t - 0.5) * 6.5;
             let y = ((t * 32.0).sin()) * 0.45;
-            points.push([x, y, 2.3]);
+            points.push([x, y, TEXT_PLANE_Z]);
         }
     }
     points
@@ -371,7 +367,7 @@ pub fn fill_event_buffers(
             (i * (n - 1)) / (EVENT_PARTICLE_COUNT - 1)
         };
         let target = ordered[pick];
-        let jitter = (rng.next_f32() - 0.5) * 0.025;
+        let jitter = (rng.next_f32() - 0.5) * TEXT_TARGET_JITTER;
         let target_pos = [target[0] + jitter, target[1] + jitter, target[2]];
 
         let u = ((target[0] + (rng.next_f32() - 0.5) * 2.2) / world_w + 0.5).clamp(0.0, 1.0);

@@ -19,6 +19,7 @@ use winit::event_loop::EventLoopProxy;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Command {
+    Project { content: Option<crate::scene::Projection> },
     Notice {
         #[serde(default)]
         key: Option<String>,
@@ -48,6 +49,7 @@ pub enum Reply<'a> {
 
 #[derive(Debug)]
 pub enum UserEvent {
+    Markdown(crate::markdown::Completed),
     Command(Command),
     StdinClosed,
 }

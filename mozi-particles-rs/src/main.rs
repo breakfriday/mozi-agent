@@ -1,3 +1,6 @@
+mod markdown;
+mod projection_board;
+mod render_config;
 mod gpu;
 mod ipc;
 mod sampling;
@@ -16,10 +19,10 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::gpu::{Gpu, GLYPH_BLOOM_LAYER};
+use crate::render_config::{FIELD_GRID_H, FIELD_GRID_W, PULSE_GRID_H, PULSE_GRID_W};
 use crate::ipc::{reply, spawn_stdin_reader, Command, Reply, UserEvent};
 use crate::sampling::{
-    load_system_font, load_wallpaper, sample_field, sample_pulse, FieldSamples, FIELD_GRID_H,
-    FIELD_GRID_W, PULSE_GRID_H, PULSE_GRID_W,
+    load_system_font, load_wallpaper, sample_field, sample_pulse, FieldSamples,
 };
 use crate::scene::{Notice, Scene, Tone};
 use crate::styles::PARTICLE_STYLES;
@@ -84,6 +87,7 @@ fn detect_gnome_wallpaper() -> Option<PathBuf> {
 
 struct App {
     config: Config,
+    markdown: markdown::Panel,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
     field: FieldSamples,
@@ -95,13 +99,14 @@ struct App {
 }
 
 impl App {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, proxy: winit::event_loop::EventLoopProxy<UserEvent>) -> Self {
         let img = load_wallpaper(config.wallpaper.as_deref());
         let field = sample_field(&img, FIELD_GRID_W, FIELD_GRID_H);
         let font = load_system_font();
         let scene = Scene::new(font, config.style.as_deref());
         Self {
             config,
+            markdown: markdown::Panel::new(move |frame| { let _ = proxy.send_event(UserEvent::Markdown(frame)); }),
             window: None,
             gpu: None,
             field,
@@ -113,6 +118,19 @@ impl App {
         }
     }
 
+    fn sync_viewport(&mut self) {
+        if let Some(window) = &self.window {
+            let size = window.inner_size();
+            if let Some(gpu) = &mut self.gpu {
+                if gpu.size() != (size.width, size.height) { gpu.resize(size.width, size.height); }
+            }
+            if let Err(message) = self.markdown.resize(size.width, size.height, window.scale_factor()) {
+                eprintln!("[mozi-particles] {message}");
+            }
+            window.request_redraw();
+        }
+    }
+
     fn reload_wallpaper(&mut self, path: Option<&Path>) {
         let resolved = path.map(Path::to_path_buf).or_else(detect_gnome_wallpaper);
         let img = load_wallpaper(resolved.as_deref());
@@ -120,13 +138,6 @@ impl App {
         let pulse = sample_pulse(&self.field, PULSE_GRID_W, PULSE_GRID_H);
         if let Some(gpu) = self.gpu.as_mut() {
             gpu.set_field(&self.field.instances, &pulse);
-        }
-    }
-
-    fn update_title(&self) {
-        if let Some(window) = &self.window {
-            // ASCII title avoids missing CJK glyphs in Wayland client-side decorations.
-            window.set_title("Mozi Particles");
         }
     }
 
@@ -168,8 +179,8 @@ impl ApplicationHandler<UserEvent> for App {
                 gpu.set_layer_bloom(GLYPH_BLOOM_LAYER, self.scene.style.bloom_size);
                 self.gpu = Some(gpu);
                 self.window = Some(window.clone());
+                self.sync_viewport();
                 self.last_frame = Instant::now();
-                self.update_title();
                 reply(Reply::Ready);
                 window.request_redraw();
             }
@@ -182,11 +193,29 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::Markdown(frame) => {
+                if let Some(result) = self.markdown.accept(frame) {
+                    match result {
+                        Ok(frame) => if let Some(gpu) = &mut self.gpu { gpu.set_markdown(self.markdown.animate(&frame, self.scene.time)); },
+                        Err(message) => { eprintln!("[mozi-particles] {message}"); reply(Reply::Error { message: &message }); }
+                    }
+                    if let Some(w) = &self.window { w.request_redraw(); }
+                }
+            }
             UserEvent::StdinClosed => {
                 reply(Reply::Closed);
                 event_loop.exit();
             }
             UserEvent::Command(cmd) => match cmd {
+                Command::Project { content } => {
+                    self.scene.project(None);
+                    if let Some(content) = content {
+                        if let Err(message) = self.markdown.project(&content.key, &content.text, content.role) {
+                            eprintln!("[mozi-particles] {message}"); reply(Reply::Error { message: &message });
+                        }
+                    } else { self.markdown.clear(); }
+                    if let Some(w) = &self.window { w.request_redraw(); }
+                }
                 Command::Notice { key, text, tone } => {
                     self.scene.enqueue(Notice {
                         key: key.unwrap_or_else(|| format!("ipc-{}", self.scene.time)),
@@ -213,7 +242,6 @@ impl ApplicationHandler<UserEvent> for App {
                     if let Some(gpu) = self.gpu.as_mut() {
                         gpu.set_layer_bloom(GLYPH_BLOOM_LAYER, self.scene.style.bloom_size);
                     }
-                    self.update_title();
                 }
                 Command::Wallpaper { path } => {
                     self.reload_wallpaper(path.as_deref().map(Path::new));
@@ -239,10 +267,8 @@ impl ApplicationHandler<UserEvent> for App {
                 reply(Reply::Closed);
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => {
-                if let Some(gpu) = self.gpu.as_mut() {
-                    gpu.resize(size.width, size.height);
-                }
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.sync_viewport();
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 self.dragging = state == ElementState::Pressed;
@@ -285,7 +311,6 @@ impl ApplicationHandler<UserEvent> for App {
                         if let Some(gpu) = self.gpu.as_mut() {
                             gpu.set_layer_bloom(GLYPH_BLOOM_LAYER, self.scene.style.bloom_size);
                         }
-                        self.update_title();
                     }
                     Key::Named(NamedKey::F11) => {
                         if let Some(w) = &self.window {
@@ -324,7 +349,6 @@ impl ApplicationHandler<UserEvent> for App {
                             if let Some(gpu) = self.gpu.as_mut() {
                                 gpu.set_layer_bloom(GLYPH_BLOOM_LAYER, self.scene.style.bloom_size);
                             }
-                            self.update_title();
                         }
                         _ => {}
                     },
@@ -336,20 +360,18 @@ impl ApplicationHandler<UserEvent> for App {
                 let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
                 self.last_frame = now;
 
-                let had_notice = self.scene.current.is_some();
                 if let Some(upload) = self.scene.update(dt, &self.field) {
                     if let Some(gpu) = &self.gpu {
                         gpu.set_glyph(&upload.instances);
                     }
-                    self.update_title();
-                } else if had_notice && self.scene.current.is_none() {
-                    self.update_title();
                 }
 
                 if let (Some(gpu), Some(window)) = (self.gpu.as_mut(), self.window.as_ref()) {
                     let (w, h) = gpu.size();
                     let dpr = window.scale_factor() as f32;
-                    let globals = self.scene.globals(w as f32, h as f32, dpr);
+                    let mut globals = self.scene.globals(w as f32, h as f32, dpr);
+                    globals.panel = self.markdown.uniforms();
+                    globals.panel_motion = [render_config::MARKDOWN_REFLOW_SECONDS, self.markdown.world_scale(w as f32, h as f32), render_config::MARKDOWN_PLANE_Z, render_config::MARKDOWN_MIN_RADIUS_PX];
                     gpu.render(&globals, self.scene.glyph_visible());
                     if !self.scene.paused {
                         window.request_redraw();
@@ -383,6 +405,6 @@ fn main() {
         .expect("build winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     spawn_stdin_reader(event_loop.create_proxy());
-    let mut app = App::new(config);
+    let mut app = App::new(config, event_loop.create_proxy());
     let _ = event_loop.run_app(&mut app);
 }

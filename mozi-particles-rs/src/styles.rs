@@ -1,3 +1,4 @@
+use crate::render_config;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +83,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: ALL_DANCES,
         swirl: 1.5,
         disp_fade: 0.25,
-        bloom_size: 2.35,
+        bloom_size: render_config::AUTO_GLYPH_HALO_SCALE,
         pulse_alpha: 0.85,
     },
     ParticleStyle {
@@ -94,7 +95,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Fall],
         swirl: 0.7,
         disp_fade: 0.35,
-        bloom_size: 2.4,
+        bloom_size: render_config::METEOR_GLYPH_HALO_SCALE,
         pulse_alpha: 0.9,
     },
     ParticleStyle {
@@ -106,7 +107,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Shimmer],
         swirl: 1.4,
         disp_fade: 0.15,
-        bloom_size: 2.7,
+        bloom_size: render_config::FIREWORK_GLYPH_HALO_SCALE,
         pulse_alpha: 0.95,
     },
     ParticleStyle {
@@ -118,7 +119,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Breathe],
         swirl: 0.6,
         disp_fade: 0.85,
-        bloom_size: 2.1,
+        bloom_size: render_config::INK_GLYPH_HALO_SCALE,
         pulse_alpha: 0.65,
     },
     ParticleStyle {
@@ -130,7 +131,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Vortex],
         swirl: 3.1,
         disp_fade: 0.2,
-        bloom_size: 2.45,
+        bloom_size: render_config::VORTEX_GLYPH_HALO_SCALE,
         pulse_alpha: 0.9,
     },
     ParticleStyle {
@@ -142,7 +143,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Wave],
         swirl: 0.9,
         disp_fade: 0.45,
-        bloom_size: 2.5,
+        bloom_size: render_config::AURORA_GLYPH_HALO_SCALE,
         pulse_alpha: 1.0,
     },
     ParticleStyle {
@@ -154,7 +155,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Breathe, DanceMode::Vortex],
         swirl: 2.0,
         disp_fade: 0.25,
-        bloom_size: 2.4,
+        bloom_size: render_config::RING_GLYPH_HALO_SCALE,
         pulse_alpha: 0.85,
     },
     ParticleStyle {
@@ -166,7 +167,7 @@ pub const PARTICLE_STYLES: &[ParticleStyle] = &[
         dances: &[DanceMode::Wave, DanceMode::Breathe],
         swirl: 0.5,
         disp_fade: 0.6,
-        bloom_size: 2.15,
+        bloom_size: render_config::STILL_GLYPH_HALO_SCALE,
         pulse_alpha: 0.7,
     },
 ];

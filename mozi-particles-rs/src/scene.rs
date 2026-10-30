@@ -10,6 +10,7 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::sampling::{
     fill_event_buffers, sample_text, FieldSamples, GlyphInstance, EVENT_DURATION, GLYPH_LANDING,
 };
+use crate::render_config::{PROJECTION_MIN_READ_SECONDS, PROJECTION_READ_CHARS_PER_SECOND, PROJECTION_TRANSITION_SECONDS};
 use crate::styles::{BagPicker, LcgRng, ParticleStyle, PARTICLE_STYLES};
 
 #[repr(C)]
@@ -25,6 +26,8 @@ pub struct Globals {
     pub glow: [f32; 4],
     pub ripple: [f32; 4],
     pub pointer: [f32; 4],
+    pub panel: [f32; 4],
+    pub panel_motion: [f32; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +100,7 @@ pub struct OrbitCamera {
 
 impl Default for OrbitCamera {
     fn default() -> Self {
-        Self { yaw: 0.0, pitch: 0.0, distance: 12.5, last_interaction: -100.0 }
+        Self { yaw: 0.0, pitch: 0.0, distance: crate::render_config::CAMERA_INITIAL_DISTANCE, last_interaction: -100.0 }
     }
 }
 
@@ -128,6 +131,18 @@ impl OrbitCamera {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectionRole { User, Assistant, Activity }
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Projection {
+    pub key: String,
+    pub text: String,
+    pub role: ProjectionRole,
+    pub streaming: bool,
+}
+
 pub struct GlyphUpload {
     pub instances: Vec<GlyphInstance>,
 }
@@ -140,6 +155,13 @@ pub struct Scene {
     pub style: &'static ParticleStyle,
     pub depth: f32,
     queue: NoticeQueue,
+    pending_projection: Option<Projection>,
+    streaming: bool,
+    read_until: Option<f32>,
+    glyph_instances: Vec<GlyphInstance>,
+    transition_from: Vec<GlyphInstance>,
+    transition_to: Vec<GlyphInstance>,
+    transition_age: f32,
     bags: BagPicker,
     rng: LcgRng,
     font: Option<FontArc>,
@@ -168,6 +190,13 @@ impl Scene {
             style: find_style(style_id.unwrap_or("auto")),
             depth: 1.0,
             queue: NoticeQueue::default(),
+            pending_projection: None,
+            streaming: false,
+            read_until: None,
+            glyph_instances: Vec::new(),
+            transition_from: Vec::new(),
+            transition_to: Vec::new(),
+            transition_age: 1.0,
             bags: BagPicker::new(),
             rng: LcgRng::new(0x0DDB_A11C_0FFE_E000),
             font,
@@ -202,7 +231,66 @@ impl Scene {
     }
 
     pub fn glyph_age(&self) -> f32 {
-        self.time - self.glyph_start
+        let age = self.time - self.glyph_start;
+        if let Some(deadline) = self.read_until {
+            let release = if self.streaming || self.pending_projection.is_some() { 0.0 } else { (self.time - deadline).max(0.0) };
+            age.min(GLYPH_LANDING + 0.2) + release
+        } else { age }
+    }
+
+    pub fn project(&mut self, content: Option<Projection>) {
+        self.queue = NoticeQueue::default();
+        // A finish marker for unchanged text updates lifetime, without restarting its reading timer.
+        if let Some(ref next) = content {
+            if self.current.as_ref().is_some_and(|n| n.key == next.key && n.text == Self::projection_text(next)) {
+                self.streaming = next.streaming;
+                self.pending_projection = None;
+                return;
+            }
+        }
+        self.pending_projection = content;
+        if self.pending_projection.is_none() {
+            self.streaming = false;
+            self.read_until = None;
+            self.current = None;
+            self.glyph_start = -100.0;
+            self.transition_age = 1.0;
+        }
+    }
+
+    fn projection_text(content: &Projection) -> String {
+        let prefix = match content.role { ProjectionRole::User => "你：", ProjectionRole::Assistant => "AI：", ProjectionRole::Activity => "" };
+        format!("{}{}", prefix, content.text)
+    }
+
+    fn apply_projection(&mut self, content: Projection, field: &FieldSamples) -> Option<GlyphUpload> {
+        let text = Self::projection_text(&content);
+        let reading = PROJECTION_MIN_READ_SECONDS.max(text.chars().count() as f32 / PROJECTION_READ_CHARS_PER_SECOND);
+        let continuing = self.glyph_visible() && !self.glyph_instances.is_empty();
+        let age = self.glyph_age();
+        self.streaming = content.streaming;
+        if continuing { self.glyph_start = self.time - age.min(GLYPH_LANDING + 0.2); }
+        if self.current.as_ref().is_some_and(|n| n.key == content.key && n.text == text) {
+            return None;
+        }
+        let notice = Notice { key: content.key, text, tone: Tone::Activity };
+        if !continuing {
+            let upload = self.start(notice, field);
+            self.read_until = Some(self.time + GLYPH_LANDING + reading);
+            if matches!(content.role, ProjectionRole::User) { self.glow = [0.4, 0.75, 1.0]; }
+            return Some(upload);
+        }
+        let targets = sample_text(&notice.text, self.font.as_ref());
+        let (next, bounds) = fill_event_buffers(&targets, field, &mut self.rng);
+        // Rebase on the currently displayed targets, including mid-transition updates.
+        self.transition_from = self.glyph_instances.clone();
+        self.transition_to = next;
+        self.transition_age = 0.0;
+        self.read_until = Some(self.time + PROJECTION_TRANSITION_SECONDS + reading);
+        self.glyph_bounds = [bounds.center[0], bounds.center[1], bounds.half_size[0], bounds.half_size[1]];
+        self.glow = if matches!(content.role, ProjectionRole::User) { [0.4, 0.75, 1.0] } else { Tone::Activity.glow() };
+        self.current = Some(notice);
+        None
     }
 
     pub fn glyph_visible(&self) -> bool {
@@ -233,6 +321,20 @@ impl Scene {
         let k = 1.0 - (-dt * 6.0).exp();
         self.pointer_strength += (self.pointer_target - self.pointer_strength) * k;
 
+        if self.read_until.is_none_or(|deadline| self.time >= deadline) {
+            if let Some(content) = self.pending_projection.take() {
+                if let Some(upload) = self.apply_projection(content, field) { return Some(upload); }
+            }
+        }
+        if self.transition_age < PROJECTION_TRANSITION_SECONDS {
+            self.transition_age = (self.transition_age + dt).min(PROJECTION_TRANSITION_SECONDS);
+            let t = self.transition_age / PROJECTION_TRANSITION_SECONDS;
+            let blend = t * t * (3.0 - 2.0 * t);
+            for ((current, from), to) in self.glyph_instances.iter_mut().zip(&self.transition_from).zip(&self.transition_to) {
+                for axis in 0..3 { current.target_pos[axis] = from.target_pos[axis] + (to.target_pos[axis] - from.target_pos[axis]) * blend; }
+            }
+            return Some(GlyphUpload { instances: self.glyph_instances.clone() });
+        }
         if self.glyph_visible() {
             return None;
         }
@@ -242,6 +344,7 @@ impl Scene {
     }
 
     fn start(&mut self, notice: Notice, field: &FieldSamples) -> GlyphUpload {
+        self.read_until = None;
         let targets = sample_text(&notice.text, self.font.as_ref());
         let (instances, bounds) = fill_event_buffers(&targets, field, &mut self.rng);
         let style = self.style;
@@ -258,12 +361,14 @@ impl Scene {
         // The ripple fires as the strokes land, like Terse's arrival pulse.
         self.ripple = [bounds.center[0], bounds.center[1], self.time + GLYPH_LANDING * 0.85];
         self.current = Some(notice);
+        self.glyph_instances = instances.clone();
+        self.transition_age = 1.0;
         GlyphUpload { instances }
     }
 
     pub fn matrices(&self, width: f32, height: f32) -> (Mat4, Mat4) {
         let aspect = (width / height.max(1.0)).max(0.1);
-        let proj = Mat4::perspective_rh(45f32.to_radians(), aspect, 0.1, 100.0);
+        let proj = Mat4::perspective_rh(crate::render_config::CAMERA_FOV_DEGREES.to_radians(), aspect, 0.1, 100.0);
         let view = Mat4::look_at_rh(self.camera.eye(self.time, self.cruise), Vec3::ZERO, Vec3::Y);
         (proj, view)
     }
@@ -296,6 +401,8 @@ impl Scene {
             glow: [self.glow[0], self.glow[1], self.glow[2], 0.5],
             ripple: [self.ripple[0], self.ripple[1], self.ripple[2], 0.0],
             pointer: [self.pointer_world.x, self.pointer_world.y, self.pointer_strength, 0.0],
+            panel: [0.0; 4],
+            panel_motion: [0.0; 4],
         }
     }
 }
@@ -355,4 +462,67 @@ mod tests {
         let p = scene.unproject(640.0, 430.0, 1280.0, 860.0).unwrap();
         assert!(p.length() < 1e-3);
     }
+    #[test]
+    fn streaming_projection_retargets_without_reassembling_and_finishes() {
+        let field = crate::sampling::sample_field(&crate::sampling::create_landscape(16, 12), 16, 12);
+        let mut scene = Scene::new(None, None);
+        let content = |text: &str, streaming| Projection { key: "a".into(), text: text.into(), role: ProjectionRole::Assistant, streaming };
+        scene.project(Some(content("Hello", true)));
+        assert!(scene.update(0.016, &field).is_some());
+        for _ in 0..100 { scene.update(0.1, &field); }
+        assert!(scene.glyph_visible());
+        let previous = scene.glyph_instances.clone();
+        scene.project(Some(content("A much longer answer", true)));
+        scene.update(0.016, &field);
+        assert!(scene.glyph_age() >= GLYPH_LANDING);
+        assert_eq!(scene.glyph_instances[0].home_pos, previous[0].home_pos);
+        let from = previous[0].target_pos[0];
+        let to = scene.transition_to[0].target_pos[0];
+        let current = scene.glyph_instances[0].target_pos[0];
+        assert!(current >= from.min(to) && current <= from.max(to));
+        assert!((current - from).abs() < (to - from).abs() + 0.0001);
+        scene.project(Some(content("A much longer answer", false)));
+        for _ in 0..100 { scene.update(0.1, &field); }
+        assert!(!scene.glyph_visible());
+        scene.project(Some(content("new", true)));
+        scene.update(0.1, &field);
+        scene.project(None);
+        assert!(!scene.glyph_visible());
+        assert!(scene.current.is_none());
+    }
+
+    #[test]
+    fn fast_stream_keeps_reading_time_and_only_displays_latest_pending_text() {
+        let field = crate::sampling::sample_field(&crate::sampling::create_landscape(16, 12), 16, 12);
+        let mut scene = Scene::new(None, None);
+        let content = |key: &str, text: &str, streaming| Projection { key: key.into(), text: text.into(), role: ProjectionRole::Assistant, streaming };
+        scene.project(Some(content("user", "Question", false)));
+        scene.update(0.01, &field);
+        let first_deadline = scene.read_until.unwrap();
+        for i in 0..20 {
+            scene.project(Some(content("answer", &format!("delta {i}"), true)));
+            scene.update(0.03, &field);
+            assert_eq!(scene.current.as_ref().unwrap().key, "user");
+        }
+        scene.project(Some(content("answer", "Final answer", false)));
+        scene.update(first_deadline - scene.time - 0.01, &field);
+        assert_eq!(scene.current.as_ref().unwrap().key, "user");
+        assert!(scene.glyph_visible());
+        scene.update(0.02, &field);
+        assert_eq!(scene.current.as_ref().unwrap().text, "AI：Final answer");
+        assert!(scene.pending_projection.is_none());
+        let final_deadline = scene.read_until.unwrap();
+        assert!(final_deadline - scene.time >= PROJECTION_MIN_READ_SECONDS);
+        scene.project(Some(content("answer", "Final answer", false)));
+        assert_eq!(scene.read_until.unwrap(), final_deadline);
+        scene.update(PROJECTION_TRANSITION_SECONDS + PROJECTION_MIN_READ_SECONDS - 0.1, &field);
+        assert!(scene.glyph_age() < crate::sampling::GLYPH_RELEASE);
+        scene.project(None);
+        assert!(!scene.glyph_visible());
+        assert!(scene.read_until.is_none());
+        scene.project(Some(content("new", "New session", true)));
+        scene.update(0.01, &field);
+        assert_eq!(scene.current.as_ref().unwrap().key, "new");
+    }
+
 }
