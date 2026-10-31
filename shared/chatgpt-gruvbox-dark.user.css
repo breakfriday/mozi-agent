@@ -1,0 +1,148 @@
+/* ==UserStyle==
+@name           ChatGPT Gruvbox Dark — Personal
+@namespace      local.chatgpt.gruvbox
+@version        1.0.0
+@description    Gruvbox Dark palette for ChatGPT web UI; CSS-only, locally applied.
+@match          https://chatgpt.com/*
+@match          https://chat.openai.com/*
+==/UserStyle== */
+
+@-moz-document domain("chatgpt.com"), domain("chat.openai.com") {
+  :root, html.dark, body {
+    color-scheme: dark !important;
+    --gb-bg0: #282828;
+    --gb-bg1: #3c3836;
+    --gb-bg2: #504945;
+    --gb-bg3: #665c54;
+    --gb-fg0: #fbf1c7;
+    --gb-fg1: #ebdbb2;
+    --gb-muted: #a89984;
+    --gb-yellow: #fabd2f;
+    --gb-orange: #fe8019;
+    --gb-green: #b8bb26;
+    --gb-blue: #83a598;
+    --gb-red: #fb4934;
+    --gb-border: #665c54;
+
+    /* ChatGPT semantic tokens: supported names may change with releases. */
+    --main-surface-primary: var(--gb-bg0) !important;
+    --main-surface-secondary: var(--gb-bg1) !important;
+    --main-surface-tertiary: var(--gb-bg2) !important;
+    --sidebar-surface-primary: var(--gb-bg1) !important;
+    --sidebar-surface-secondary: var(--gb-bg2) !important;
+    --sidebar-surface-tertiary: var(--gb-bg3) !important;
+    --text-primary: var(--gb-fg1) !important;
+    --text-secondary: var(--gb-muted) !important;
+    --text-tertiary: var(--gb-muted) !important;
+    --border-light: var(--gb-border) !important;
+    --border-medium: var(--gb-border) !important;
+    --interactive-bg-secondary-hover: var(--gb-bg2) !important;
+    --interactive-bg-secondary-press: var(--gb-bg3) !important;
+    --accent: var(--gb-yellow) !important;
+  }
+
+  html, body, #__next, #root {
+    background: var(--gb-bg0) !important;
+    color: var(--gb-fg1) !important;
+  }
+
+  /* Main layout / headers / conversation. */
+  main, [role="main"], [data-testid="conversation-turns"],
+  [class*="bg-token-main-surface-primary"] {
+    background-color: var(--gb-bg0) !important;
+    color: var(--gb-fg1) !important;
+  }
+  [class*="bg-token-main-surface-secondary"],
+  [class*="bg-token-main-surface-tertiary"] {
+    background-color: var(--gb-bg1) !important;
+  }
+
+  /* Sidebar; target semantic slots rather than generated CSS class hashes. */
+  #stage-slideover-sidebar, [data-testid="sidebar"],
+  nav[aria-label*="Chat"], nav[aria-label*="chat"],
+  [class*="bg-token-sidebar-surface-primary"] {
+    background-color: var(--gb-bg1) !important;
+    color: var(--gb-fg1) !important;
+  }
+  [class*="bg-token-sidebar-surface-secondary"],
+  [class*="bg-token-sidebar-surface-tertiary"] {
+    background-color: var(--gb-bg2) !important;
+  }
+
+  /* Text / links: preserve syntax highlighting inside code blocks. */
+  body, input, textarea, [contenteditable="true"] { color: var(--gb-fg1) !important; }
+  a:not([class*="text-token-text-primary"]) { color: var(--gb-blue); }
+  a:hover { color: var(--gb-yellow); }
+  ::selection { background: var(--gb-bg3); color: var(--gb-fg0); }
+  ::placeholder { color: var(--gb-muted) !important; opacity: 1; }
+  [class*="text-token-text-secondary"], [class*="text-token-text-tertiary"] {
+    color: var(--gb-muted) !important;
+  }
+  [class*="text-token-text-primary"] { color: var(--gb-fg1) !important; }
+
+  /* Composer and interactive form elements. */
+  #prompt-textarea, [data-testid="composer"],
+  form textarea, form [contenteditable="true"],
+  [class*="bg-token-main-surface-secondary"] textarea {
+    color: var(--gb-fg1) !important;
+    caret-color: var(--gb-yellow) !important;
+  }
+  #prompt-textarea:focus-visible, textarea:focus-visible, input:focus-visible,
+  [contenteditable="true"]:focus-visible {
+    outline-color: var(--gb-yellow) !important;
+  }
+  [data-testid="composer"]:focus-within,
+  [class*="bg-token-main-surface-secondary"]:focus-within {
+    border-color: var(--gb-bg3) !important;
+  }
+  button:focus-visible, a:focus-visible { outline-color: var(--gb-yellow) !important; }
+
+  /* Conversation prose and inline code. */
+  .markdown, .prose { color: var(--gb-fg1) !important; }
+  .markdown :not(pre) > code, .prose :not(pre) > code {
+    background-color: var(--gb-bg1) !important;
+    color: var(--gb-orange) !important;
+    border-radius: 4px;
+    padding: .08em .28em;
+  }
+  .markdown blockquote, .prose blockquote {
+    border-left-color: var(--gb-yellow) !important;
+    color: var(--gb-muted) !important;
+  }
+  .markdown hr, .prose hr { border-color: var(--gb-border) !important; }
+  .markdown th, .markdown td, .prose th, .prose td {
+    border-color: var(--gb-border) !important;
+  }
+  .markdown thead, .prose thead { background-color: var(--gb-bg1) !important; }
+
+  /* Code blocks: keep tokenizer colors; use warm surface and light base text. */
+  .markdown pre, .prose pre, pre {
+    background: #1d2021 !important;
+    color: var(--gb-fg1) !important;
+    border: 1px solid var(--gb-bg2) !important;
+    border-radius: 10px;
+  }
+  pre code { background: transparent !important; }
+  .markdown pre [class*="hljs-"], .markdown pre [class*="token"] {
+    /* Let code highlighters retain their per-token colors. */
+  }
+
+  /* Native controls, panels, modals, menus. */
+  select, option, dialog, [role="dialog"], [role="menu"], [role="listbox"] {
+    background-color: var(--gb-bg1) !important;
+    color: var(--gb-fg1) !important;
+    border-color: var(--gb-border) !important;
+  }
+  [role="menuitem"]:hover, [role="option"]:hover,
+  [data-state="checked"][role="menuitemcheckbox"] {
+    background-color: var(--gb-bg2) !important;
+  }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--gb-yellow); }
+
+  /* Scrollbars */
+  * { scrollbar-width: thin; scrollbar-color: var(--gb-bg3) var(--gb-bg0); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: var(--gb-bg0); }
+  ::-webkit-scrollbar-thumb { background: var(--gb-bg3); border-radius: 9px; border: 2px solid var(--gb-bg0); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--gb-muted); }
+}

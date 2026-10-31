@@ -19,6 +19,7 @@ import {
   MOZI_SYSTEM_PROMPT,
   BROWSER_WEB_GUIDELINES,
   PROVIDER_WEB_GUIDELINES,
+  MOZI_SYSTEM_PROMPT_1,
 } from "./prompt/mozi-guidelines";
 import { parseRunEntry } from "./session-entries";
 

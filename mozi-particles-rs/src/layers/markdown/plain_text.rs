@@ -7,7 +7,7 @@ use image::{Rgb, RgbImage};
 
 use super::board::{Layout, Raster};
 use crate::protocol::ProjectionRole;
-use crate::render_config::*;
+use crate::render_config;
 
 pub struct PlainTextRenderer {
     font: Option<FontArc>,
@@ -25,22 +25,22 @@ impl PlainTextRenderer {
 
     fn font_size_pt(text: &str, role: &ProjectionRole) -> f32 {
         match role {
-            ProjectionRole::User if text.chars().count() <= PROJECTION_USER_SHORT_CHARS => PROJECTION_USER_SHORT_FONT_PT,
-            ProjectionRole::User => PROJECTION_USER_LONG_FONT_PT,
-            _ => PROJECTION_ACTIVITY_FONT_PT,
+            ProjectionRole::User if text.chars().count() <= render_config::PROJECTION_USER_SHORT_CHARS => render_config::PROJECTION_USER_SHORT_FONT_PT,
+            ProjectionRole::User => render_config::PROJECTION_USER_LONG_FONT_PT,
+            _ => render_config::PROJECTION_ACTIVITY_FONT_PT,
         }
     }
 
     pub fn render(&self, text: &str, role: &ProjectionRole, column: Layout) -> Result<Raster, String> {
         let font = self.font.as_ref().ok_or("no system font available for plain-text projection")?;
-        let em = Self::font_size_pt(text, role) * MARKDOWN_SCALE;
+        let em = Self::font_size_pt(text, role) * render_config::MARKDOWN_SCALE;
         let scale = PxScale::from(em * font.height_unscaled() / font.units_per_em().unwrap_or(1000.0));
         let scaled = font.as_scaled(scale);
 
-        let width = (column.width as f32 * MARKDOWN_SCALE).round().max(1.0) as u32;
-        let page_height = (column.height as f32 * MARKDOWN_SCALE).round().max(1.0) as u32;
-        let margin = MARKDOWN_MARGIN * MARKDOWN_SCALE;
-        let line_height = em * PLAIN_TEXT_LINE_HEIGHT;
+        let width = (column.width as f32 * render_config::MARKDOWN_SCALE).round().max(1.0) as u32;
+        let page_height = (column.height as f32 * render_config::MARKDOWN_SCALE).round().max(1.0) as u32;
+        let margin = render_config::MARKDOWN_MARGIN * render_config::MARKDOWN_SCALE;
+        let line_height = em * render_config::PLAIN_TEXT_LINE_HEIGHT;
         let lines = wrap(&scaled, text, (width as f32 - margin * 2.0).max(em));
 
         // Like Wordcraft's oversized blocks: keep only the newest lines that fit one page.
@@ -148,7 +148,8 @@ fn wrap<F: Font, S: ScaleFont<F>>(scaled: &S, text: &str, max_width: f32) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Layout, PlainTextRenderer, ProjectionRole, Raster};
+    use crate::render_config;
     use crate::layers::glyph::load_system_font;
 
     fn renderer() -> Option<PlainTextRenderer> {
@@ -166,7 +167,7 @@ mod tests {
         let column = Layout { width: 300, height: 400 };
         let user = r.render("你好 hello", &ProjectionRole::User, column).unwrap();
         let activity = r.render("执行 bash", &ProjectionRole::Activity, column).unwrap();
-        let margin = (MARKDOWN_MARGIN * MARKDOWN_SCALE) as u32;
+        let margin = (render_config::MARKDOWN_MARGIN * render_config::MARKDOWN_SCALE) as u32;
         assert!(ink_columns(&user).1 >= user.image.width() - margin - 4);
         assert!(ink_columns(&activity).0 <= margin + 4);
     }
@@ -178,7 +179,7 @@ mod tests {
         let short = r.render("短", &ProjectionRole::User, column).unwrap();
         let long = r.render(&"很长的用户输入需要换行显示。".repeat(40), &ProjectionRole::User, column).unwrap();
         assert!(long.image.height() > short.image.height());
-        assert!(long.image.height() <= (column.height as f32 * MARKDOWN_SCALE).round() as u32);
+        assert!(long.image.height() <= (column.height as f32 * render_config::MARKDOWN_SCALE).round() as u32);
         assert!(long.source_y > 0, "oldest lines scrolled away");
     }
 

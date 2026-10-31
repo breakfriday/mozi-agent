@@ -38,7 +38,11 @@ struct Config {
 
 impl Config {
     fn from_args() -> Self {
-        let mut config = Self { wallpaper: None, style: None, transparent: true };
+        let mut config = Self {
+            wallpaper: None,
+            style: None,
+            transparent: true,
+        };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -150,14 +154,22 @@ impl App {
 
     fn toggle_fullscreen(&self) {
         if let Some(w) = &self.window {
-            w.set_fullscreen(if w.fullscreen().is_some() { None } else { Some(Fullscreen::Borderless(None)) });
+            w.set_fullscreen(if w.fullscreen().is_some() {
+                None
+            } else {
+                Some(Fullscreen::Borderless(None))
+            });
         }
     }
 
     fn trigger_demo(&mut self) {
         let (text, tone) = DEMO_NOTICES[self.demo_index % DEMO_NOTICES.len()];
         self.demo_index += 1;
-        self.glyph.enqueue(Notice { key: format!("demo-{}", self.demo_index), text: text.to_string(), tone });
+        self.glyph.enqueue(Notice {
+            key: format!("demo-{}", self.demo_index),
+            text: text.to_string(),
+            tone,
+        });
     }
 
     /// One frame uniform from one camera — every layer sees the same view.
@@ -165,12 +177,19 @@ impl App {
     /// otherwise it follows whichever text layer landed most recently.
     fn frame_globals(&self, width: f32, height: f32, dpr: f32) -> Globals {
         let (projection, view) = self.camera.matrices(self.time, width, height);
-        let camera = CameraFrame { view_proj: projection * view, view, viewport: [width, height], dpr, time: self.time };
+        let camera = CameraFrame {
+            view_proj: projection * view,
+            view,
+            viewport: [width, height],
+            dpr,
+            time: self.time,
+        };
         let focus = if self.glyph.visible(self.time) {
             self.glyph.focus(self.time)
         } else {
             FocusSignal::newest(
-                std::iter::once(self.glyph.focus(self.time)).chain(self.markdown.focus(self.time, width, height)),
+                std::iter::once(self.glyph.focus(self.time))
+                    .chain(self.markdown.focus(self.time, width, height)),
             )
         };
         Globals::compose(
@@ -188,7 +207,10 @@ impl App {
                 match content {
                     Some(content) => {
                         let is_user = content.role == ProjectionRole::User;
-                        match self.markdown.project(&content.key, &content.text, content.role) {
+                        match self
+                            .markdown
+                            .project(&content.key, &content.text, content.role)
+                        {
                             Ok(added) => {
                                 if added && is_user {
                                     self.glyph.play_now(Notice {
@@ -207,10 +229,19 @@ impl App {
             }
             Command::Notice { key, text, tone } => {
                 let key = key.unwrap_or_else(|| format!("ipc-{}", self.time));
-                self.glyph.enqueue(Notice { key, text, tone: Tone::parse(tone.as_deref()) });
+                self.glyph.enqueue(Notice {
+                    key,
+                    text,
+                    tone: Tone::parse(tone.as_deref()),
+                });
                 self.redraw();
             }
-            Command::Configure { style, paused, cruise, depth } => {
+            Command::Configure {
+                style,
+                paused,
+                cruise,
+                depth,
+            } => {
                 self.change_style(StyleChange::Set(&style));
                 self.paused = paused;
                 self.camera.cruise = cruise;
@@ -271,11 +302,15 @@ impl ApplicationHandler<UserEvent> for App {
             .with_title("Mozi Particles")
             .with_inner_size(LogicalSize::new(1280.0, 860.0))
             .with_min_inner_size(LogicalSize::new(760.0, 540.0))
+            .with_decorations(false)
+            .with_maximized(true)
             .with_transparent(self.config.transparent);
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                reply(Reply::Error { message: &format!("create_window failed: {e}") });
+                reply(Reply::Error {
+                    message: &format!("create_window failed: {e}"),
+                });
                 event_loop.exit();
                 return;
             }
@@ -320,8 +355,14 @@ impl ApplicationHandler<UserEvent> for App {
                 reply(Reply::Closed);
                 event_loop.exit();
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.sync_viewport(),
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.sync_viewport()
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => {
                 self.dragging = state == ElementState::Pressed;
                 if self.dragging {
                     self.field.set_pointer(None);
@@ -340,7 +381,8 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 } else if let Some(gpu) = &self.gpu {
                     let (w, h) = gpu.size();
-                    self.field.set_pointer(self.camera.unproject(self.time, x, y, w as f32, h as f32));
+                    self.field
+                        .set_pointer(self.camera.unproject(self.time, x, y, w as f32, h as f32));
                 }
                 self.last_cursor = Some((x, y));
             }
@@ -367,8 +409,12 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                 }
-                let Some(window) = self.window.clone() else { return };
-                let Some((w, h)) = self.gpu.as_ref().map(Gpu::size) else { return };
+                let Some(window) = self.window.clone() else {
+                    return;
+                };
+                let Some((w, h)) = self.gpu.as_ref().map(Gpu::size) else {
+                    return;
+                };
                 let globals = self.frame_globals(w as f32, h as f32, window.scale_factor() as f32);
                 let glyph_visible = self.glyph.visible(self.time);
                 if let Some(gpu) = self.gpu.as_mut() {
@@ -389,7 +435,11 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(if self.paused { ControlFlow::Wait } else { ControlFlow::Poll });
+        event_loop.set_control_flow(if self.paused {
+            ControlFlow::Wait
+        } else {
+            ControlFlow::Poll
+        });
         if !self.paused {
             self.redraw();
         }
@@ -398,7 +448,9 @@ impl ApplicationHandler<UserEvent> for App {
 
 fn main() {
     let config = Config::from_args();
-    let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("build winit event loop");
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .build()
+        .expect("build winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     spawn_stdin_reader(event_loop.create_proxy());
     let mut app = App::new(config, event_loop.create_proxy());

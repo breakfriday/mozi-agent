@@ -13,7 +13,7 @@ use styles::{find_style, ParticleStyle, PARTICLE_STYLES};
 use crate::core::rng::{BagPicker, LcgRng};
 use crate::layers::field::FieldSamples;
 use crate::render::uniforms::{FocusSignal, GlyphMotion};
-use crate::render_config::{GLYPH_DURATION, GLYPH_LANDING};
+use crate::render_config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -137,7 +137,7 @@ impl GlyphLayer {
     }
 
     pub fn visible(&self, now: f32) -> bool {
-        (0.0..=GLYPH_DURATION).contains(&self.age(now))
+        (0.0..=render_config::GLYPH_DURATION).contains(&self.age(now))
     }
 
     /// Starts an urgent notice immediately, or the next queued notice once the current one has dispersed.
@@ -168,7 +168,7 @@ impl GlyphLayer {
         self.glow = notice.tone.glow();
         self.start = now;
         // The ripple fires as the strokes land, like Terse's arrival pulse.
-        self.ripple = [bounds.center[0], bounds.center[1], now + GLYPH_LANDING * 0.85];
+        self.ripple = [bounds.center[0], bounds.center[1], now + render_config::GLYPH_LANDING * 0.85];
         instances
     }
 
@@ -196,7 +196,8 @@ impl GlyphLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{GlyphLayer, Notice, NoticeQueue, Tone};
+    use crate::render_config;
     use crate::layers::field::{sampling::sample_field, wallpaper::create_landscape};
 
     fn n(key: &str, text: &str, tone: Tone) -> Notice {
@@ -235,10 +236,10 @@ mod tests {
         assert!(glyph.visible(1.0));
         assert_eq!(glyph.focus(1.0).age, 0.0);
         assert!(glyph.update(2.0, &field).is_none(), "second waits for the first to disperse");
-        let after = 1.0 + GLYPH_DURATION + 0.01;
+        let after = 1.0 + render_config::GLYPH_DURATION + 0.01;
         assert!(glyph.update(after, &field).is_some());
-        assert!(glyph.update(after + GLYPH_DURATION + 0.01, &field).is_none(), "queue drained");
-        assert!(!glyph.visible(after + GLYPH_DURATION + 0.01));
+        assert!(glyph.update(after + render_config::GLYPH_DURATION + 0.01, &field).is_none(), "queue drained");
+        assert!(!glyph.visible(after + render_config::GLYPH_DURATION + 0.01));
 
         // Urgent user message preempts an in-flight notice immediately without waiting for dispersal.
         glyph.enqueue(n("c", "background", Tone::Activity));

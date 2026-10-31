@@ -108,7 +108,7 @@ impl Globals {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::FocusSignal;
 
     fn at(age: f32, x: f32) -> FocusSignal {
         FocusSignal { age, bounds: [x, 0.0, 1.0, 1.0], ..FocusSignal::default() }

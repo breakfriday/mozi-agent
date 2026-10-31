@@ -115,7 +115,7 @@ pub fn spawn_stdin_reader(proxy: EventLoopProxy<UserEvent>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Command, Projection, ProjectionRole, Reply};
 
     #[test]
     fn parses_protocol() {

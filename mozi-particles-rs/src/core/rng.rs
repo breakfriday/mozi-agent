@@ -72,7 +72,7 @@ impl BagPicker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::BagPicker;
 
     #[test]
     fn bag_picker_never_repeats_back_to_back() {

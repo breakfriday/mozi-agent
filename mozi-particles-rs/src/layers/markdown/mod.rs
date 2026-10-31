@@ -24,7 +24,7 @@ use wordcraft::{Job, Worker};
 use crate::core::rng::BagPicker;
 use crate::protocol::ProjectionRole;
 use crate::render::uniforms::{FocusSignal, PanelParams};
-use crate::render_config::*;
+use crate::render_config;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -249,8 +249,8 @@ impl Panel {
     /// it along the initial camera's view rays, so the reaction sits behind the message on screen.
     pub fn focus(&self, now: f32, width: f32, height: f32) -> Option<FocusSignal> {
         let focus = self.focus.as_ref()?;
-        let k = self.displayed_layout.world_scale(width, height) * CAMERA_INITIAL_DISTANCE
-            / (CAMERA_INITIAL_DISTANCE - MARKDOWN_PLANE_Z);
+        let k = self.displayed_layout.world_scale(width, height) * render_config::CAMERA_INITIAL_DISTANCE
+            / (render_config::CAMERA_INITIAL_DISTANCE - render_config::MARKDOWN_PLANE_Z);
         let [cx, cy, hx, hy] = focus.bounds.map(|v| v * k);
         Some(FocusSignal {
             bounds: [cx, cy, hx, hy],
@@ -258,7 +258,7 @@ impl Panel {
             dance_mode: focus.dance_mode,
             dance_dir: focus.dance_dir,
             // The ripple fires as the block's ink finishes assembling.
-            ripple: [cx, cy, focus.born + MARKDOWN_ASSEMBLE_SECONDS],
+            ripple: [cx, cy, focus.born + render_config::MARKDOWN_ASSEMBLE_SECONDS],
         })
     }
 
@@ -267,18 +267,19 @@ impl Panel {
         PanelParams {
             panel: [
                 if self.visible { 1.0 } else { 0.0 },
-                MARKDOWN_WORLD_WIDTH / (layout.width as f32 * MARKDOWN_SCALE) * MARKDOWN_SAMPLE_STRIDE as f32,
-                MARKDOWN_ASSEMBLE_SECONDS,
-                MARKDOWN_DISPERSE_SECONDS,
+                render_config::MARKDOWN_WORLD_WIDTH / (layout.width as f32 * render_config::MARKDOWN_SCALE) * render_config::MARKDOWN_SAMPLE_STRIDE as f32,
+                render_config::MARKDOWN_ASSEMBLE_SECONDS,
+                render_config::MARKDOWN_DISPERSE_SECONDS,
             ],
-            motion: [MARKDOWN_REFLOW_SECONDS, layout.world_scale(width, height), MARKDOWN_PLANE_Z, MARKDOWN_MIN_RADIUS_PX],
+            motion: [render_config::MARKDOWN_REFLOW_SECONDS, layout.world_scale(width, height), render_config::MARKDOWN_PLANE_Z, render_config::MARKDOWN_MIN_RADIUS_PX],
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Cached, Completed, Entry, Layout, Panel, ProjectionRole, Raster};
+    use crate::render_config;
     use crate::core::camera::OrbitCamera;
     use crate::layers::glyph::load_system_font;
 
@@ -289,17 +290,17 @@ mod tests {
             assert!(layout.width <= 1584 && layout.height <= 1584);
             assert_eq!(layout, Layout::viewport(width * 2, height * 2, 2.0));
             let scale = layout.world_scale(width as f32, height as f32);
-            let matrix = glam::Mat4::perspective_rh(CAMERA_FOV_DEGREES.to_radians(), width as f32 / height as f32, 0.1, 100.0)
-                * glam::Mat4::look_at_rh(glam::Vec3::Z * CAMERA_INITIAL_DISTANCE, glam::Vec3::ZERO, glam::Vec3::Y);
-            let half_width = MARKDOWN_WORLD_WIDTH * 0.5 * scale;
+            let matrix = glam::Mat4::perspective_rh(render_config::CAMERA_FOV_DEGREES.to_radians(), width as f32 / height as f32, 0.1, 100.0)
+                * glam::Mat4::look_at_rh(glam::Vec3::Z * render_config::CAMERA_INITIAL_DISTANCE, glam::Vec3::ZERO, glam::Vec3::Y);
+            let half_width = render_config::MARKDOWN_WORLD_WIDTH * 0.5 * scale;
             let half_height = half_width * layout.height as f32 / layout.width as f32;
-            let center = matrix.project_point3(glam::Vec3::new(0.0, 0.0, MARKDOWN_PLANE_Z));
+            let center = matrix.project_point3(glam::Vec3::new(0.0, 0.0, render_config::MARKDOWN_PLANE_Z));
             assert!(center.x.abs() < 1e-5 && center.y.abs() < 1e-5);
             for x in [-half_width, half_width] {
                 for y in [-half_height, half_height] {
-                    let point = matrix.project_point3(glam::Vec3::new(x, y, MARKDOWN_PLANE_Z));
-                    assert!(point.x.abs() <= MARKDOWN_VIEW_WIDTH + 1e-5);
-                    assert!(point.y.abs() <= MARKDOWN_VIEW_HEIGHT + 1e-5);
+                    let point = matrix.project_point3(glam::Vec3::new(x, y, render_config::MARKDOWN_PLANE_Z));
+                    assert!(point.x.abs() <= render_config::MARKDOWN_VIEW_WIDTH + 1e-5);
+                    assert!(point.y.abs() <= render_config::MARKDOWN_VIEW_HEIGHT + 1e-5);
                 }
             }
         }
@@ -312,7 +313,7 @@ mod tests {
     fn text_and_background_follow_the_same_orbit_and_zoom() {
         let mut camera = OrbitCamera { cruise: false, ..OrbitCamera::default() };
         let scale = Layout::viewport(1920, 1080, 1.0).world_scale(1920.0, 1080.0);
-        let text = glam::Vec3::new(3.0 * scale, 1.0 * scale, MARKDOWN_PLANE_Z);
+        let text = glam::Vec3::new(3.0 * scale, 1.0 * scale, render_config::MARKDOWN_PLANE_Z);
         let background = glam::Vec3::new(3.0, 1.0, 0.0);
         let project = |camera: &OrbitCamera, point| {
             let (projection, view) = camera.matrices(0.0, 1920.0, 1080.0);
@@ -371,7 +372,7 @@ mod tests {
         let second = panel.focus(3.0, 1280.0, 860.0).unwrap();
         assert_eq!(second.age, 0.0);
         assert!(second.bounds[0] < 0.0, "activity lane is on the left");
-        assert_eq!(second.ripple[2], 3.0 + MARKDOWN_ASSEMBLE_SECONDS);
+        assert_eq!(second.ripple[2], 3.0 + render_config::MARKDOWN_ASSEMBLE_SECONDS);
 
         panel.clear();
         assert!(panel.focus(4.0, 1280.0, 860.0).is_none());
@@ -389,12 +390,12 @@ mod tests {
         let focus = panel.focus(1.0, width, height).unwrap();
 
         // Initial camera pose (the same pose world_scale fits against).
-        let matrix = glam::Mat4::perspective_rh(CAMERA_FOV_DEGREES.to_radians(), width / height, 0.1, 100.0)
-            * glam::Mat4::look_at_rh(glam::Vec3::Z * CAMERA_INITIAL_DISTANCE, glam::Vec3::ZERO, glam::Vec3::Y);
+        let matrix = glam::Mat4::perspective_rh(render_config::CAMERA_FOV_DEGREES.to_radians(), width / height, 0.1, 100.0)
+            * glam::Mat4::look_at_rh(glam::Vec3::Z * render_config::CAMERA_INITIAL_DISTANCE, glam::Vec3::ZERO, glam::Vec3::Y);
         let scale = panel.displayed_layout.world_scale(width, height);
         for (dx, dy) in [(0.0, 0.0), (1.0, 1.0), (-1.0, -1.0)] {
             // Text as drawn by vs_markdown: board space scaled around the text plane.
-            let text = glam::Vec3::new((board[0] + dx * board[2]) * scale, (board[1] + dy * board[3]) * scale, MARKDOWN_PLANE_Z);
+            let text = glam::Vec3::new((board[0] + dx * board[2]) * scale, (board[1] + dy * board[3]) * scale, render_config::MARKDOWN_PLANE_Z);
             let field = glam::Vec3::new(focus.bounds[0] + dx * focus.bounds[2], focus.bounds[1] + dy * focus.bounds[3], 0.0);
             let (a, b) = (matrix.project_point3(text), matrix.project_point3(field));
             assert!((a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() < 1e-4, "{a:?} vs {b:?}");
@@ -410,7 +411,7 @@ mod tests {
         // Simulate an assistant entry whose Wordcraft raster already landed (no process needed).
         panel.entries.push(Entry { id: 99, key: "a1".into(), text: "# 回答".into(), role: ProjectionRole::Assistant });
         let raster = |column: Layout| Raster {
-            image: image::RgbImage::from_pixel((column.width as f32 * MARKDOWN_SCALE) as u32, 20, image::Rgb([0; 3])),
+            image: image::RgbImage::from_pixel((column.width as f32 * render_config::MARKDOWN_SCALE) as u32, 20, image::Rgb([0; 3])),
             source_y: 0,
         };
         let column = panel.layout.column(false);

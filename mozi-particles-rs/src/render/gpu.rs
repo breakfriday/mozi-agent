@@ -10,7 +10,7 @@ use super::uniforms::Globals;
 use crate::layers::field::{FieldInstance, PulseInstance};
 use crate::layers::glyph::GlyphInstance;
 use crate::layers::markdown::Particle;
-use crate::render_config::*;
+use crate::render_config;
 
 #[derive(Clone, Copy)]
 struct LayerSpec {
@@ -22,14 +22,86 @@ struct LayerSpec {
 
 /// Draw order: background, short-message glyphs, then the Markdown halo and core.
 const LAYERS: [LayerSpec; 8] = [
-    LayerSpec { material: Material::Pulse, additive: true, params: [PULSE_HALO_SCALE, 1.0, PULSE_HALO_ALPHA, PULSE_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Pulse, additive: true, params: [1.0, 0.0, PULSE_CORE_ALPHA, PULSE_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Field, additive: true, params: [FIELD_HALO_SCALE, 1.0, FIELD_HALO_ALPHA, FIELD_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Field, additive: false, params: [1.0, 0.0, FIELD_CORE_ALPHA, FIELD_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Glyph, additive: true, params: [AUTO_GLYPH_HALO_SCALE, 1.0, GLYPH_HALO_ALPHA, GLYPH_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Glyph, additive: true, params: [1.0, 0.0, GLYPH_CORE_ALPHA, GLYPH_PARTICLE_SIZE] },
-    LayerSpec { material: Material::Markdown, additive: true, params: [MARKDOWN_HALO_SCALE, 1.0, MARKDOWN_HALO_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
-    LayerSpec { material: Material::Markdown, additive: false, params: [1.0, 0.0, MARKDOWN_CORE_ALPHA, MARKDOWN_PARTICLE_RADIUS] },
+    LayerSpec {
+        material: Material::Pulse,
+        additive: true,
+        params: [
+            render_config::PULSE_HALO_SCALE,
+            1.0,
+            render_config::PULSE_HALO_ALPHA,
+            render_config::PULSE_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Pulse,
+        additive: true,
+        params: [
+            1.0,
+            0.0,
+            render_config::PULSE_CORE_ALPHA,
+            render_config::PULSE_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Field,
+        additive: true,
+        params: [
+            render_config::FIELD_HALO_SCALE,
+            1.0,
+            render_config::FIELD_HALO_ALPHA,
+            render_config::FIELD_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Field,
+        additive: false,
+        params: [
+            1.0,
+            0.0,
+            render_config::FIELD_CORE_ALPHA,
+            render_config::FIELD_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Glyph,
+        additive: true,
+        params: [
+            render_config::AUTO_GLYPH_HALO_SCALE,
+            1.0,
+            render_config::GLYPH_HALO_ALPHA,
+            render_config::GLYPH_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Glyph,
+        additive: true,
+        params: [
+            1.0,
+            0.0,
+            render_config::GLYPH_CORE_ALPHA,
+            render_config::GLYPH_PARTICLE_SIZE,
+        ],
+    },
+    LayerSpec {
+        material: Material::Markdown,
+        additive: true,
+        params: [
+            render_config::MARKDOWN_HALO_SCALE,
+            1.0,
+            render_config::MARKDOWN_HALO_ALPHA,
+            render_config::MARKDOWN_PARTICLE_RADIUS,
+        ],
+    },
+    LayerSpec {
+        material: Material::Markdown,
+        additive: false,
+        params: [
+            1.0,
+            0.0,
+            render_config::MARKDOWN_CORE_ALPHA,
+            render_config::MARKDOWN_PARTICLE_RADIUS,
+        ],
+    },
 ];
 /// The glyph halo follows the active style's bloom size.
 const GLYPH_HALO_LAYER: usize = 4;
@@ -117,11 +189,11 @@ impl Gpu {
 
         let clear = if translucent {
             // Premultiplied clear: RGB scaled by A so the compositor never sees RGB > A.
-            let a = BACKDROP_ALPHA;
+            let a = render_config::BACKDROP_ALPHA;
             let k = if alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied { a } else { 1.0 };
-            wgpu::Color { r: BACKDROP_RGB[0] * k, g: BACKDROP_RGB[1] * k, b: BACKDROP_RGB[2] * k, a }
+            wgpu::Color { r: render_config::BACKDROP_RGB[0] * k, g: render_config::BACKDROP_RGB[1] * k, b: render_config::BACKDROP_RGB[2] * k, a }
         } else {
-            wgpu::Color { r: BACKDROP_RGB[0], g: BACKDROP_RGB[1], b: BACKDROP_RGB[2], a: 1.0 }
+            wgpu::Color { r: render_config::BACKDROP_RGB[0], g: render_config::BACKDROP_RGB[1], b: render_config::BACKDROP_RGB[2], a: 1.0 }
         };
 
         let factory = PipelineFactory::new(&device, format);
@@ -173,7 +245,7 @@ impl Gpu {
         let markdown = (empty("markdown"), 0);
         let glyph = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph"),
-            size: (EVENT_PARTICLE_COUNT * std::mem::size_of::<GlyphInstance>()) as u64,
+            size: (render_config::EVENT_PARTICLE_COUNT * std::mem::size_of::<GlyphInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -214,7 +286,7 @@ impl Gpu {
     }
 
     pub fn set_glyph(&self, glyph: &[GlyphInstance]) {
-        let n = glyph.len().min(EVENT_PARTICLE_COUNT);
+        let n = glyph.len().min(render_config::EVENT_PARTICLE_COUNT);
         self.queue.write_buffer(&self.glyph, 0, bytemuck::cast_slice(&glyph[..n]));
     }
 
@@ -259,7 +331,7 @@ impl Gpu {
                     Material::Pulse => (&self.pipelines.pulse, &self.pulse.0, self.pulse.1),
                     Material::Field if layer.spec.additive => (&self.pipelines.field_add, &self.field.0, self.field.1),
                     Material::Field => (&self.pipelines.field_over, &self.field.0, self.field.1),
-                    Material::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, EVENT_PARTICLE_COUNT as u32),
+                    Material::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, render_config::EVENT_PARTICLE_COUNT as u32),
                     Material::Markdown if markdown_visible => (
                         if layer.spec.additive { &self.pipelines.markdown_halo } else { &self.pipelines.markdown_core },
                         &self.markdown.0,

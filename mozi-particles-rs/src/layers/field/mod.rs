@@ -10,7 +10,7 @@ use glam::Vec2;
 pub use sampling::{FieldInstance, FieldSamples, PulseInstance};
 
 use crate::render::uniforms::FieldParams;
-use crate::render_config::{FIELD_GRID_H, FIELD_GRID_W, PULSE_GRID_H, PULSE_GRID_W};
+use crate::render_config;
 
 pub struct FieldLayer {
     pub samples: FieldSamples,
@@ -23,8 +23,8 @@ pub struct FieldLayer {
 
 impl FieldLayer {
     pub fn load(path: Option<&Path>) -> Self {
-        let samples = sampling::sample_field(&wallpaper::load(path), FIELD_GRID_W, FIELD_GRID_H);
-        let pulse = sampling::sample_pulse(&samples, PULSE_GRID_W, PULSE_GRID_H);
+        let samples = sampling::sample_field(&wallpaper::load(path), render_config::FIELD_GRID_W, render_config::FIELD_GRID_H);
+        let pulse = sampling::sample_pulse(&samples, render_config::PULSE_GRID_W, render_config::PULSE_GRID_H);
         Self { samples, pulse, depth: 1.0, pointer_world: Vec2::ZERO, pointer_strength: 0.0, pointer_target: 0.0 }
     }
 

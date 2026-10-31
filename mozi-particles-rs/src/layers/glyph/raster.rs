@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::core::rng::LcgRng;
 use crate::layers::field::FieldSamples;
-use crate::render_config::*;
+use crate::render_config;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -44,35 +44,35 @@ pub fn load_system_font() -> Option<FontArc> {
 /// Rasterizes a single-line notice into 3D target coordinates.
 pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let clean: String = normalized.chars().take(TEXT_MAX_CHARS).collect();
+    let clean: String = normalized.chars().take(render_config::TEXT_MAX_CHARS).collect();
     let label = if clean.is_empty() { "MOZI" } else { &clean };
     let mut points = Vec::new();
 
     if let Some(font) = font {
-        let scale = PxScale::from(TEXT_RASTER_SIZE_PX);
+        let scale = PxScale::from(render_config::TEXT_RASTER_SIZE_PX);
         let scaled = font.as_scaled(scale);
         let mut cursor_x = 0.0f32;
         let mut glyphs = Vec::new();
         for ch in label.chars() {
             let glyph_id = scaled.glyph_id(ch);
             glyphs.push(glyph_id.with_scale_and_position(scale, ab_glyph::point(cursor_x, scaled.ascent())));
-            cursor_x += scaled.h_advance(glyph_id) + TEXT_LETTER_SPACING_PX;
+            cursor_x += scaled.h_advance(glyph_id) + render_config::TEXT_LETTER_SPACING_PX;
         }
         let total_w = cursor_x.max(1.0);
         let total_h = (scaled.ascent() - scaled.descent()).max(1.0);
-        let world_scale = (TEXT_MAX_WIDTH / total_w).min(TEXT_MAX_HEIGHT / total_h);
+        let world_scale = (render_config::TEXT_MAX_WIDTH / total_w).min(render_config::TEXT_MAX_HEIGHT / total_h);
         let mut rng = LcgRng::new(0x9E37_79B9_7F4A_7C15);
         for glyph in glyphs {
             if let Some(outlined) = font.outline_glyph(glyph) {
                 let bounds = outlined.px_bounds();
                 outlined.draw(|gx, gy, coverage| {
-                    if coverage > TEXT_COVERAGE_THRESHOLD && ((gx + gy) % TEXT_SAMPLE_STRIDE == 0) {
+                    if coverage > render_config::TEXT_COVERAGE_THRESHOLD && ((gx + gy) % render_config::TEXT_SAMPLE_STRIDE == 0) {
                         let px = bounds.min.x + gx as f32;
                         let py = bounds.min.y + gy as f32;
                         points.push([
                             (px - total_w * 0.5) * world_scale,
                             (total_h * 0.5 - py) * world_scale,
-                            TEXT_PLANE_Z + (rng.next_f32() - 0.5) * TEXT_DEPTH_JITTER,
+                            render_config::TEXT_PLANE_Z + (rng.next_f32() - 0.5) * render_config::TEXT_DEPTH_JITTER,
                         ]);
                     }
                 });
@@ -82,9 +82,9 @@ pub fn sample_text(text: &str, font: Option<&FontArc>) -> Vec<[f32; 3]> {
 
     if points.is_empty() {
         // Fallback geometric banner if no system font was found
-        for i in 0..EVENT_PARTICLE_COUNT {
-            let t = i as f32 / EVENT_PARTICLE_COUNT as f32;
-            points.push([(t - 0.5) * 6.5, (t * 32.0).sin() * 0.45, TEXT_PLANE_Z]);
+        for i in 0..render_config::EVENT_PARTICLE_COUNT {
+            let t = i as f32 / render_config::EVENT_PARTICLE_COUNT as f32;
+            points.push([(t - 0.5) * 6.5, (t * 32.0).sin() * 0.45, render_config::TEXT_PLANE_Z]);
         }
     }
     points
@@ -113,14 +113,14 @@ pub fn fill_event_buffers(targets: &[[f32; 3]], field: &FieldSamples, rng: &mut 
     });
 
     let n = ordered.len().max(1);
-    let mut instances = Vec::with_capacity(EVENT_PARTICLE_COUNT);
-    for i in 0..EVENT_PARTICLE_COUNT {
-        let pick = if n == 1 { 0 } else { (i * (n - 1)) / (EVENT_PARTICLE_COUNT - 1) };
+    let mut instances = Vec::with_capacity(render_config::EVENT_PARTICLE_COUNT);
+    for i in 0..render_config::EVENT_PARTICLE_COUNT {
+        let pick = if n == 1 { 0 } else { (i * (n - 1)) / (render_config::EVENT_PARTICLE_COUNT - 1) };
         let target = ordered[pick];
-        let jitter = (rng.next_f32() - 0.5) * TEXT_TARGET_JITTER;
+        let jitter = (rng.next_f32() - 0.5) * render_config::TEXT_TARGET_JITTER;
         let target_pos = [target[0] + jitter, target[1] + jitter, target[2]];
         let home = *field.nearest(target[0] + (rng.next_f32() - 0.5) * 2.2, target[1] + (rng.next_f32() - 0.5) * 1.6);
-        let order = i as f32 / (EVENT_PARTICLE_COUNT - 1) as f32;
+        let order = i as f32 / (render_config::EVENT_PARTICLE_COUNT - 1) as f32;
         let seed = (order * 0.85 + rng.next_f32() * 0.15).clamp(0.0, 1.0);
         instances.push(GlyphInstance { home_pos: home.position, target_pos, home_color: home.color, seed });
     }

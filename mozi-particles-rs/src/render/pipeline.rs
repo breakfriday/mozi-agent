@@ -3,7 +3,7 @@
 use crate::layers::field::{FieldInstance, PulseInstance};
 use crate::layers::glyph::GlyphInstance;
 use crate::layers::markdown::Particle;
-use crate::render_config::*;
+use crate::render_config;
 
 /// Straight-alpha "over" that keeps the framebuffer valid premultiplied (RGB <= A).
 pub const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
@@ -86,13 +86,13 @@ pub fn shader_source() -> String {
         "// Generated from render_config.rs — do not duplicate in .wgsl files.\n\
          const ASSEMBLE: f32 = {:.6};\nconst STAGGER: f32 = {:.6};\nconst HOLD: f32 = {:.6};\nconst DISPERSE: f32 = {:.6};\n\
          const LANDING: f32 = {:.6};\nconst RELEASE: f32 = {:.6};\nconst DURATION: f32 = {:.6};\n",
-        GLYPH_ASSEMBLE_SECONDS,
-        GLYPH_STAGGER_SECONDS,
-        GLYPH_HOLD_SECONDS,
-        GLYPH_DISPERSE_SECONDS,
-        GLYPH_LANDING,
-        GLYPH_RELEASE,
-        GLYPH_DURATION,
+        render_config::GLYPH_ASSEMBLE_SECONDS,
+        render_config::GLYPH_STAGGER_SECONDS,
+        render_config::GLYPH_HOLD_SECONDS,
+        render_config::GLYPH_DISPERSE_SECONDS,
+        render_config::GLYPH_LANDING,
+        render_config::GLYPH_RELEASE,
+        render_config::GLYPH_DURATION,
     );
     [
         timing.as_str(),

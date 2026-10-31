@@ -130,7 +130,7 @@ pub fn sample_pulse(field: &FieldSamples, grid_x: u32, grid_y: u32) -> Vec<Pulse
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{sample_field, FIELD_WORLD_HEIGHT};
 
     #[test]
     fn nearest_maps_world_corners_to_grid_corners() {

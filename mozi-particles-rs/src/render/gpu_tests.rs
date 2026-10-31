@@ -5,7 +5,7 @@ use super::uniforms::{CameraFrame, FieldParams, FocusSignal, Globals, GlyphMotio
 use crate::core::camera::OrbitCamera;
 use crate::layers::markdown::board;
 use crate::protocol::ProjectionRole;
-use crate::render_config::*;
+use crate::render_config;
 
 #[test]
 #[ignore = "requires a Vulkan/GL adapter"]
@@ -35,7 +35,7 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
             source_y: 0,
         };
         let mut samples = board::samples(&entry, &raster, 0, 0, 1, 1);
-        samples[0].vertex.position = [0.0, 0.0, MARKDOWN_PLANE_Z];
+        samples[0].vertex.position = [0.0, 0.0, render_config::MARKDOWN_PLANE_Z];
         samples[0].vertex.color = [1.0; 3];
         let mut animation = board::Animation::default();
         let mut subpixel_energy = Vec::new();
@@ -52,8 +52,8 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
             camera.yaw = yaw;
             let (projection, view) = camera.matrices(3.0, 256.0, 256.0);
             let panel = PanelParams {
-                panel: [1.0, if subpixel { 0.025 } else { 0.8 }, MARKDOWN_ASSEMBLE_SECONDS, MARKDOWN_DISPERSE_SECONDS],
-                motion: [MARKDOWN_REFLOW_SECONDS, 1.0, MARKDOWN_PLANE_Z, MARKDOWN_MIN_RADIUS_PX],
+                panel: [1.0, if subpixel { 0.025 } else { 0.8 }, render_config::MARKDOWN_ASSEMBLE_SECONDS, render_config::MARKDOWN_DISPERSE_SECONDS],
+                motion: [render_config::MARKDOWN_REFLOW_SECONDS, 1.0, render_config::MARKDOWN_PLANE_Z, render_config::MARKDOWN_MIN_RADIUS_PX],
             };
             let frame = CameraFrame { view_proj: projection * view, view, viewport: [256.0, 256.0], dpr: 1.0, time: 3.0 };
             let mut globals = Globals::compose(&frame, &FocusSignal::default(), &FieldParams::default(), &GlyphMotion::default(), &panel);
@@ -75,8 +75,8 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
                 contents: bytemuck::cast_slice(&[
                     1.0_f32,
                     0.0,
-                    MARKDOWN_CORE_ALPHA,
-                    MARKDOWN_PARTICLE_RADIUS,
+                    render_config::MARKDOWN_CORE_ALPHA,
+                    render_config::MARKDOWN_PARTICLE_RADIUS,
                 ]),
                 usage: wgpu::BufferUsages::UNIFORM,
             });

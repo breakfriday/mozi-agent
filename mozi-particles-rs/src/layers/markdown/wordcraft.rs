@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 
 use super::board::{Layout, Raster};
-use crate::render_config::{MARKDOWN_MARGIN, MARKDOWN_SCALE};
+use crate::render_config;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -150,7 +150,7 @@ impl Client {
             ("file.open", json!({"path":"projection.md","data":STANDARD.encode(text)})),
             ("layout.size", json!({"width":layout.width,"height":layout.height})),
             ("layout.orientation", json!({"value":orientation})),
-            ("layout.margins", json!({"top":MARKDOWN_MARGIN,"bottom":MARKDOWN_MARGIN,"left":MARKDOWN_MARGIN,"right":MARKDOWN_MARGIN})),
+            ("layout.margins", json!({"top":render_config::MARKDOWN_MARGIN,"bottom":render_config::MARKDOWN_MARGIN,"left":render_config::MARKDOWN_MARGIN,"right":render_config::MARKDOWN_MARGIN})),
         ] {
             self.tool("execute", json!({"command":command,"params":params}))?;
         }
@@ -182,7 +182,7 @@ impl Client {
     }
 
     fn page_image(&mut self, page: usize) -> Result<(image::RgbImage, usize)> {
-        let result = self.tool("render_page", json!({"page":page,"scale":MARKDOWN_SCALE}))?;
+        let result = self.tool("render_page", json!({"page":page,"scale":render_config::MARKDOWN_SCALE}))?;
         let blocks = result["content"].as_array().ok_or("missing Wordcraft content")?;
         let data = blocks
             .iter()

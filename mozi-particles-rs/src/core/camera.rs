@@ -3,7 +3,7 @@
 
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::render_config::{CAMERA_FOV_DEGREES, CAMERA_INITIAL_DISTANCE};
+use crate::render_config;
 
 /// Orbit camera with damping-free direct control plus an idle cruise.
 pub struct OrbitCamera {
@@ -16,7 +16,7 @@ pub struct OrbitCamera {
 
 impl Default for OrbitCamera {
     fn default() -> Self {
-        Self { yaw: 0.0, pitch: 0.0, distance: CAMERA_INITIAL_DISTANCE, last_interaction: -100.0, cruise: true }
+        Self { yaw: 0.0, pitch: 0.0, distance: render_config::CAMERA_INITIAL_DISTANCE, last_interaction: -100.0, cruise: true }
     }
 }
 
@@ -49,7 +49,7 @@ impl OrbitCamera {
     /// (projection, view) for a viewport in physical pixels.
     pub fn matrices(&self, now: f32, width: f32, height: f32) -> (Mat4, Mat4) {
         let aspect = (width / height.max(1.0)).max(0.1);
-        let proj = Mat4::perspective_rh(CAMERA_FOV_DEGREES.to_radians(), aspect, 0.1, 100.0);
+        let proj = Mat4::perspective_rh(render_config::CAMERA_FOV_DEGREES.to_radians(), aspect, 0.1, 100.0);
         let view = Mat4::look_at_rh(self.eye(now), Vec3::ZERO, Vec3::Y);
         (proj, view)
     }
@@ -72,7 +72,7 @@ impl OrbitCamera {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::OrbitCamera;
 
     #[test]
     fn unproject_center_hits_origin() {

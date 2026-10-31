@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::layers::field::FieldInstance;
 use crate::protocol::ProjectionRole;
-use crate::render_config::*;
+use crate::render_config;
 
 /// Page size in Wordcraft points. Derived from logical pixels, so monitor DPI does not change font size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,14 +15,14 @@ pub struct Layout {
 
 impl Default for Layout {
     fn default() -> Self {
-        Self { width: MARKDOWN_PAGE_WIDTH as u32, height: MARKDOWN_PAGE_HEIGHT as u32 }
+        Self { width: render_config::MARKDOWN_PAGE_WIDTH as u32, height: render_config::MARKDOWN_PAGE_HEIGHT as u32 }
     }
 }
 
 impl Layout {
     pub fn viewport(width: u32, height: u32, scale: f64) -> Self {
-        let width = width as f64 / scale * MARKDOWN_VIEW_WIDTH as f64 * MARKDOWN_POINTS_PER_PIXEL as f64;
-        let height = height as f64 / scale * MARKDOWN_VIEW_HEIGHT as f64 * MARKDOWN_POINTS_PER_PIXEL as f64;
+        let width = width as f64 / scale * render_config::MARKDOWN_VIEW_WIDTH as f64 * render_config::MARKDOWN_POINTS_PER_PIXEL as f64;
+        let height = height as f64 / scale * render_config::MARKDOWN_VIEW_HEIGHT as f64 * render_config::MARKDOWN_POINTS_PER_PIXEL as f64;
         // Wordcraft 0.6.1 layout.size accepts only 72..=1584 pt.
         let fit = (1584.0 / width.max(height)).min(1.0);
         Self {
@@ -33,22 +33,22 @@ impl Layout {
 
     /// Lane width for a block: user messages on the right, everything else on the left.
     pub fn column(self, right: bool) -> Self {
-        let fraction = if right { PROJECTION_RIGHT_FRACTION } else { PROJECTION_LEFT_FRACTION };
+        let fraction = if right { render_config::PROJECTION_RIGHT_FRACTION } else { render_config::PROJECTION_LEFT_FRACTION };
         Self { width: (self.width as f32 * fraction).round().max(72.0) as u32, height: self.height }
     }
 
     /// Board width and height in raster pixels.
     pub fn pixels(self) -> (u32, u32) {
-        ((self.width as f32 * MARKDOWN_SCALE).round() as u32, (self.height as f32 * MARKDOWN_SCALE).round() as u32)
+        ((self.width as f32 * render_config::MARKDOWN_SCALE).round() as u32, (self.height as f32 * render_config::MARKDOWN_SCALE).round() as u32)
     }
 
     /// Scale that fits the board into the reading rectangle at the camera's *initial* pose,
     /// so zooming moves text and background together instead of re-laying out the page.
     pub fn world_scale(self, width: f32, height: f32) -> f32 {
-        let world_height = MARKDOWN_WORLD_WIDTH * self.height as f32 / self.width as f32;
-        let visible_height = 2.0 * (CAMERA_INITIAL_DISTANCE - MARKDOWN_PLANE_Z) * (CAMERA_FOV_DEGREES.to_radians() * 0.5).tan();
-        (visible_height * MARKDOWN_VIEW_HEIGHT / world_height)
-            .min(visible_height * width / height * MARKDOWN_VIEW_WIDTH / MARKDOWN_WORLD_WIDTH)
+        let world_height = render_config::MARKDOWN_WORLD_WIDTH * self.height as f32 / self.width as f32;
+        let visible_height = 2.0 * (render_config::CAMERA_INITIAL_DISTANCE - render_config::MARKDOWN_PLANE_Z) * (render_config::CAMERA_FOV_DEGREES.to_radians() * 0.5).tan();
+        (visible_height * render_config::MARKDOWN_VIEW_HEIGHT / world_height)
+            .min(visible_height * width / height * render_config::MARKDOWN_VIEW_WIDTH / render_config::MARKDOWN_WORLD_WIDTH)
     }
 }
 
@@ -124,18 +124,18 @@ pub fn placements(blocks: &[(&Entry, &Raster)], height: u32, gap: u32) -> Vec<(u
 }
 
 pub fn samples(entry: &Entry, raster: &Raster, x_offset: u32, y_offset: u32, width: u32, height: u32) -> Vec<Sample> {
-    let step = MARKDOWN_WORLD_WIDTH / width as f32;
+    let step = render_config::MARKDOWN_WORLD_WIDTH / width as f32;
     let tint = match entry.role {
         ProjectionRole::User => [0.4, 0.78, 1.0],
         ProjectionRole::Assistant => [0.94, 0.97, 1.0],
         ProjectionRole::Activity => [1.0, 0.76, 0.4],
     };
     let mut output = Vec::new();
-    for y in (0..raster.image.height()).step_by(MARKDOWN_SAMPLE_STRIDE) {
-        for x in (0..raster.image.width()).step_by(MARKDOWN_SAMPLE_STRIDE) {
+    for y in (0..raster.image.height()).step_by(render_config::MARKDOWN_SAMPLE_STRIDE) {
+        for x in (0..raster.image.width()).step_by(render_config::MARKDOWN_SAMPLE_STRIDE) {
             let rgb = raster.image.get_pixel(x, y).0.map(|v| v as f32 / 255.0);
             let ink = 1.0 - rgb.into_iter().fold(1.0_f32, f32::min);
-            if ink < MARKDOWN_COVERAGE_THRESHOLD {
+            if ink < render_config::MARKDOWN_COVERAGE_THRESHOLD {
                 continue;
             }
             let max = rgb.into_iter().fold(0.0_f32, f32::max);
@@ -147,7 +147,7 @@ pub fn samples(entry: &Entry, raster: &Raster, x_offset: u32, y_offset: u32, wid
                     position: [
                         (x_offset as f32 + x as f32 - width as f32 * 0.5) * step,
                         (height as f32 * 0.5 - y_offset as f32 - y as f32) * step,
-                        MARKDOWN_PLANE_Z,
+                        render_config::MARKDOWN_PLANE_Z,
                     ],
                     color,
                 },
@@ -184,7 +184,7 @@ impl Composition {
 
 pub fn compose(blocks: &[(&Entry, &Raster)], layout: Layout) -> Composition {
     let (width, height) = layout.pixels();
-    let gap = (PROJECTION_BLOCK_GAP_PT * MARKDOWN_SCALE) as u32;
+    let gap = (render_config::PROJECTION_BLOCK_GAP_PT * render_config::MARKDOWN_SCALE) as u32;
     let mut particles = Vec::new();
     let mut retained = Vec::new();
     for (index, y) in placements(blocks, height, gap) {
@@ -209,7 +209,7 @@ pub struct Particle {
 
 impl Particle {
     fn at(&self, now: f32) -> [f32; 3] {
-        let t = ((now - self.moved_at) / MARKDOWN_REFLOW_SECONDS).clamp(0.0, 1.0);
+        let t = ((now - self.moved_at) / render_config::MARKDOWN_REFLOW_SECONDS).clamp(0.0, 1.0);
         let t = t * t * (3.0 - 2.0 * t);
         std::array::from_fn(|i| self.origin[i] + (self.position[i] - self.origin[i]) * t)
     }
@@ -232,7 +232,7 @@ impl Animation {
     }
 
     pub fn update(&mut self, samples: &[Sample], now: f32) -> &[Particle] {
-        self.outgoing.retain(|p| now - p.life[1] < MARKDOWN_DISPERSE_SECONDS);
+        self.outgoing.retain(|p| now - p.life[1] < render_config::MARKDOWN_DISPERSE_SECONDS);
         let mut next = HashMap::with_capacity(samples.len());
         for sample in samples {
             let v = sample.vertex;
@@ -269,7 +269,8 @@ impl Animation {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{compose, placements, samples, Animation, Entry, Layout, ProjectionRole, Raster};
+    use crate::render_config;
 
     fn block(id: u64, right: bool, height: u32) -> (Entry, Raster) {
         (
@@ -314,7 +315,7 @@ mod tests {
         assert_eq!(composition.considered, vec![1, 2]);
         assert_eq!(composition.retained.len(), 2);
         let (width, _) = layout.pixels();
-        let step = MARKDOWN_WORLD_WIDTH / width as f32;
+        let step = render_config::MARKDOWN_WORLD_WIDTH / width as f32;
         let user_x = composition.particles.iter().filter(|p| p.id.0 == 1).map(|p| p.vertex.position[0]).fold(f32::MIN, f32::max);
         assert!((user_x - (width as f32 * 0.5 - 1.0) * step).abs() < 1e-4, "user ink hugs the right edge");
     }
