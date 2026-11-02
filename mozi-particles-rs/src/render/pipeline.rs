@@ -1,9 +1,20 @@
 //! Blend states, per-material vertex layouts, shader assembly and the one pipeline factory
 //! used by both the renderer and GPU tests (so tests exercise the real pipelines).
-use crate::layers::field::{FieldInstance, PulseInstance};
-use crate::layers::glyph::GlyphInstance;
 use crate::layers::markdown::Particle;
 use crate::render_config;
+
+/// 【优化 1：4 顶点 + 静态索引缓冲（Index Buffer）】
+/// 设计思想与数学逻辑：
+/// 每个粒子是一个矩形广告牌（Quad），几何上只有 4 个唯一角点：
+///   0: (-0.5, -0.5), 1: (0.5, -0.5), 2: (0.5, 0.5), 3: (-0.5, 0.5)
+/// 原方案使用无索引 `draw(0..6)`，对角线上的顶点 0 和顶点 2 在每次绘制中都被顶点着色器重复计算了 2 遍。
+/// 改为 4 个唯一顶点配合静态索引 `[0, 1, 2, 0, 2, 3]` 后，光栅化生成的两个三角形 `(0,1,2)` 与 `(0,2,3)`
+/// 的顶点坐标、绕序和插值 UV 与原方案 100% 严格一致，同时所有图层顶点着色器调用次数直接减少 33.3%。
+pub const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+/// 【优化 3：Compute 预计算输出结构 `ResolvedSprite` 的字节步长】
+/// 对应 `common.wgsl` 中的 `struct ResolvedSprite`（3 个 `vec4<f32>` = 48 字节，天然满足 16 字节对齐）。
+pub const RESOLVED_SPRITE_STRIDE: u64 = 48;
 
 /// Straight-alpha "over" that keeps the framebuffer valid premultiplied (RGB <= A).
 pub const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
@@ -43,10 +54,9 @@ pub const BLEND_PREMULTIPLIED_ADD: wgpu::BlendState = wgpu::BlendState {
     alpha: BLEND_ADD.alpha,
 };
 
-static FIELD_ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-static PULSE_ATTRS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32, 2 => Float32x3];
-static GLYPH_ATTRS: [wgpu::VertexAttribute; 4] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32];
+/// `Pulse`、`Field`、`Glyph` 经 Compute Pre-Pass 预计算后，统一输出为 `ResolvedSprite`（3 × `Float32x4`）。
+static RESOLVED_ATTRS: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
 static MARKDOWN_ATTRS: [wgpu::VertexAttribute; 6] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32x2];
 
@@ -71,9 +81,7 @@ impl Material {
 
     fn vertex_layout(self) -> wgpu::VertexBufferLayout<'static> {
         let (stride, attributes): (usize, &'static [wgpu::VertexAttribute]) = match self {
-            Material::Pulse => (std::mem::size_of::<PulseInstance>(), &PULSE_ATTRS),
-            Material::Field => (std::mem::size_of::<FieldInstance>(), &FIELD_ATTRS),
-            Material::Glyph => (std::mem::size_of::<GlyphInstance>(), &GLYPH_ATTRS),
+            Material::Pulse | Material::Field | Material::Glyph => (RESOLVED_SPRITE_STRIDE as usize, &RESOLVED_ATTRS),
             Material::Markdown => (std::mem::size_of::<Particle>(), &MARKDOWN_ATTRS),
         };
         wgpu::VertexBufferLayout { array_stride: stride as u64, step_mode: wgpu::VertexStepMode::Instance, attributes }
@@ -106,7 +114,9 @@ pub fn shader_source() -> String {
 
 pub struct PipelineFactory {
     pub bind_group_layout: wgpu::BindGroupLayout,
+    pub compute_bind_group_layout: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
+    compute_layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 }
@@ -117,9 +127,10 @@ impl PipelineFactory {
             label: Some("particles.wgsl"),
             source: wgpu::ShaderSource::Wgsl(shader_source().into()),
         });
+        // 允许 VERTEX | FRAGMENT | COMPUTE 共享 @group(0) 全局与图层 Uniform 绑定
         let uniform_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -131,12 +142,44 @@ impl PipelineFactory {
             label: Some("frame+layer"),
             entries: &[uniform_entry(0), uniform_entry(1)],
         });
+        // Compute Pre-Pass 专用的 @group(1) 布局：binding(0) 只读原始粒子缓冲，binding(1) 可读写 ResolvedSprite 缓冲
+        let storage_entry = |binding, read_only| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let compute_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_io"),
+            entries: &[storage_entry(0, true), storage_entry(1, false)],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("particles"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
-        Self { bind_group_layout, layout, shader, format }
+        let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("particles_compute"),
+            bind_group_layouts: &[&bind_group_layout, &compute_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        Self { bind_group_layout, compute_bind_group_layout, layout, compute_layout, shader, format }
+    }
+
+    /// 构建每帧执行 1 次粒子物理与投影预计算的 Compute Pipeline（`cs_pulse` / `cs_field` / `cs_glyph`）。
+    pub fn build_compute(&self, device: &wgpu::Device, entry_point: &str) -> wgpu::ComputePipeline {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(entry_point),
+            layout: Some(&self.compute_layout),
+            module: &self.shader,
+            entry_point,
+            compilation_options: Default::default(),
+            cache: None,
+        })
     }
 
     pub fn build(&self, device: &wgpu::Device, material: Material, blend: wgpu::BlendState) -> wgpu::RenderPipeline {

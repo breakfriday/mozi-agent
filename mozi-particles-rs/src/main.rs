@@ -216,7 +216,7 @@ impl App {
                                     self.glyph.play_now(Notice {
                                         key: content.key,
                                         text: content.text,
-                                        tone: Tone::Activity,
+                                        tone: Tone::Attention,
                                     });
                                 }
                             }

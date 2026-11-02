@@ -1,8 +1,13 @@
 use wgpu::util::DeviceExt;
 
-use super::pipeline::{Material, PipelineFactory, BLEND_PREMULTIPLIED_OVER};
+use super::pipeline::{
+    Material, PipelineFactory, BLEND_ADD, BLEND_OVER, BLEND_PREMULTIPLIED_ADD, BLEND_PREMULTIPLIED_OVER, QUAD_INDICES,
+    RESOLVED_SPRITE_STRIDE,
+};
 use super::uniforms::{CameraFrame, FieldParams, FocusSignal, Globals, GlyphMotion, PanelParams};
 use crate::core::camera::OrbitCamera;
+use crate::layers::field::{FieldInstance, PulseInstance};
+use crate::layers::glyph::GlyphInstance;
 use crate::layers::markdown::board;
 use crate::protocol::ProjectionRole;
 use crate::render_config;
@@ -23,6 +28,11 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
         // The real pipeline factory: this test exercises exactly what the renderer builds.
         let factory = PipelineFactory::new(&device, wgpu::TextureFormat::Rgba8Unorm);
         let pipeline = factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_OVER);
+        let quad_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("quad_indices"),
+            contents: bytemuck::cast_slice(&QUAD_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         let bgl = &factory.bind_group_layout;
         let entry = board::Entry {
             id: 1,
@@ -138,8 +148,9 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
                 });
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bindings, &[]);
+                pass.set_index_buffer(quad_indices.slice(..), wgpu::IndexFormat::Uint16);
                 pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.draw(0..6, 0..1);
+                pass.draw_indexed(0..6, 0, 0..1);
             }
             encoder.copy_texture_to_buffer(
                 texture.as_image_copy(),
@@ -203,5 +214,224 @@ fn low_coverage_ink_does_not_darken_and_billboards_stay_round() {
             "subpixel ink must not blink across pixel boundaries: {subpixel_energy:?}"
         );
         eprintln!("subpixel integrated brightness across 8 offsets: {subpixel_energy:?}");
+    });
+}
+
+/// 验证 3 项 GPU 无损优化（4 顶点索引缓冲、Compute Pre-Pass 预计算、Pulse/Glyph 单 Pass 合并）
+/// 在真实 GPU 上完整跑通且产生物理正确的光晕与核心叠加像素。
+#[test]
+#[ignore = "requires a Vulkan/GL adapter"]
+fn compute_prepass_and_merged_passes_render_accurately() {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .await
+            .expect("GPU adapter");
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .await
+            .unwrap();
+        let factory = PipelineFactory::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+
+        let cs_pulse = factory.build_compute(&device, "cs_pulse");
+        let cs_field = factory.build_compute(&device, "cs_field");
+        let cs_glyph = factory.build_compute(&device, "cs_glyph");
+
+        let p_pulse = factory.build(&device, Material::Pulse, BLEND_PREMULTIPLIED_ADD);
+        let p_field_add = factory.build(&device, Material::Field, BLEND_ADD);
+        let p_field_over = factory.build(&device, Material::Field, BLEND_OVER);
+        let p_glyph = factory.build(&device, Material::Glyph, BLEND_PREMULTIPLIED_ADD);
+
+        let quad_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("quad_indices"),
+            contents: bytemuck::cast_slice(&QUAD_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let camera = OrbitCamera { cruise: false, ..OrbitCamera::default() };
+        let (projection, view) = camera.matrices(2.0, 128.0, 128.0);
+        let frame = CameraFrame { view_proj: projection * view, view, viewport: [128.0, 128.0], dpr: 1.0, time: 2.0 };
+        let globals = Globals::compose(
+            &frame,
+            &FocusSignal { age: 1.2, ..FocusSignal::default() },
+            &FieldParams { depth: 1.0, pulse_alpha: 1.0, ..FieldParams::default() },
+            &GlyphMotion::default(),
+            &PanelParams::default(),
+        );
+        let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&globals),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let make_layer_bg = |params: [f32; 4]| {
+            let u = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &factory.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: globals_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: u.as_entire_binding() },
+                ],
+            })
+        };
+
+        let bg_pulse = make_layer_bg([
+            render_config::PULSE_HALO_SCALE,
+            render_config::PULSE_CORE_ALPHA,
+            render_config::PULSE_HALO_ALPHA,
+            render_config::PULSE_PARTICLE_SIZE,
+        ]);
+        let bg_field_halo = make_layer_bg([
+            render_config::FIELD_HALO_SCALE,
+            1.0,
+            render_config::FIELD_HALO_ALPHA,
+            render_config::FIELD_PARTICLE_SIZE,
+        ]);
+        let bg_field_core = make_layer_bg([
+            1.0,
+            0.0,
+            render_config::FIELD_CORE_ALPHA,
+            render_config::FIELD_PARTICLE_SIZE,
+        ]);
+        let bg_glyph = make_layer_bg([
+            render_config::AUTO_GLYPH_HALO_SCALE,
+            render_config::GLYPH_CORE_ALPHA,
+            render_config::GLYPH_HALO_ALPHA,
+            render_config::GLYPH_PARTICLE_SIZE,
+        ]);
+
+        let make_stage = |bytes: &[u8], count: u32| {
+            let raw = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let resolved = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: count as u64 * RESOLVED_SPRITE_STRIDE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &factory.compute_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: raw.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: resolved.as_entire_binding() },
+                ],
+            });
+            (resolved, bg, count)
+        };
+
+        let pulse_data = [PulseInstance { uv: [0.5, 0.4], rand: 0.3, color: [0.3, 0.7, 1.0] }];
+        let field_data = [FieldInstance { position: [0.0, 0.0, 0.0], color: [0.2, 0.6, 0.9] }];
+        let glyph_data = [GlyphInstance {
+            home_pos: [0.0, 0.0, 0.0],
+            target_pos: [0.0, 0.0, 0.0],
+            home_color: [0.4, 0.8, 1.0],
+            seed: 0.1,
+        }];
+
+        let (pulse_res, pulse_cbg, pulse_n) = make_stage(bytemuck::cast_slice(&pulse_data), 1);
+        let (field_res, field_cbg, field_n) = make_stage(bytemuck::cast_slice(&field_data), 1);
+        let (glyph_res, glyph_cbg, glyph_n) = make_stage(bytemuck::cast_slice(&glyph_data), 1);
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 128 * 128 * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut cpass = encoder.begin_compute_pass(&Default::default());
+            cpass.set_bind_group(0, &bg_pulse, &[]);
+            cpass.set_pipeline(&cs_pulse);
+            cpass.set_bind_group(1, &pulse_cbg, &[]);
+            cpass.dispatch_workgroups(1, 1, 1);
+
+            cpass.set_pipeline(&cs_field);
+            cpass.set_bind_group(1, &field_cbg, &[]);
+            cpass.dispatch_workgroups(1, 1, 1);
+
+            cpass.set_pipeline(&cs_glyph);
+            cpass.set_bind_group(1, &glyph_cbg, &[]);
+            cpass.dispatch_workgroups(1, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_index_buffer(quad_indices.slice(..), wgpu::IndexFormat::Uint16);
+
+            pass.set_pipeline(&p_pulse);
+            pass.set_bind_group(0, &bg_pulse, &[]);
+            pass.set_vertex_buffer(0, pulse_res.slice(..));
+            pass.draw_indexed(0..6, 0, 0..pulse_n);
+
+            pass.set_pipeline(&p_field_add);
+            pass.set_bind_group(0, &bg_field_halo, &[]);
+            pass.set_vertex_buffer(0, field_res.slice(..));
+            pass.draw_indexed(0..6, 0, 0..field_n);
+
+            pass.set_pipeline(&p_field_over);
+            pass.set_bind_group(0, &bg_field_core, &[]);
+            pass.set_vertex_buffer(0, field_res.slice(..));
+            pass.draw_indexed(0..6, 0, 0..field_n);
+
+            pass.set_pipeline(&p_glyph);
+            pass.set_bind_group(0, &bg_glyph, &[]);
+            pass.set_vertex_buffer(0, glyph_res.slice(..));
+            pass.draw_indexed(0..6, 0, 0..glyph_n);
+        }
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::ImageCopyBuffer {
+                buffer: &readback,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(128 * 4),
+                    rows_per_image: Some(128),
+                },
+            },
+            wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 },
+        );
+        queue.submit(Some(encoder.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let pixels = readback.slice(..).get_mapped_range();
+        let max_alpha = pixels.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0);
+        assert!(max_alpha > 200, "Compute pre-pass + merged Glyph/Pulse must render bright center particles, got max_alpha={max_alpha}");
     });
 }

@@ -5,7 +5,10 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use super::pipeline::{Material, PipelineFactory, BLEND_ADD, BLEND_OVER, BLEND_PREMULTIPLIED_ADD, BLEND_PREMULTIPLIED_OVER};
+use super::pipeline::{
+    Material, PipelineFactory, BLEND_ADD, BLEND_OVER, BLEND_PREMULTIPLIED_ADD, BLEND_PREMULTIPLIED_OVER, QUAD_INDICES,
+    RESOLVED_SPRITE_STRIDE,
+};
 use super::uniforms::Globals;
 use crate::layers::field::{FieldInstance, PulseInstance};
 use crate::layers::glyph::GlyphInstance;
@@ -16,32 +19,32 @@ use crate::render_config;
 struct LayerSpec {
     material: Material,
     additive: bool,
-    /// bloom_scale, soft, layer_alpha, size
+    /// - 对于保留双 Pass（Halo + Core）的图层（Field、Markdown）：`[bloom_scale, soft, layer_alpha, size]`
+    /// - 对于单 Pass 合并的纯加法图层（Pulse、Glyph）：`[bloom_scale, core_alpha, halo_alpha, size]`
     params: [f32; 4],
 }
 
-/// Draw order: background, short-message glyphs, then the Markdown halo and core.
-const LAYERS: [LayerSpec; 8] = [
+/// 【优化 2：渲染 Pass 从 8 个精简为 6 个】
+/// 设计思想与数学逻辑：
+/// - `Pulse`（原 Pass 1 & 2）与 `Glyph`（原 Pass 5 & 6）的光晕和核心均使用纯加法混合（`BLEND_ADD`），
+///   且光晕与核心之间没有穿插任何非加法图层。根据加法交换律与结合律：
+///     ∑ Halo_i + ∑ Core_i ≡ ∑(Halo_i + Core_i)
+///   将它们各自合并为 1 个 `BLEND_PREMULTIPLIED_ADD` Pass，最终帧缓冲区的像素值 100% 不变。
+/// - `Field`（Pass 2 & 3）与 `Markdown`（Pass 5 & 6）的核心使用 `BLEND_OVER`（含 `1 - SrcAlpha` 遮挡项），
+///   不满足交换律，因此严格保留“先画全屏光晕、再画全屏核心”的两遍顺序，确保丝绸立体感与文字墨色锐度 100% 无损。
+const LAYERS: [LayerSpec; 6] = [
+    // Pass 1（合并原 Pass 1 & 2）：PULSE 极光与星尘（光晕 + 核心单次输出）
     LayerSpec {
         material: Material::Pulse,
         additive: true,
         params: [
             render_config::PULSE_HALO_SCALE,
-            1.0,
+            render_config::PULSE_CORE_ALPHA,
             render_config::PULSE_HALO_ALPHA,
             render_config::PULSE_PARTICLE_SIZE,
         ],
     },
-    LayerSpec {
-        material: Material::Pulse,
-        additive: true,
-        params: [
-            1.0,
-            0.0,
-            render_config::PULSE_CORE_ALPHA,
-            render_config::PULSE_PARTICLE_SIZE,
-        ],
-    },
+    // Pass 2（原 Pass 3）：SILK 背景粒子光晕（BLEND_ADD）
     LayerSpec {
         material: Material::Field,
         additive: true,
@@ -52,6 +55,7 @@ const LAYERS: [LayerSpec; 8] = [
             render_config::FIELD_PARTICLE_SIZE,
         ],
     },
+    // Pass 3（原 Pass 4）：SILK 背景粒子核心（BLEND_OVER）
     LayerSpec {
         material: Material::Field,
         additive: false,
@@ -62,26 +66,18 @@ const LAYERS: [LayerSpec; 8] = [
             render_config::FIELD_PARTICLE_SIZE,
         ],
     },
+    // Pass 4（合并原 Pass 5 & 6）：GLYPH 中央短消息大字（光晕 + 核心单次输出）
     LayerSpec {
         material: Material::Glyph,
         additive: true,
         params: [
             render_config::AUTO_GLYPH_HALO_SCALE,
-            1.0,
+            render_config::GLYPH_CORE_ALPHA,
             render_config::GLYPH_HALO_ALPHA,
             render_config::GLYPH_PARTICLE_SIZE,
         ],
     },
-    LayerSpec {
-        material: Material::Glyph,
-        additive: true,
-        params: [
-            1.0,
-            0.0,
-            render_config::GLYPH_CORE_ALPHA,
-            render_config::GLYPH_PARTICLE_SIZE,
-        ],
-    },
+    // Pass 5（原 Pass 7）：Markdown 面板文字光晕（BLEND_PREMULTIPLIED_ADD）
     LayerSpec {
         material: Material::Markdown,
         additive: true,
@@ -92,6 +88,7 @@ const LAYERS: [LayerSpec; 8] = [
             render_config::MARKDOWN_PARTICLE_RADIUS,
         ],
     },
+    // Pass 6（原 Pass 8）：Markdown 面板文字核心（BLEND_PREMULTIPLIED_OVER）
     LayerSpec {
         material: Material::Markdown,
         additive: false,
@@ -103,8 +100,8 @@ const LAYERS: [LayerSpec; 8] = [
         ],
     },
 ];
-/// The glyph halo follows the active style's bloom size.
-const GLYPH_HALO_LAYER: usize = 4;
+/// The glyph halo follows the active style's bloom size (`params[0]` = `bloom_scale`).
+const GLYPH_HALO_LAYER: usize = 3;
 
 struct Layer {
     spec: LayerSpec,
@@ -112,7 +109,62 @@ struct Layer {
     bind_group: wgpu::BindGroup,
 }
 
+/// 【优化 3：Compute Pre-Pass 阶段缓冲】
+/// `raw` 存放 CPU 上传的原始粒子属性（只读 Storage Buffer），
+/// `resolved` 存放 Compute Shader 每帧计算 1 次后输出的 `ResolvedSprite`（兼具 Storage 写入与 Vertex 实例读取用途）。
+struct ComputeStage {
+    raw: wgpu::Buffer,
+    resolved: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    count: u32,
+}
+
+impl ComputeStage {
+    fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: &str,
+        raw_bytes: Option<&[u8]>,
+        raw_byte_len: u64,
+        count: u32,
+    ) -> Self {
+        let raw_size = raw_byte_len.max(64);
+        let raw = match raw_bytes {
+            Some(bytes) if !bytes.is_empty() => device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytes,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            }),
+            _ => device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: raw_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+        };
+        let resolved_size = (count as u64 * RESOLVED_SPRITE_STRIDE).max(64);
+        let resolved = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: resolved_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: raw.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: resolved.as_entire_binding() },
+            ],
+        });
+        Self { raw, resolved, bind_group, count }
+    }
+}
+
 struct Pipelines {
+    cs_pulse: wgpu::ComputePipeline,
+    cs_field: wgpu::ComputePipeline,
+    cs_glyph: wgpu::ComputePipeline,
     pulse: wgpu::RenderPipeline,
     field_add: wgpu::RenderPipeline,
     field_over: wgpu::RenderPipeline,
@@ -128,11 +180,13 @@ pub struct Gpu {
     config: wgpu::SurfaceConfiguration,
     clear: wgpu::Color,
     globals: wgpu::Buffer,
+    compute_bind_group_layout: wgpu::BindGroupLayout,
+    quad_indices: wgpu::Buffer,
     layers: Vec<Layer>,
     pipelines: Pipelines,
-    field: (wgpu::Buffer, u32),
-    pulse: (wgpu::Buffer, u32),
-    glyph: wgpu::Buffer,
+    field: ComputeStage,
+    pulse: ComputeStage,
+    glyph: ComputeStage,
     markdown: (wgpu::Buffer, u32),
 }
 
@@ -224,15 +278,24 @@ impl Gpu {
             .collect();
 
         let pipelines = Pipelines {
-            pulse: factory.build(&device, Material::Pulse, BLEND_ADD),
+            cs_pulse: factory.build_compute(&device, "cs_pulse"),
+            cs_field: factory.build_compute(&device, "cs_field"),
+            cs_glyph: factory.build_compute(&device, "cs_glyph"),
+            pulse: factory.build(&device, Material::Pulse, BLEND_PREMULTIPLIED_ADD),
             field_add: factory.build(&device, Material::Field, BLEND_ADD),
             field_over: factory.build(&device, Material::Field, BLEND_OVER),
-            glyph: factory.build(&device, Material::Glyph, BLEND_ADD),
+            glyph: factory.build(&device, Material::Glyph, BLEND_PREMULTIPLIED_ADD),
             markdown_core: factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_OVER),
             markdown_halo: factory.build(&device, Material::Markdown, BLEND_PREMULTIPLIED_ADD),
         };
+        let compute_bind_group_layout = factory.compute_bind_group_layout;
+        let quad_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("quad_indices"),
+            contents: bytemuck::cast_slice(&QUAD_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
 
-        let empty = |label| {
+        let empty_vertex = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
                 size: 64,
@@ -240,17 +303,35 @@ impl Gpu {
                 mapped_at_creation: false,
             })
         };
-        let field = (empty("field"), 0);
-        let pulse = (empty("pulse"), 0);
-        let markdown = (empty("markdown"), 0);
-        let glyph = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glyph"),
-            size: (render_config::EVENT_PARTICLE_COUNT * std::mem::size_of::<GlyphInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let field = ComputeStage::new(&device, &compute_bind_group_layout, "field", None, 64, 0);
+        let pulse = ComputeStage::new(&device, &compute_bind_group_layout, "pulse", None, 64, 0);
+        let glyph_raw_bytes = (render_config::EVENT_PARTICLE_COUNT * std::mem::size_of::<GlyphInstance>()) as u64;
+        let glyph = ComputeStage::new(
+            &device,
+            &compute_bind_group_layout,
+            "glyph",
+            None,
+            glyph_raw_bytes,
+            render_config::EVENT_PARTICLE_COUNT as u32,
+        );
+        let markdown = (empty_vertex("markdown"), 0);
 
-        Ok(Self { surface, device, queue, config, clear, globals, layers, pipelines, field, pulse, glyph, markdown })
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            clear,
+            globals,
+            compute_bind_group_layout,
+            quad_indices,
+            layers,
+            pipelines,
+            field,
+            pulse,
+            glyph,
+            markdown,
+        })
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -267,11 +348,24 @@ impl Gpu {
     }
 
     pub fn set_field(&mut self, field: &[FieldInstance], pulse: &[PulseInstance]) {
-        let init = |label, contents: &[u8]| {
-            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::VERTEX })
-        };
-        self.field = (init("field", bytemuck::cast_slice(field)), field.len() as u32);
-        self.pulse = (init("pulse", bytemuck::cast_slice(pulse)), pulse.len() as u32);
+        let field_bytes: &[u8] = bytemuck::cast_slice(field);
+        let pulse_bytes: &[u8] = bytemuck::cast_slice(pulse);
+        self.field = ComputeStage::new(
+            &self.device,
+            &self.compute_bind_group_layout,
+            "field",
+            Some(field_bytes),
+            field_bytes.len() as u64,
+            field.len() as u32,
+        );
+        self.pulse = ComputeStage::new(
+            &self.device,
+            &self.compute_bind_group_layout,
+            "pulse",
+            Some(pulse_bytes),
+            pulse_bytes.len() as u64,
+            pulse.len() as u32,
+        );
     }
 
     pub fn set_markdown(&mut self, particles: &[Particle]) {
@@ -287,7 +381,7 @@ impl Gpu {
 
     pub fn set_glyph(&self, glyph: &[GlyphInstance]) {
         let n = glyph.len().min(render_config::EVENT_PARTICLE_COUNT);
-        self.queue.write_buffer(&self.glyph, 0, bytemuck::cast_slice(&glyph[..n]));
+        self.queue.write_buffer(&self.glyph.raw, 0, bytemuck::cast_slice(&glyph[..n]));
     }
 
     pub fn set_glyph_bloom(&mut self, bloom_scale: f32) {
@@ -314,6 +408,33 @@ impl Gpu {
 
         let markdown_visible = globals.markdown_visible();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+
+        // 1. Compute Pre-Pass：每颗粒子每帧仅计算 1 次运动方程（三角函数、噪声、伴舞）与 3D 相机投影，
+        //    将计算结果写入各自的 ResolvedSprite 缓冲区，供后续 Render Pass 直接读取。
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("particles_prepass"),
+                timestamp_writes: None,
+            });
+            cpass.set_bind_group(0, &self.layers[0].bind_group, &[]);
+            if self.pulse.count > 0 {
+                cpass.set_pipeline(&self.pipelines.cs_pulse);
+                cpass.set_bind_group(1, &self.pulse.bind_group, &[]);
+                cpass.dispatch_workgroups(self.pulse.count.div_ceil(64), 1, 1);
+            }
+            if self.field.count > 0 {
+                cpass.set_pipeline(&self.pipelines.cs_field);
+                cpass.set_bind_group(1, &self.field.bind_group, &[]);
+                cpass.dispatch_workgroups(self.field.count.div_ceil(64), 1, 1);
+            }
+            if glyph_visible && self.glyph.count > 0 {
+                cpass.set_pipeline(&self.pipelines.cs_glyph);
+                cpass.set_bind_group(1, &self.glyph.bind_group, &[]);
+                cpass.dispatch_workgroups(self.glyph.count.div_ceil(64), 1, 1);
+            }
+        }
+
+        // 2. Render Pass：使用 4 顶点 + 静态索引缓冲（QUAD_INDICES）按严格顺序绘制 6 个图层 Pass。
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("particles"),
@@ -326,12 +447,13 @@ impl Gpu {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            pass.set_index_buffer(self.quad_indices.slice(..), wgpu::IndexFormat::Uint16);
             for layer in &self.layers {
                 let (pipeline, buffer, count) = match layer.spec.material {
-                    Material::Pulse => (&self.pipelines.pulse, &self.pulse.0, self.pulse.1),
-                    Material::Field if layer.spec.additive => (&self.pipelines.field_add, &self.field.0, self.field.1),
-                    Material::Field => (&self.pipelines.field_over, &self.field.0, self.field.1),
-                    Material::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph, render_config::EVENT_PARTICLE_COUNT as u32),
+                    Material::Pulse => (&self.pipelines.pulse, &self.pulse.resolved, self.pulse.count),
+                    Material::Field if layer.spec.additive => (&self.pipelines.field_add, &self.field.resolved, self.field.count),
+                    Material::Field => (&self.pipelines.field_over, &self.field.resolved, self.field.count),
+                    Material::Glyph if glyph_visible => (&self.pipelines.glyph, &self.glyph.resolved, self.glyph.count),
                     Material::Markdown if markdown_visible => (
                         if layer.spec.additive { &self.pipelines.markdown_halo } else { &self.pipelines.markdown_core },
                         &self.markdown.0,
@@ -345,7 +467,7 @@ impl Gpu {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &layer.bind_group, &[]);
                 pass.set_vertex_buffer(0, buffer.slice(..));
-                pass.draw(0..6, 0..count);
+                pass.draw_indexed(0..6, 0, 0..count);
             }
         }
         self.queue.submit(Some(encoder.finish()));
