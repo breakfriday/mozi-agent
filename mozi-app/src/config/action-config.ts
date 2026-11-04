@@ -1,10 +1,7 @@
 import { useEffect, useEffectEvent } from "react";
 
 export type ActionWhen =
-  | "!dialog"
-  | "!other-dialog"
-  | "session-switcher"
-  | "!dialog && !editable";
+  "!dialog" | "!other-dialog" | "session-switcher" | "!dialog && !editable";
 
 export type ActionConfig = {
   action: string;
@@ -15,7 +12,6 @@ export type ActionConfig = {
   desc: string;
 };
 
-// `mod` accepts Ctrl or ⌘. Only actions with command aliases appear after `>`.
 export const actionConfig = [
   {
     action: "session.create",
@@ -39,14 +35,56 @@ export const actionConfig = [
     command: ["new gpt"],
     desc: "打开 ChatGPT",
   },
-  { action: "session.delete", keymap: "mod+d", when: "session-switcher", desc: "删除选中会话" },
-  { action: "model.provider", keymap: "alt+p", when: "!dialog", desc: "切换模型服务商" },
-  { action: "model.select", keymap: "alt+m", when: "!dialog", desc: "切换模型" },
-  { action: "session.switcher", keymap: "mod+k", when: "!other-dialog", desc: "搜索和切换会话" },
-  { action: "chat.focus-next", keymap: "F6", when: "!dialog", desc: "切换到下一个聊天区域" },
-  { action: "chat.focus-previous", keymap: "shift+F6", when: "!dialog", desc: "切换到上一个聊天区域" },
-  { action: "chat.page-up", keymap: "PageUp", when: "!dialog && !editable", repeat: true, desc: "消息区向上翻页" },
-  { action: "chat.page-down", keymap: "PageDown", when: "!dialog && !editable", repeat: true, desc: "消息区向下翻页" },
+  {
+    action: "session.delete",
+    keymap: "mod+d",
+    when: "session-switcher",
+    desc: "删除选中会话",
+  },
+  {
+    action: "model.provider",
+    keymap: "alt+p",
+    when: "!dialog",
+    desc: "切换模型服务商",
+  },
+  {
+    action: "model.select",
+    keymap: "alt+m",
+    when: "!dialog",
+    desc: "切换模型",
+  },
+  {
+    action: "session.switcher",
+    keymap: "mod+k",
+    when: "!other-dialog",
+    desc: "搜索和切换会话",
+  },
+  {
+    action: "chat.focus-next",
+    keymap: "F6",
+    when: "!dialog",
+    desc: "切换到下一个聊天区域",
+  },
+  {
+    action: "chat.focus-previous",
+    keymap: "shift+F6",
+    when: "!dialog",
+    desc: "切换到上一个聊天区域",
+  },
+  {
+    action: "chat.page-up",
+    keymap: "PageUp",
+    when: "!dialog && !editable",
+    repeat: true,
+    desc: "消息区向上翻页",
+  },
+  {
+    action: "chat.page-down",
+    keymap: "PageDown",
+    when: "!dialog && !editable",
+    repeat: true,
+    desc: "消息区向下翻页",
+  },
 ] as const satisfies readonly ActionConfig[];
 
 export type ActionId = (typeof actionConfig)[number]["action"];
@@ -67,7 +105,9 @@ export function matchesWhen(when?: ActionWhen): boolean {
   if (!when) return true;
   const active = document.activeElement;
   const dialog = active?.closest('[role="dialog"]') ?? null;
-  const inSessionSwitcher = Boolean(dialog?.querySelector("[data-session-switcher]"));
+  const inSessionSwitcher = Boolean(
+    dialog?.querySelector("[data-session-switcher]"),
+  );
   switch (when) {
     case "!dialog":
       return !dialog;
@@ -100,13 +140,28 @@ function hasActionHandler(id: ActionId): boolean {
   return false;
 }
 
+/**
+ * 键盘快捷键处理流程：
+ *
+ * 用户按下键盘
+ *   │
+ *   ├── 1. 检查是否有 event.defaultPrevented（已被上层拦截则直接退出）
+ *   │
+ *   ├── 2. 【核心查找】.find(...)
+ *   │       同时满足：【按键正确】 AND 【当前场景匹配】
+ *   │
+ *   ├── 3. 检查是否有注册对应的 action handler 执行函数
+ *   │
+ *   ├── 4. 处理长按重复（repeat）限制
+ *   │
+ *   └── 5. dispatchAction(...) 触发动作，并阻止原生默认行为（preventDefault）
+ */
+
 export function handleActionKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented) return;
   const config = (
     actionConfig as readonly (ActionConfig & { action: ActionId })[]
-  ).find(
-    (item) => matchesKeymap(event, item.keymap) && matchesWhen(item.when),
-  );
+  ).find((item) => matchesKeymap(event, item.keymap) && matchesWhen(item.when));
   if (!config || !hasActionHandler(config.action)) return;
   if (event.repeat && !config.repeat) {
     event.preventDefault();
@@ -118,7 +173,19 @@ export function handleActionKeyDown(event: KeyboardEvent): void {
     event.stopPropagation();
   }
 }
-
+/**
+ * 向全局动作系统注册组件级 Action 处理器。
+ *
+ * 【设计核心】：
+ * 1. 优先级机制：使用全局 registry（Set）按挂载顺序维护后进先出（LIFO）栈，
+ *    确保最上层/最内层的弹窗或组件优先响应快捷键。
+ * 2. 状态新鲜度与引用稳定：借助 useEffectEvent 隔离“响应式渲染”与“全局副作用”，
+ *    既能避免组件频繁重渲染导致 registry 顺序被打乱，
+ *    又能彻底杜绝闭包陷阱，保证回调函数永远读取到组件最新的 state/props。
+ *
+ * @param handlers 动作处理函数映射表（如 { "session.delete": () => ... }）
+ * @param options.enabled 是否启用快捷键监听（默认 true）
+ */
 export function useAction(
   handlers: ActionMap,
   options?: { enabled?: boolean },
