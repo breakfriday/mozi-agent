@@ -1,15 +1,14 @@
 import {
-  actionConfig,
   getAction,
   filterCommands,
-  matchesKeymap,
   formatKeymap,
   actionHint,
   ariaKeymap,
+  dispatchAction,
+  useAction,
   type ActionId,
-  type ActionConfig,
 } from "@/config/action-config";
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Modal, Input, type InputRef } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { useAgentStore } from "@/agent/agentStore";
@@ -145,34 +144,9 @@ export function SessionSwitcher({
     },
   };
   const executeAction = (id: ActionId) => {
-    if (action) return;
-    void handlers[id]?.();
+    if (!action) dispatchAction(id);
   };
-  const executeShortcut = useEffectEvent(executeAction);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const config = actionConfig.find((item: ActionConfig) =>
-        !item.scope && matchesKeymap(event, item.keymap),
-      );
-      if (!config) return;
-      // Only the dialog holding focus owns the keyboard. Hidden/closing modal
-      // nodes must not block reopening this switcher.
-      const focusedDialog = document.activeElement?.closest('[role="dialog"]');
-      if (
-        focusedDialog &&
-        !focusedDialog.querySelector("[data-session-switcher]")
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.repeat) return;
-      executeShortcut(config.action);
-    };
-    // Capture before inputs or nested widgets can consume the shortcut.
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, []);
+  useAction(handlers, { enabled: !action });
 
   useEffect(() => {
     if (open) revealSelection(results.current);

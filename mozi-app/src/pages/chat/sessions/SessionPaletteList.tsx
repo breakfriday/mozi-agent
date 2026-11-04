@@ -1,6 +1,5 @@
 import {
   filterCommands,
-  matchesKeymap,
   ariaKeymap,
   getAction,
   actionHint,
@@ -67,11 +66,6 @@ export function SessionPaletteList({
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-            if (matchesKeymap(e.nativeEvent, getAction("session.delete").keymap)) {
-              e.preventDefault();
-              if (active && !commandMode && !e.repeat) onExecute("session.delete");
-              return;
-            }
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
               if (count)

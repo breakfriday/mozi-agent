@@ -24,6 +24,7 @@ import { useRef, useState } from "react";
 import { RunUsageSummary, TokenMonitorButton } from "../angetTokenMonitor/UsageButtons";
 import { bridgeApi } from "@/runtime/bridge";
 import { createPageUrl } from "@/runtime/pageUrl";
+import { ariaKeymap, formatKeymap, getAction, useAction } from "@/config/action-config";
 
 const suggestions = [
   "检查播放器是否异常",
@@ -116,13 +117,53 @@ function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseMo
 }
 
 function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const composerAreaRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const runtime = useAgentStore((state) => state.runtime);
   const error = useAgentStore((state) => state.error);
   const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing");
   const errorText = error?.code === "RUNTIME_UNAVAILABLE" ? "Agent 后台尚未连接，请稍后检查连接。" : error?.message;
+
+  const switchRegion = (direction: "next" | "previous") => {
+    const active = document.activeElement;
+    const inComposer = composerAreaRef.current?.contains(active);
+    const inReadingMode =
+      !active ||
+      active === document.body ||
+      active.getAttribute("aria-label") === "智能对话" ||
+      viewportRef.current?.contains(active);
+    if (inComposer || (!inReadingMode && direction === "next")) {
+      if (active instanceof HTMLElement) active.blur();
+    } else {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  };
+
+  const scrollPage = (direction: -1 | 1) => {
+    if (!viewportRef.current) return false;
+    viewportRef.current.scrollBy({
+      top: viewportRef.current.clientHeight * 0.9 * direction,
+      behavior: "instant",
+    });
+  };
+
+  useAction({
+    "chat.focus-next": () => switchRegion("next"),
+    "chat.focus-previous": () => switchRegion("previous"),
+    "chat.page-up": () => scrollPage(-1),
+    "chat.page-down": () => scrollPage(1),
+  });
+
   return (
     <ThreadPrimitive.Root className={styles.thread}>
-      <ThreadPrimitive.Viewport className={styles.viewport} role="region" aria-label="聊天消息">
+      <ThreadPrimitive.Viewport
+        ref={viewportRef}
+        className={styles.viewport}
+        role="region"
+        aria-label="聊天消息"
+        aria-keyshortcuts={[ariaKeymap("chat.focus-next"), ariaKeymap("chat.focus-previous"), ariaKeymap("chat.page-up"), ariaKeymap("chat.page-down")].filter(Boolean).join(" ")}
+      >
         <AuiIf condition={(s) => s.thread.isEmpty}>
           <div className={styles.welcome}>
             <MoziIcon animated />
@@ -151,7 +192,7 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
-      <div className={styles.composerArea}>
+      <div ref={composerAreaRef} className={styles.composerArea}>
         {errorText && (
           <div className={styles.connectionError} role="alert">
             <span>{errorText}</span>
@@ -165,14 +206,16 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
         </ThreadPrimitive.ScrollToBottom>
         <ComposerPrimitive.Root className={styles.composer}>
           <ComposerPrimitive.Input
+            ref={inputRef}
             className={styles.input}
             placeholder="向 Mozi 发送消息…"
             aria-label="消息内容"
+            aria-keyshortcuts={[ariaKeymap("chat.focus-next"), ariaKeymap("chat.focus-previous")].filter(Boolean).join(" ")}
             rows={2}
           />
           <div className={styles.composerToolbar}>
             <span className={styles.inputHint}>
-              Enter 发送 · Shift + Enter 换行
+              Enter 发送 · Shift + Enter 换行 · {formatKeymap(getAction("chat.focus-next").keymap)} / {formatKeymap(getAction("chat.focus-previous").keymap)} 切换消息区/输入框 · 消息区 {formatKeymap(getAction("chat.page-up").keymap)} / {formatKeymap(getAction("chat.page-down").keymap)} 翻页
             </span>
             <AuiIf condition={(s) => !s.thread.isRunning}>
               <ComposerPrimitive.Send

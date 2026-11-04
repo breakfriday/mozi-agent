@@ -1,10 +1,9 @@
 import { OAuthProviderEditor } from "./OAuthProviderEditor";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
-  getAction,
-  matchesKeymap,
   actionHint,
   ariaKeymap,
+  useAction,
 } from "@/config/action-config";
 import type { RefSelectProps } from "antd";
 import {
@@ -620,28 +619,13 @@ function ModelChoices({
   const providerSelect = useRef<RefSelectProps>(null);
   const modelSelect = useRef<RefSelectProps>(null);
   const [opened, setOpened] = useState<"provider" | "model" | null>(null);
-  const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (
-      !shortcuts ||
-      disabled ||
-      document.activeElement?.closest('[role="dialog"]')
-    )
-      return;
-    const target = matchesKeymap(event, getAction("model.provider").keymap)
-      ? "provider"
-      : matchesKeymap(event, getAction("model.select").keymap)
-        ? "model"
-        : null;
-    if (!target) return;
+  const openChoice = (target: "provider" | "model") => {
     if (
       target === "provider"
         ? !providers.some((item) => item.configured && item.models.length)
         : !provider?.configured || !provider.models.length
     )
-      return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.repeat) return;
+      return false;
     const select = (target === "provider" ? providerSelect : modelSelect)
       .current;
     // A model update can disable the input before Enter keyup reaches Select.
@@ -649,13 +633,14 @@ function ModelChoices({
     select?.blur();
     select?.focus();
     setOpened(target);
-  });
-  useEffect(() => {
-    if (!shortcuts) return;
-    const onKey = (event: KeyboardEvent) => handleShortcut(event);
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [shortcuts]);
+  };
+  useAction(
+    {
+      "model.provider": () => openChoice("provider"),
+      "model.select": () => openChoice("model"),
+    },
+    { enabled: shortcuts && !disabled },
+  );
   return (
     <div className={styles.selection}>
       <div className={styles.choices}>

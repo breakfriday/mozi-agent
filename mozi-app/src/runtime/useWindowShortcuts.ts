@@ -1,28 +1,31 @@
 import { useEffect } from "react";
+import { handleActionKeyDown } from "@/config/action-config";
 import { bridgeApi } from "./bridge";
 
 export function useWindowShortcuts() {
   useEffect(() => {
-    if (!bridgeApi.available) return;
-
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
-        !document.hasFocus() ||
-        event.isComposing ||
-        !event.ctrlKey ||
-        !event.shiftKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.code !== "KeyI"
-      ) return;
+        bridgeApi.available &&
+        document.hasFocus() &&
+        !event.isComposing &&
+        event.ctrlKey &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        event.code === "KeyI"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          void bridgeApi.window.openDevTools().catch((error: unknown) => {
+            console.error("Failed to open window DevTools:", error);
+          });
+        }
+        return;
+      }
 
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.repeat) return;
-
-      void bridgeApi.window.openDevTools().catch((error: unknown) => {
-        console.error("Failed to open window DevTools:", error);
-      });
+      handleActionKeyDown(event);
     };
 
     window.addEventListener("keydown", handleKeyDown, true);

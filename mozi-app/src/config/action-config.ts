@@ -1,7 +1,16 @@
+import { useEffect, useEffectEvent } from "react";
+
+export type ActionWhen =
+  | "!dialog"
+  | "!other-dialog"
+  | "session-switcher"
+  | "!dialog && !editable";
+
 export type ActionConfig = {
   action: string;
   keymap?: string;
-  scope?: "session-list" | "model-controls";
+  when?: ActionWhen;
+  repeat?: boolean;
   command?: readonly string[];
   desc: string;
 };
@@ -11,6 +20,7 @@ export const actionConfig = [
   {
     action: "session.create",
     keymap: "mod+n",
+    when: "!other-dialog",
     command: ["new", "session"],
     desc: "新建会话",
   },
@@ -29,16 +39,101 @@ export const actionConfig = [
     command: ["new gpt"],
     desc: "打开 ChatGPT",
   },
-  { action: "session.delete", keymap: "mod+d", scope: "session-list", desc: "删除选中会话" },
-  { action: "model.provider", keymap: "alt+p", scope: "model-controls", desc: "切换模型服务商" },
-  { action: "model.select", keymap: "alt+m", scope: "model-controls", desc: "切换模型" },
-  { action: "session.switcher", keymap: "mod+k", desc: "搜索和切换会话" },
+  { action: "session.delete", keymap: "mod+d", when: "session-switcher", desc: "删除选中会话" },
+  { action: "model.provider", keymap: "alt+p", when: "!dialog", desc: "切换模型服务商" },
+  { action: "model.select", keymap: "alt+m", when: "!dialog", desc: "切换模型" },
+  { action: "session.switcher", keymap: "mod+k", when: "!other-dialog", desc: "搜索和切换会话" },
+  { action: "chat.focus-next", keymap: "F6", when: "!dialog", desc: "切换到下一个聊天区域" },
+  { action: "chat.focus-previous", keymap: "shift+F6", when: "!dialog", desc: "切换到上一个聊天区域" },
+  { action: "chat.page-up", keymap: "PageUp", when: "!dialog && !editable", repeat: true, desc: "消息区向上翻页" },
+  { action: "chat.page-down", keymap: "PageDown", when: "!dialog && !editable", repeat: true, desc: "消息区向下翻页" },
 ] as const satisfies readonly ActionConfig[];
 
 export type ActionId = (typeof actionConfig)[number]["action"];
+export type ActionHandler = () => boolean | void | Promise<void>;
+export type ActionMap = Partial<Record<ActionId, ActionHandler>>;
+
+const EDITABLE_SELECTOR =
+  'input, textarea, select, [contenteditable="true"], [role="listbox"], [role="combobox"], [role="slider"], [role="spinbutton"]';
+
+type RegistryEntry = (id: ActionId) => ActionHandler | undefined;
+const registry = new Set<RegistryEntry>();
 
 export function getAction(id: ActionId): ActionConfig {
   return actionConfig.find((config) => config.action === id)!;
+}
+
+export function matchesWhen(when?: ActionWhen): boolean {
+  if (!when) return true;
+  const active = document.activeElement;
+  const dialog = active?.closest('[role="dialog"]') ?? null;
+  const inSessionSwitcher = Boolean(dialog?.querySelector("[data-session-switcher]"));
+  switch (when) {
+    case "!dialog":
+      return !dialog;
+    case "!other-dialog":
+      return !dialog || inSessionSwitcher;
+    case "session-switcher":
+      return inSessionSwitcher;
+    case "!dialog && !editable":
+      return (
+        !dialog &&
+        !(active instanceof HTMLElement && active.closest(EDITABLE_SELECTOR))
+      );
+  }
+}
+
+export function dispatchAction(id: ActionId): boolean {
+  for (const getHandler of Array.from(registry).reverse()) {
+    const handler = getHandler(id);
+    if (handler) {
+      return handler() !== false;
+    }
+  }
+  return false;
+}
+
+function hasActionHandler(id: ActionId): boolean {
+  for (const getHandler of Array.from(registry).reverse()) {
+    if (getHandler(id)) return true;
+  }
+  return false;
+}
+
+export function handleActionKeyDown(event: KeyboardEvent): void {
+  if (event.defaultPrevented) return;
+  const config = (
+    actionConfig as readonly (ActionConfig & { action: ActionId })[]
+  ).find(
+    (item) => matchesKeymap(event, item.keymap) && matchesWhen(item.when),
+  );
+  if (!config || !hasActionHandler(config.action)) return;
+  if (event.repeat && !config.repeat) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (dispatchAction(config.action)) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
+export function useAction(
+  handlers: ActionMap,
+  options?: { enabled?: boolean },
+): void {
+  const enabled = options?.enabled ?? true;
+  const getHandler = useEffectEvent((id: ActionId) => handlers[id]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const entry: RegistryEntry = (id) => getHandler(id);
+    registry.add(entry);
+    return () => {
+      registry.delete(entry);
+    };
+  }, [enabled]);
 }
 
 export function filterCommands(
