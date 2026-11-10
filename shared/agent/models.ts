@@ -108,8 +108,15 @@ export type SessionSummary = {
   updatedAt: string;
 };
 
+export type DerivedSourceView = {
+  sessionId: Id;
+  title: string;
+  deleted: boolean;
+};
+
 export type SessionSnapshot = {
   usage?: import("./usage").UsageMonitorView;
+  derivedFrom?: DerivedSourceView[];
   session: SessionSummary;
   lastSeq: number;
   messages: MessageView[];

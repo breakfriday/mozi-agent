@@ -1,4 +1,4 @@
-import type { Id, InputPart, TerminalStatus, SessionSummary, SessionSnapshot, RunView, AppError, MessageView, MessagePart, ToolView, ToolOutcome, ApprovalView, RunOutcome } from "./models";
+import type { Id, InputPart, TerminalStatus, SessionSummary, SessionSnapshot, DerivedSourceView, RunView, AppError, MessageView, MessagePart, ToolView, ToolOutcome, ApprovalView, RunOutcome } from "./models";
 
 import type { ModelSelection, ModelSettings, ProviderSaveInput } from "./providers";
 
@@ -45,8 +45,37 @@ export type MethodMap = {
     result: RuntimeNotice;
   };
   "session.create": {
-    params: { clientOperationId: Id; title?: string; model?: ModelSelection };
+    params: { clientOperationId: Id; title?: string; model?: ModelSelection; sourceSessionIds?: Id[] };
     result: { sessionId: Id };
+  };
+  "session.previewContext": {
+    params: { sourceSessionIds: Id[]; model?: ModelSelection };
+    result: {
+      sources: {
+        sessionId: Id;
+        title: string;
+        activeFrom?: string;
+        activeTo?: string;
+        turns: number;
+        omittedTurns: number;
+        running: boolean;
+        derived: boolean;
+        empty: boolean;
+      }[];
+      packedChars: number;
+      estimatedTokens: number;
+      budgetTokens: number;
+      overBudget: boolean;
+    };
+  };
+  "session.context": {
+    params: { sessionId: Id };
+    result: {
+      derivation?: {
+        text: string;
+        sources: DerivedSourceView[];
+      };
+    };
   };
   "session.list": {
     params: { cursor?: string; limit?: number };

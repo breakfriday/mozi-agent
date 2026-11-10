@@ -24,6 +24,8 @@ export const AGENT_API_METHODS = {
   setDefaultModel: "model.setDefault",
   setSessionModel: "session.setModel",
   createSession: "session.create",
+  previewSessionContext: "session.previewContext",
+  getSessionContext: "session.context",
   listSessions: "session.list",
   renameSession: "session.rename",
   deleteSession: "session.delete",

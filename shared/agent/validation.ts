@@ -2,7 +2,7 @@ import { AGENT_MAX_MESSAGE_BYTES, AGENT_PROTOCOL_VERSION } from "./channels";
 import { APP_ERROR_CODES, RUN_STATUSES, TERMINAL_RUN_STATUSES, MESSAGE_STATUSES, TOOL_STATUSES, TOOL_OUTCOMES, APPROVAL_STATUSES } from "./models";
 import type { ApiResult, ParamsOf, ResultOf } from "./api";
 import type {
-  AppError, ApprovalView, InputPart, MessagePart, MessageView, RunOutcome,
+  AppError, ApprovalView, DerivedSourceView, InputPart, MessagePart, MessageView, RunOutcome,
   RunView, SessionSnapshot, SessionSummary, ToolView,
 } from "./models";
 import type {
@@ -170,8 +170,20 @@ const usageTotals = object<UsageTotals>({ ...tokenFields, calls: sequence, repor
   webSearch: optional(sequence), webExtractor: optional(sequence) });
 const usageMonitor = object<UsageMonitorView>({ calls: array(isModelCallView), total: usageTotals,
   runs: array(object<{ runId: string; total: UsageTotals }>({ runId: id, total: usageTotals })) });
+const derivedSourceView = object<DerivedSourceView>({
+  sessionId: id, title: string, deleted: boolean,
+});
+const sourceSessionIdsList: Guard<string[]> = (value): value is string[] =>
+  array(id)(value) && value.length >= 1 && value.length <= 20 && new Set(value).size === value.length;
+const previewSourceStat = object<ResultOf<"session.previewContext">["sources"][number]>({
+  sessionId: id, title: string,
+  activeFrom: optional(date), activeTo: optional(date),
+  turns: sequence, omittedTurns: sequence,
+  running: boolean, derived: boolean, empty: boolean,
+});
 const snapshot = object<SessionSnapshot>({
   usage: optional(usageMonitor),
+  derivedFrom: optional(array(derivedSourceView)),
   session: sessionSummary, lastSeq: sequence, messages: array(messageView), tools: array(toolView),
   runs: array(runView), approvals: array(approvalView),
 });
@@ -223,7 +235,9 @@ const paramsValidators = {
   "model.setDefault": object<ParamsOf<"model.setDefault">>({ model: isModelSelection }),
   "session.setModel": object<ParamsOf<"session.setModel">>({ sessionId: id, model: isModelSelection }),
   "runtime.getState": object<ParamsOf<"runtime.getState">>({}),
-  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, title: optional(string), model: optional(isModelSelection) }),
+  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, title: optional(string), model: optional(isModelSelection), sourceSessionIds: optional(sourceSessionIdsList) }),
+  "session.previewContext": object<ParamsOf<"session.previewContext">>({ sourceSessionIds: sourceSessionIdsList, model: optional(isModelSelection) }),
+  "session.context": object<ParamsOf<"session.context">>({ sessionId: id }),
   "session.list": object<ParamsOf<"session.list">>({
     cursor: optional(id), limit: optional((value): value is number => sequence(value) && value > 0 && value <= 100),
   }),
@@ -268,6 +282,13 @@ const resultValidators = {
   "session.setModel": object<ResultOf<"session.setModel">>({ session: sessionSummary }),
   "runtime.getState": isRuntimeNotice,
   "session.create": object<ResultOf<"session.create">>({ sessionId: id }),
+  "session.previewContext": object<ResultOf<"session.previewContext">>({
+    sources: array(previewSourceStat),
+    packedChars: sequence, estimatedTokens: sequence, budgetTokens: sequence, overBudget: boolean,
+  }),
+  "session.context": object<ResultOf<"session.context">>({
+    derivation: optional(object({ text: string, sources: array(derivedSourceView) })),
+  }),
   "session.list": object<ResultOf<"session.list">>({ items: array(sessionSummary), nextCursor: optional(id) }),
   "session.rename": object<ResultOf<"session.rename">>({ session: sessionSummary }),
   "session.delete": object<ResultOf<"session.delete">>({ sessionId: id }),
