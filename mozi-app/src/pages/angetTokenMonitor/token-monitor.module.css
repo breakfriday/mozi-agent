@@ -13,8 +13,8 @@
 .pageHeader { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 28px; }
 .pageHeader h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
 .pageHeader p { margin: 0; color: var(--app-muted-color); overflow-wrap: anywhere; }
-.pageActions { display: flex; align-items: center; flex-shrink: 0; gap: 16px; font-size: 12px; color: var(--app-muted-color); }
-.pageActions button { cursor: pointer; padding: 7px 14px; background: var(--app-input-background); border: 1px solid var(--app-border-color); border-radius: 6px; }
+.pageActions { display: flex; flex-wrap: wrap; align-items: center; flex-shrink: 0; gap: 10px 16px; font-size: 12px; color: var(--app-muted-color); }
+.pageActions button { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 7px 14px; background: var(--app-input-background); border: 1px solid var(--app-border-color); border-radius: 6px; }
 .panel { display: grid; grid-template-columns: 280px minmax(0, 1fr); align-items: start; gap: 32px; color: var(--app-text-color); font-size: 13px; }
 .overview { position: sticky; top: 24px; min-width: 0; }
 .requests { min-width: 0; }

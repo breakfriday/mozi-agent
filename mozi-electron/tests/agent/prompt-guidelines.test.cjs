@@ -43,6 +43,9 @@ test('session factory appends only enabled tool rules to the actual Pi prompt', 
       { runtime: {}, model: {}, webMode });
     const options = captures.at(-1);
     const loader = options.resourceLoader;
+    const extensions = loader.getExtensions();
+    assert.equal(extensions.errors.length, 0);
+    assert.ok(extensions.extensions.some(ext => ext.path === '<inline:pi-session-viewer>'));
     const prompt = buildSystemPrompt({
       cwd: root,
       customPrompt: loader.getSystemPrompt(),
@@ -60,6 +63,10 @@ test('session factory appends only enabled tool rules to the actual Pi prompt', 
       assert.equal(prompt.split('站内搜索流程：').length - 1, 1);
       assert.match(prompt, /<addendum>/);
       assert.match(prompt, /INPUT_MISMATCH/);
+      assert.match(prompt, /以“\[错误码\] 说明”开头/);
+      assert.match(prompt, /本地 read 工具只读取本地文件/);
+      assert.doesNotMatch(prompt, /工具报告 waiting_user/);
+      assert.doesNotMatch(prompt, /(^|[^=])\bread \+ (url|target)/m);
       assert.doesNotMatch(prompt, /当前使用服务商原生联网模式/);
     } else {
       assert.equal(options.customTools.length, 0);

@@ -7,6 +7,7 @@ import debugConfig from "../devDeug/config.json";
 import type { RendererEntry } from "./env_config.types";
 import { TrayService } from "./main/services/tray.service";
 import { WindowService } from "./main/services/window.service";
+import { SessionViewerService } from "./main/services/session-viewer.service";
 import { registerWindowIpc } from "./main/window-ipc";
 import { registerAgentIpc } from "./main/agent-ipc";
 import { AgentProcessManager } from "./main/agent/process-manager";
@@ -66,8 +67,10 @@ if (started) {
       const windowService = new WindowService();
       const rendererEntry = resolveRendererEntry();
       const trayService = new TrayService(windowService, rendererEntry);
+      const agentDataDir = path.join(app.getPath("userData"), "agent");
+      const sessionViewer = new SessionViewerService(path.join(agentDataDir, "pi-sessions"));
 
-      registerWindowIpc(windowService, () => trayService.quitApplication(), rendererEntry);
+      registerWindowIpc(windowService, () => trayService.quitApplication(), rendererEntry, sessionViewer);
 
       // ========== Agent 初始化与启动：开始 ==========
       const browser = new MoziBrowser();
@@ -77,15 +80,15 @@ if (started) {
       const particleSettings = installParticleSettings({ windows: windowService, entry: rendererEntry, filePath: path.join(app.getPath("userData"), "particle-settings.json"), apply: particles.applySettings });
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
-        dataDir: path.join(app.getPath("userData"), "agent"),
+        dataDir: agentDataDir,
         debug: !app.isPackaged && (process.env.MOZI_AGENT_DEBUG === "inspect" || process.env.MOZI_AGENT_DEBUG === "inspect-brk")
           ? { ...debugConfig.agent, breakOnStart: process.env.MOZI_AGENT_DEBUG === "inspect-brk" || debugConfig.agent.breakOnStart }
           : undefined,
       });
       stopAgent = () => agentProcess.stop();
-      disposeAgentIpc = () => { particleSettings.dispose(); particles.dispose(); agentIpc.dispose(); browser.dispose(); };
+      disposeAgentIpc = () => { void sessionViewer.dispose(); particleSettings.dispose(); particles.dispose(); agentIpc.dispose(); browser.dispose(); };
       registerAgentShutdown(agentProcess, disposeAgentIpc);
-      app.on("will-quit", () => browser.dispose());
+      app.on("will-quit", () => { void sessionViewer.dispose(); browser.dispose(); });
       agentProcess.start();
       // ========== Agent 初始化与启动：结束 ==========
 

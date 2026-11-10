@@ -3,6 +3,7 @@ import {
   DefaultResourceLoader,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { registerExtension as registerSessionViewer } from "@hfrancisla/pi-session-viewer/dist/extension/index.js";
 import type {
   AgentSession,
   SessionManager,
@@ -67,6 +68,17 @@ export class PiSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      extensionFactories: [
+        {
+          name: "pi-session-viewer",
+          hidden: true,
+          factory: (pi) =>
+            registerSessionViewer(pi, {
+              sessionRoot: path.join(this.config.dataDir, "pi-sessions"),
+              openBrowser: () => {},
+            }),
+        },
+      ],
       systemPrompt: MOZI_SYSTEM_PROMPT,
       appendSystemPrompt: [
         browser ? BROWSER_WEB_GUIDELINES : PROVIDER_WEB_GUIDELINES,

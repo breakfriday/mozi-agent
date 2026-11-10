@@ -3,7 +3,16 @@ import type { WindowState, OpenWindowOptions } from "../../../shared/electron-ap
 import type { WindowService } from "./services/window.service";
 import type { RendererEntry } from "../env_config.types";
 
-export function registerWindowIpc(windowService: WindowService, quit: () => void, entry?: RendererEntry): void {
+export interface SessionViewerLauncher {
+  urlForSession(sessionId?: string): Promise<string>;
+}
+
+export function registerWindowIpc(
+  windowService: WindowService,
+  quit: () => void,
+  entry?: RendererEntry,
+  sessionViewer?: SessionViewerLauncher,
+): void {
   const senderWindow = (event: IpcMainEvent | IpcMainInvokeEvent) => {
     if (event.senderFrame !== event.sender.mainFrame) return undefined;
     return windowService.getWindowForWebContents(event.sender);
@@ -41,6 +50,20 @@ export function registerWindowIpc(windowService: WindowService, quit: () => void
     if (!validId(sessionId) || (runId !== undefined && !validId(runId))) return false;
     windowService.openTokenMonitor(entry, { sessionId, ...(runId === undefined ? {} : { runId }) });
     return true;
+  });
+  ipcMain.handle("window:open-session-viewer", async (event, target: unknown): Promise<boolean> => {
+    if (!sessionViewer || !senderWindow(event)) return false;
+    if (target !== undefined && (!target || typeof target !== "object" || Array.isArray(target))) return false;
+    const { sessionId } = (target ?? {}) as { sessionId?: unknown };
+    const validId = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 256 && ![...value].some(char => char.charCodeAt(0) < 32);
+    if (sessionId !== undefined && !validId(sessionId)) return false;
+    try {
+      const url = await sessionViewer.urlForSession(sessionId);
+      windowService.openSessionViewer(url);
+      return true;
+    } catch {
+      return false;
+    }
   });
   ipcMain.handle("window:open-devtools", (event) => {
     const win = senderWindow(event);

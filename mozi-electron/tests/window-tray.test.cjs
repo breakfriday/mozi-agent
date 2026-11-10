@@ -168,8 +168,8 @@ function setup(platform = "linux", packaged = false) {
   });
   return {
     app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers, mainProcess, agentLifecycle,
-    startMain, particleLifecycle,
-    registerIpc: () => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication(), entry),
+    startMain, particleLifecycle, load,
+    registerIpc: (sessionViewer) => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication(), entry, sessionViewer),
     loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
   };
 }
@@ -495,14 +495,68 @@ test("preload wraps window notifications, filters payloads, and removes listener
   await api.window.getState();
   await api.window.openWindow({ channelId: "detail", url: entry.url });
   await api.window.openTokenMonitor({ sessionId: "s", runId: "r" });
+  await api.window.openSessionViewer({ sessionId: "s" });
   api.window.minimize();
   api.window.close();
   assert.deepEqual(calls, [
     ["window:set-full-screen", false], ["window:get-state"],
     ["window:open", { channelId: "detail", url: entry.url }],
     ["window:open-token-monitor", { sessionId: "s", runId: "r" }],
+    ["window:open-session-viewer", { sessionId: "s" }],
     ["window:minimize"], ["window:close"],
   ]);
+});
+
+test("session viewer IPC validates callers, targets the requested sessionId, and reuses the viewer window", async (t) => {
+  const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+  const os = require("node:os");
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "mozi-viewer-test-"));
+  t.after(() => rmSync(tmpDir, { recursive: true, force: true }));
+  writeFileSync(path.join(tmpDir, "s1.jsonl"), JSON.stringify({ type: "session", id: "session-1", timestamp: "2026-11-10T00:00:00.000Z", cwd: "/work/a" }) + "\n");
+  await new Promise((r) => setTimeout(r, 20));
+  writeFileSync(path.join(tmpDir, "s2.jsonl"), JSON.stringify({ type: "session", id: "session-2", timestamp: "2026-11-10T00:01:00.000Z", cwd: "/work/b" }) + "\n");
+
+  const viewerMod = await import("../node_modules/@hfrancisla/pi-session-viewer/dist/extension/index.js");
+  const { windowService, windows, registerIpc, handlers, load } = setup();
+  const { SessionViewerService } = load("src/main/services/session-viewer.service.ts");
+  const sessionViewer = new SessionViewerService(tmpDir, async () => viewerMod.registerExtension);
+  t.after(() => sessionViewer.dispose());
+
+  registerIpc(sessionViewer);
+  const main = windowService.createMainWindow(entry);
+  const event = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const open = handlers.get("window:open-session-viewer");
+
+  assert.equal(await open({ ...event, senderFrame: {} }, { sessionId: "session-1" }), false);
+  for (const invalid of [null, [], "bad", { sessionId: "" }, { sessionId: 42 }]) {
+    assert.equal(await open(event, invalid), false);
+  }
+
+  assert.equal(await open(event, { sessionId: "session-1" }), true);
+  assert.equal(windows.length, 2);
+  const viewerWin = windows[1];
+  assert.equal(viewerWin.options.frame, true);
+  assert.equal(viewerWin.options.title, "Pi Session Viewer");
+  assert.match(viewerWin.loaded.url, /\?sessionId=session-1#token=/);
+
+  const parsedUrl = new URL(viewerWin.loaded.url);
+  const token = new URLSearchParams(parsedUrl.hash.slice(1)).get("token");
+  const res = await fetch(`${parsedUrl.origin}/api/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 200);
+  const catalog = await res.json();
+  const matched = catalog.sessions.find((s) => s.id === "session-1");
+  assert.ok(matched);
+  assert.equal(catalog.initialSessionToken, matched.token);
+  assert.equal(catalog.currentCwd, "/work/a");
+
+  viewerWin.minimize();
+  assert.equal(await open(event, { sessionId: "session-2" }), true);
+  assert.equal(windows.length, 2);
+  assert.equal(viewerWin.minimized, false);
+  assert.equal(viewerWin.focused, true);
+  assert.match(viewerWin.loaded.url, /\?sessionId=session-2#token=/);
 });
 
 test("tray controls the particle sidecar without creating a renderer window", async () => {

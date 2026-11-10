@@ -18,6 +18,6 @@ export default defineConfig({
     // The standalone Agent tests share this directory with Main and preload.
     emptyOutDir: false,
     lib: { entry: "src/agent/entry.ts", formats: ["es"], fileName: () => "agent.mjs" },
-    rollupOptions: { external: [/^@earendil-works\//, /^node:/, ...builtinModules] },
+    rollupOptions: { external: [/^@earendil-works\//, /^@hfrancisla\//, /^node:/, ...builtinModules] },
   },
 });

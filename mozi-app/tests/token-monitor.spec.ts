@@ -155,8 +155,9 @@ test("instruction entry opens the requested run and monitor fits narrow windows"
 
 test("desktop entry requests a native window through the preload bridge", async ({ page }) => {
   await page.addInitScript(() => {
-    Object.assign(window, { openedMonitor: null, electronAPI: { window: {
+    Object.assign(window, { openedMonitor: null, openedSessionViewer: null, electronAPI: { window: {
       openTokenMonitor: async (target: unknown) => { Object.assign(window, { openedMonitor: target }); return true; },
+      openSessionViewer: async (target: unknown) => { Object.assign(window, { openedSessionViewer: target }); return true; },
       getState: async () => ({ isFullScreen: false }), onStateChanged: () => () => {},
     } } });
   });
@@ -165,4 +166,8 @@ test("desktop entry requests a native window through the preload bridge", async 
   expect(await page.evaluate(() => (window as unknown as { openedMonitor: unknown }).openedMonitor)).toEqual({ sessionId: "s", runId: "r" });
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page).toHaveURL(/\/chat$/);
+
+  await page.goto("/mozi_app/angetTokenMonitor?sessionId=s");
+  await page.getByRole("button", { name: "查看会话 JSONL" }).click();
+  expect(await page.evaluate(() => (window as unknown as { openedSessionViewer: unknown }).openedSessionViewer)).toEqual({ sessionId: "s" });
 });

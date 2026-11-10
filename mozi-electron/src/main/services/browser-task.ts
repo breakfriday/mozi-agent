@@ -66,12 +66,15 @@ export class BrowserTask {
     this.currentState = "queued";
     this.cancelled = onCancel;
     this.controller.signal.addEventListener("abort", onCancel, { once: true });
+    // waiting_user progress is UI-only; the model learns about it only from this final error.
     this.timer = setTimeout(
       () =>
         this.cancel(
           new BrowserFailure(
             "TIMEOUT",
-            "浏览器任务超时，请重试；若出现验证页面，请处理后选择“继续读取”。",
+            this.waitingForUser
+              ? "等待在 Mozi 浏览器完成登录或验证超时，任务已结束；完成登录或验证后需重新发起读取。"
+              : "浏览器任务超时，任务已结束；操作可能已部分执行。",
           ),
         ),
       timeoutMs,

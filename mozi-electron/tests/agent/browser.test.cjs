@@ -187,6 +187,21 @@ test('one Pi browser tool carries all three operations, runtime scope, progress 
   await assert.rejects(unscoped.execute('call', { action: 'search', query: 'hi' }, controller.signal, undefined, {}), e => e.code === 'UNAVAILABLE');
 });
 
+test('browser tool failures expose the error code in the model-visible message', async () => {
+  const controller = new AbortController();
+  const failing = createBrowserTool(async () => { throw new shared.BrowserFailure('STALE_ELEMENT', '元素已失效。'); }, 'session', () => 'run');
+  await assert.rejects(failing.execute('call', { action: 'click', elementId: 'e1' }, controller.signal, undefined, {}),
+    e => e instanceof shared.BrowserFailure && e.code === 'STALE_ELEMENT' && e.message === '[STALE_ELEMENT] 元素已失效。');
+  await assert.rejects(failing.execute('call', { action: 'read', url: 'file:///secret' }, controller.signal, undefined, {}),
+    e => e.code === 'INVALID_ARGUMENT' && e.message.startsWith('[INVALID_ARGUMENT] '));
+  const prefixed = createBrowserTool(async () => { throw new shared.BrowserFailure('TIMEOUT', '[TIMEOUT] 超时。'); }, 'session', () => 'run');
+  await assert.rejects(prefixed.execute('call', { action: 'read', target: 'current' }, controller.signal, undefined, {}),
+    e => e.message === '[TIMEOUT] 超时。');
+  const plain = new Error('plain');
+  const other = createBrowserTool(async () => { throw plain; }, 'session', () => 'run');
+  await assert.rejects(other.execute('call', { action: 'read', target: 'current' }, controller.signal, undefined, {}), e => e === plain);
+});
+
 test('visual browsing removes Bailian server search while preserving local tools and the shared catalog', async () => {
   const isolated = createLoader({ '@earendil-works/pi-coding-agent': {}, '@aiwayds/pi-bailian-token-plan': () => {} });
   const { preserveBailianLocalTools } = isolated(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/bailian/provider.ts'));

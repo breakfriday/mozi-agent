@@ -12,6 +12,17 @@ export { BROWSER_GUIDELINES };
 
 export const BROWSER_TOOL_NAME = "mozi_browser";
 
+/**
+ * Pi forwards only `error.message` to the model, so the code is embedded in the text.
+ * The BrowserFailure type and `code` are kept for host-side callers.
+ */
+function withVisibleCode(error: unknown): unknown {
+  if (!(error instanceof BrowserFailure)) return error;
+  const prefix = `[${error.code}] `;
+  if (error.message.startsWith(prefix)) return error;
+  return new BrowserFailure(error.code, prefix + error.message);
+}
+
 /** Pi owns tool execution; this adapter only converts the browser boundary into tools. */
 export function createBrowserTool(
   call: BrowserCall,
@@ -42,32 +53,36 @@ export function createBrowserTool(
     parameters: BROWSER_OPERATION_SCHEMA,
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate) {
-      if (!isBrowserOperation(params))
-        throw new BrowserFailure(
-          "INVALID_ARGUMENT",
-          "请按操作提供参数：search + query；read + url 或 target=current；inspect 可选 query/filter；click + elementId；fill + elementId + text；press + elementId + key；click/press 提交站内搜索携带 expect={elementId,text}。不同操作参数不能混用。",
-        );
-      const runId = getRunId();
-      if (!runId)
-        throw new BrowserFailure(
-          "UNAVAILABLE",
-          "浏览器工具需要当前 Run 上下文。",
-        );
-      const result = await call(params, {
-        sessionId,
-        runId,
-        toolCallId,
-        signal: signal ?? new AbortController().signal,
-        onProgress: (progress) =>
-          onUpdate?.({
-            content: [{ type: "text", text: progress.message }],
-            details: progress,
-          }),
-      });
-      return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
-        details: result,
-      };
+      try {
+        if (!isBrowserOperation(params))
+          throw new BrowserFailure(
+            "INVALID_ARGUMENT",
+            "请按操作提供参数：search + query；read + url 或 target=current；inspect 可选 query/filter；click + elementId；fill + elementId + text；press + elementId + key；click/press 提交站内搜索携带 expect={elementId,text}。不同操作参数不能混用。",
+          );
+        const runId = getRunId();
+        if (!runId)
+          throw new BrowserFailure(
+            "UNAVAILABLE",
+            "浏览器工具需要当前 Run 上下文。",
+          );
+        const result = await call(params, {
+          sessionId,
+          runId,
+          toolCallId,
+          signal: signal ?? new AbortController().signal,
+          onProgress: (progress) =>
+            onUpdate?.({
+              content: [{ type: "text", text: progress.message }],
+              details: progress,
+            }),
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          details: result,
+        };
+      } catch (error) {
+        throw withVisibleCode(error);
+      }
     },
   };
 }

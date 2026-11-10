@@ -45,6 +45,32 @@ export class WindowService {
     return win;
   }
 
+  openSessionViewer(url: string): BrowserWindow {
+    const channel = "pi-session-viewer";
+    const existing = this.getWindow(channel);
+    const win = this.createWindow(channel, { type: "url", url }, {
+      frame: true,
+      title: "Pi Session Viewer",
+      width: 1280,
+      height: 860,
+      minWidth: 880,
+      minHeight: 580,
+      bgColor: "#0f1115",
+    });
+    if (!existing) {
+      win.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+        try {
+          const link = new URL(targetUrl);
+          if (["https:", "http:"].includes(link.protocol) && !link.username && !link.password) void shell.openExternal(link.href).catch(() => {});
+        } catch { /* Ignore invalid source URLs. */ }
+        return { action: "deny" };
+      });
+    } else if (win.webContents.getURL() !== url) {
+      void win.loadURL(url).catch(error => console.error("Failed to navigate session viewer:", error));
+    }
+    return win;
+  }
+
   createMainWindow(entry: RendererEntry): BrowserWindow {
     return this.createWindow(MAIN_WINDOW_CHANNEL_ID, entry, {
       frame: false,

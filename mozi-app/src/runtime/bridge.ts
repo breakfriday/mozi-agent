@@ -1,4 +1,4 @@
-import type { ElectronApi, WindowState, TokenMonitorTarget, WindowCreatePayload } from "../../../shared/electron-api";
+import type { ElectronApi, WindowState, TokenMonitorTarget, SessionViewerTarget, WindowCreatePayload } from "../../../shared/electron-api";
 import { agentApi } from "./agent";
 
 function getElectronApi(): ElectronApi | undefined {
@@ -19,6 +19,9 @@ export const bridgeApi = {
     },
     async openTokenMonitor(target: TokenMonitorTarget): Promise<boolean> {
       return getElectronApi()?.window.openTokenMonitor?.(target) ?? false;
+    },
+    async openSessionViewer(target?: SessionViewerTarget): Promise<boolean> {
+      return getElectronApi()?.window.openSessionViewer?.(target) ?? false;
     },
     minimize() {
       const api = getElectronApi();

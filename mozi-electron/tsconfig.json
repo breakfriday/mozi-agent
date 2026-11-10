@@ -15,6 +15,9 @@
       "@aiwayds/pi-bailian-token-plan": [
         "./src/agent/runtime/pi/providers/bailian/package.d.ts"
       ],
+      "@hfrancisla/pi-session-viewer/dist/extension/index.js": [
+        "./src/agent/runtime/pi/sessions/session-viewer.d.ts"
+      ],
       "pi-antigravity/src/*": [
         "./src/agent/runtime/pi/providers/antigravity/package.d.ts"
       ]

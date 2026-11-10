@@ -213,7 +213,7 @@ test('manual wait times out and releases the scheduler and external cancellation
   const scheduler = new BrowserTaskScheduler(async t => { await t.waitForResume(() => {}); return result; }, () => {}, () => {}, 20);
   scheduler.enqueue(task);
   assert.equal(task.state, 'waiting_user');
-  await assert.rejects(task.result, { code: 'TIMEOUT' });
+  await assert.rejects(task.result, e => e.code === 'TIMEOUT' && /登录或验证超时/.test(e.message));
   assert.equal(task.state, 'cancelled');
   assert.equal(scheduler.size, 0);
   assert.equal(getEventListeners(controller.signal, 'abort').length, 0);

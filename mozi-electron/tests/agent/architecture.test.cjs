@@ -31,7 +31,7 @@ test('capability boundaries keep business code independent of Pi, SQLite and tra
     visit(source);
     for (const specifier of imports) {
       const location = `${relative} imports ${specifier}`;
-      if (/^@(earendil-works|aiwayds)\//.test(specifier)) assert.ok(relative.startsWith('runtime/pi/'), location);
+      if (/^@(earendil-works|aiwayds|hfrancisla)\//.test(specifier)) assert.ok(relative.startsWith('runtime/pi/'), location);
       if (specifier === 'node:sqlite') assert.ok(relative.startsWith('storage/sqlite/'), location);
       assert.notEqual(specifier, 'electron', location);
       if (!specifier.startsWith('.')) continue;
