@@ -2,6 +2,8 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 
 export const AGENT_CHANNELS = {
   catalog: "mozi:agent:catalog",
+  // Payload-free notice: the session list changed; renderers re-read session.list.
+  sessions: "mozi:agent:sessions",
   auth: "mozi:agent:auth",
   request: "mozi:agent:request",
   event: "mozi:agent:event",

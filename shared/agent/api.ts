@@ -45,6 +45,8 @@ type ArgumentsFor<M extends Method> = M extends "runtime.getState" | "model.sett
 
 interface AgentListeners {
   onProviderModelsChanged(listener: (providerId: string) => void): () => void;
+  /** Fired for every session, subscribed or not, when session.list may differ. */
+  onSessionsChanged(listener: () => void): () => void;
   onProviderAuth(listener: (state: import("./auth").ProviderAuthState) => void): () => void;
   onEvent(listener: (event: AgentEvent) => void): () => void;
   onRuntimeState(listener: (notice: RuntimeNotice) => void): () => void;

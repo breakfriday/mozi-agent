@@ -2,6 +2,7 @@ export type WindowState = {
   isFullScreen: boolean;
 };
 export type TokenMonitorTarget = { sessionId: string; runId?: string };
+export type SessionViewerTarget = { sessionId?: string };
 
 /** Serializable window settings available to the renderer. */
 export interface OpenWindowOptions {
@@ -41,6 +42,7 @@ export interface ElectronApi {
   window: {
     openWindow(payload: WindowCreatePayload): Promise<boolean>;
     openTokenMonitor(target: TokenMonitorTarget): Promise<boolean>;
+    openSessionViewer(target?: SessionViewerTarget): Promise<boolean>;
     minimize(): void;
     close(): void;
     openDevTools(): Promise<boolean>;
