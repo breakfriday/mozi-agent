@@ -138,6 +138,13 @@ export function createAgentPreloadApi(
       const off = () => { ipc.removeListener(AGENT_CHANNELS.catalog, handler); eventCleanups.delete(off); };
       eventCleanups.add(off); return off;
     },
+    onSessionsChanged(listener) {
+      if (disposed) return () => {};
+      const handler = () => { listener(); };
+      ipc.on(AGENT_CHANNELS.sessions, handler);
+      const off = () => { ipc.removeListener(AGENT_CHANNELS.sessions, handler); eventCleanups.delete(off); };
+      eventCleanups.add(off); return off;
+    },
     onProviderAuth(listener) {
       if (disposed) return () => {};
       const handler = (_event: unknown, value: unknown) => {

@@ -16,7 +16,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "check": "tsc --noEmit && eslint .",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",

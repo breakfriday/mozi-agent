@@ -105,6 +105,7 @@ export function createAgentApi(getBridge: () => AgentBridgeApi | undefined = get
     getRun: (input) => call("run.get", input, (api) => api.getRun(input)),
     respondApproval: (input) => call("approval.respond", input, (api) => api.respondApproval(input)),
     onProviderModelsChanged: listener => getBridge()?.onProviderModelsChanged?.(listener) ?? (() => {}),
+    onSessionsChanged: listener => getBridge()?.onSessionsChanged?.(listener) ?? (() => {}),
     onProviderAuth: listener => getBridge()?.onProviderAuth(listener) ?? (() => {}),
     onEvent: (listener) => listen("event", listener, (api, callback) => api.onEvent(callback)),
     onRuntimeState: (listener) => listen("runtime", listener, (api, callback) => api.onRuntimeState(callback)),

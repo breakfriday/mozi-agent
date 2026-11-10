@@ -195,8 +195,28 @@ export function registerAgentIpc(
       send(client, AGENT_CHANNELS.runtime, notice);
   });
 
+  // Session-list change notices go to every authorized window, subscribed or
+  // not, so background sessions' run state reaches the sidebar without polling.
+  // Payload-free: renderers re-read session.list. Same-tick changes coalesce.
+  const SESSION_LIST_EVENTS = new Set(["run.updated", "run.finished", "session.updated"]);
+  const SESSION_LIST_METHODS = new Set(["session.create", "session.delete", "session.rename", "session.setModel"]);
+  const changedSessions = new Set<string>();
+  let sessionsFlush: ReturnType<typeof setTimeout> | undefined;
+  function sessionsChanged(sessionId: string) {
+    changedSessions.add(sessionId);
+    sessionsFlush ??= setTimeout(() => {
+      sessionsFlush = undefined;
+      const ids = [...changedSessions];
+      changedSessions.clear();
+      for (const client of clients.values())
+        if (ids.some((id) => canAccessSession(client.sender, id)))
+          send(client, AGENT_CHANNELS.sessions, null);
+    });
+  }
+
   //Agent 子进程发来的业务事件
   const offEvent = transport.onEvent((event) => {
+    if (SESSION_LIST_EVENTS.has(event.type)) sessionsChanged(event.sessionId);
     let delivered = 0;
     for (const client of clients.values()) {
       if (
@@ -270,6 +290,11 @@ export function registerAgentIpc(
       windowId: client.sender.id,
     });
     const response = await transport.request(request);
+    if (SESSION_LIST_METHODS.has(request.method) && response.ok) {
+      const sessionId = "sessionId" in request.params ? request.params.sessionId
+        : isResponseFor("session.create", response) && response.ok ? response.result.sessionId : undefined;
+      if (sessionId) sessionsChanged(sessionId);
+    }
     if (request.method === "session.delete" && isResponseFor("session.delete", response) && response.ok) {
       windowService.closeWindow(`token-monitor:${request.params.sessionId}`);
       for (const subscriber of clients.values()) {
@@ -408,6 +433,9 @@ export function registerAgentIpc(
       if (disposed) return;
       disposed = true;
       ipcMain.removeHandler(AGENT_CHANNELS.request);
+      if (sessionsFlush) clearTimeout(sessionsFlush);
+      sessionsFlush = undefined;
+      changedSessions.clear();
       offCatalog();
       offAuth();
       offEvent();

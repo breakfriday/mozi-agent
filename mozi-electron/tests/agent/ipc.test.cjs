@@ -238,3 +238,40 @@ test("OAuth events reach trusted windows; main opens only Google authorization U
   sender.mainFrame.url = "https://evil.example/";
   const count = sender.sent.length; emit({ authUrl: undefined }); assert.equal(sender.sent.length, count);
 });
+
+test("session-list changes reach every authorized window without a subscription and coalesce per tick", async t => {
+  const denied = new Set();
+  const f = setup(t, (sender, sessionId) => !denied.has(`${sender.id}:${sessionId}`));
+  const a = f.window(), b = f.window(), c = f.window(); const child = f.connect();
+  a.id = 1; b.id = 2; c.id = 3; denied.add("3:bg");
+  for (const sender of [a, b, c]) await f.call(sender, "runtime.getState");
+  await f.call(a, "session.subscribe", { sessionId: "current" });
+  const notices = sender => sender.sent.filter(item => item.channel === "mozi:agent:sessions").length;
+  const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+  const at = "2026-10-05T00:00:00.000Z";
+  const run = status => ({ id: "run", sessionId: "bg", userMessageId: "u", status, createdAt: at, updatedAt: at });
+  const event = (seq, type, data) => child.onMessage({ protocolVersion: 1, kind: "event", sessionId: "bg", runId: "run", seq, type, data });
+  // Background run state: nobody subscribes to "bg", yet the list must refresh.
+  event(1, "run.updated", { run: run("running") });
+  event(2, "run.updated", { run: run("completed") });
+  event(3, "run.finished", { status: "completed" });
+  assert.equal(events(a).length, 0, "full events still require a subscription");
+  await flush();
+  assert.equal(notices(a), 1); assert.equal(notices(b), 1);
+  assert.equal(notices(c), 0, "windows without access to the session are not notified");
+  // Message deltas never touch the list.
+  child.onMessage({ protocolVersion: 1, kind: "event", sessionId: "bg", runId: "run", seq: 4, type: "message.text.delta", data: { messageId: "m", partId: "p", delta: "x" } });
+  await flush();
+  assert.equal(notices(a), 1);
+  // Successful catalog mutations notify other windows; failures do not.
+  const created = f.call(b, "session.create", { clientOperationId: "op" });
+  child.reply(child.sent.at(-1).requestId, { sessionId: "new" });
+  assert.equal((await created).ok, true);
+  await flush();
+  assert.equal(notices(a), 2); assert.equal(notices(b), 2);
+  const failed = f.call(b, "session.rename", { sessionId: "new", title: "x" });
+  child.onMessage({ protocolVersion: 1, kind: "response", requestId: child.sent.at(-1).requestId, ok: false, error: { code: "SESSION_NOT_FOUND", message: "gone" } });
+  assert.equal((await failed).ok, false);
+  await flush();
+  assert.equal(notices(a), 2);
+});

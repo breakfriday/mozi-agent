@@ -82,3 +82,15 @@ test("renderer browser fallback and local Error retain structured error codes", 
     assert.equal(error.appError.message, "Denied"); return true;
   });
 });
+
+test("sessions-changed notices reach listeners, never expose payloads, and are removed on off/dispose", async (t) => {
+  const { api, ipc, dispose } = setup(t, async (request) => response(request, { state: "ready" }));
+  const seen = [];
+  const off = api.onSessionsChanged((...args) => seen.push(args));
+  ipc.emit("mozi:agent:sessions", {}, { leaked: true });
+  assert.deepEqual(seen, [[]]);
+  off(); ipc.emit("mozi:agent:sessions", {}, null);
+  assert.equal(seen.length, 1);
+  api.onSessionsChanged(() => seen.push("again"));
+  dispose(); assert.equal(ipc.listenerCount("mozi:agent:sessions"), 0);
+});

@@ -12,11 +12,12 @@ function setup(t, options = {}) {
   const { initialAgentState } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentState.ts"));
   let state = initialAgentState(options.sessionId ?? null);
   const store = { getState: () => state, setState: (update) => { state = { ...state, ...(typeof update === "function" ? update(state) : update) }; } };
-  const calls = []; const eventListeners = new Set(); const runtimeListeners = new Set();
+  const calls = []; const eventListeners = new Set(); const runtimeListeners = new Set(); const sessionsListeners = new Set();
   const snapshot = () => ({ session: { sessionId: "s", title: "Chat", createdAt: timestamp, updatedAt: timestamp }, lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] });
   const api = {
     onEvent: (listener) => { eventListeners.add(listener); return () => eventListeners.delete(listener); },
     onRuntimeState: (listener) => { runtimeListeners.add(listener); return () => runtimeListeners.delete(listener); },
+    onSessionsChanged: (listener) => { sessionsListeners.add(listener); return () => sessionsListeners.delete(listener); },
     getRuntimeState: async () => ({ state: "ready" }),
     listSessions: async () => ({ items: [snapshot().session] }),
     createSession: async (input) => { calls.push(["create", input]); return { sessionId: "s" }; },
@@ -34,7 +35,8 @@ function setup(t, options = {}) {
     for (const listener of eventListeners) listener({ protocolVersion: 1, kind: "event", sessionId: "s", runId: "r", seq: sequence, type, data });
   };
   const runtime = (state) => { for (const listener of runtimeListeners) listener({ state }); };
-  return { actions, api, store, calls, emit, runtime, snapshot, eventListeners, runtimeListeners, visible: () => selectChatMessages(store.getState()) };
+  const sessionsChanged = () => { for (const listener of sessionsListeners) listener(); };
+  return { actions, api, store, calls, emit, runtime, sessionsChanged, snapshot, eventListeners, runtimeListeners, sessionsListeners, visible: () => selectChatMessages(store.getState()) };
 }
 
 test("offline chat uses real API calls, retains input and never creates a mock answer", async (t) => {
@@ -404,10 +406,9 @@ test('a title event invalidates a stale list response', async t => {
   assert.equal(f.store.getState().sessionsLoading, false);
 });
 
-test('background refresh clears other session activity without replacing selected messages', async t => {
+test('sessions.changed clears other session activity without replacing selected messages', async t => {
   let activeRun = { id: 'other-run', status: 'running' };
   const f = setup(t, { sessionId: 's', api: {
-    getRun: async () => ({ id: 'other-run', status: 'completed' }),
     listSessions: async () => ({ items: [
       { sessionId: 's', title: 'Chat', createdAt: timestamp, updatedAt: timestamp },
       { sessionId: 'other', title: 'Other', createdAt: timestamp, updatedAt: timestamp, activeRun },
@@ -416,21 +417,74 @@ test('background refresh clears other session activity without replacing selecte
   f.actions.initialize();
   await tick(); await tick();
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 'other').activeRun.id, 'other-run');
+  assert.equal(f.store.getState().sessionActivity.other.id, 'other-run');
   const messages = f.store.getState().messages;
   activeRun = undefined;
-  await new Promise(resolve => setTimeout(resolve, 2100));
+  f.sessionsChanged();
+  await tick(); await tick();
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 'other').activeRun, undefined);
+  assert.equal(f.store.getState().sessionActivity.other, undefined);
   assert.equal(f.store.getState().sessionId, 's');
   assert.equal(f.store.getState().messages, messages);
 });
 
+test('there is no list polling; sessions.changed bursts coalesce into one follow-up list', async t => {
+  let lists = 0; const pending = [];
+  const f = setup(t, { sessionId: 's', api: {
+    listSessions: () => { lists++; return new Promise(resolve => pending.push(resolve)); },
+  } });
+  f.actions.initialize();
+  await tick(); await tick();
+  const initial = lists;
+  while (pending.length) pending.shift()({ items: [f.snapshot().session] });
+  await tick(); await tick();
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(lists, initial, 'idle windows must not poll session.list');
+  f.sessionsChanged();
+  await tick();
+  assert.equal(lists, initial + 1);
+  f.sessionsChanged(); f.sessionsChanged(); f.sessionsChanged();
+  await tick();
+  assert.equal(lists, initial + 1, 'notices during a list wait for it');
+  pending.shift()({ items: [f.snapshot().session] });
+  await tick(); await tick();
+  assert.equal(lists, initial + 2, 'exactly one follow-up list');
+  pending.shift()({ items: [f.snapshot().session] });
+  await tick(); await tick();
+  assert.equal(lists, initial + 2);
+  f.actions.dispose();
+  assert.equal(f.sessionsListeners.size, 0);
+});
 
-test('switching preserves accepted activity when the catalog omits it, then clears only on confirmed completion', async t => {
-  let status = 'running';
+test('a superseded background list is retried so the notified change is not lost', async t => {
+  let title = 'old'; const pending = [];
+  const f = setup(t, { sessionId: 's', api: {
+    listSessions: () => new Promise(resolve => pending.push(() => resolve({ items: [{ ...f.snapshot().session, title }] }))),
+  } });
+  f.actions.initialize();
+  await tick(); await tick();
+  while (pending.length) pending.shift()();
+  await tick(); await tick();
+  title = 'new';
+  f.sessionsChanged();
+  await tick();
+  assert.equal(pending.length, 1);
+  // A same-session event supersedes the in-flight list (listVersion bump).
+  f.emit('run.updated', { run: { id: 'r', sessionId: 's', userMessageId: 'u', status: 'running', createdAt: timestamp, updatedAt: timestamp } });
+  pending.shift()();
+  await tick(); await tick();
+  assert.equal(pending.length, 1, 'the dropped result triggers one retry');
+  pending.shift()();
+  await tick(); await tick();
+  assert.equal(f.store.getState().sessions[0].title, 'new');
+});
+
+test('switching keeps background activity from the catalog, then clears it on sessions.changed', async t => {
+  let activeRun;
   const sessions = ['s', 'other'].map(sessionId => ({ sessionId, title: sessionId, createdAt: timestamp, updatedAt: timestamp }));
   const f = setup(t, { sessionId: 's', api: {
-    listSessions: async () => ({ items: sessions.map(session => ({ ...session })) }),
-    getRun: async ({ runId }) => ({ id: runId, status }),
+    listSessions: async () => ({ items: sessions.map(session => ({ ...session, ...(session.sessionId === 's' && activeRun ? { activeRun } : {}) })) }),
+    startRun: async (input) => { activeRun = { id: 'r', status: 'running' }; return { sessionId: 's', runId: 'r', messageId: 'u', clientMessageId: input.clientMessageId, disposition: 'accepted' }; },
     subscribeSession: async ({ sessionId }) => ({ sessionId, subscriptionId: `sub-${sessionId}` }),
     getSessionSnapshot: async ({ sessionId }) => ({ session: sessions.find(s => s.sessionId === sessionId), lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] }),
   } });
@@ -440,13 +494,16 @@ test('switching preserves accepted activity when the catalog omits it, then clea
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.id, 'r');
   await f.actions.activateSession('other');
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.id, 'r');
-  await f.actions.listSessions();
-  assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun.status, 'running');
+  f.sessionsChanged();
+  await tick(); await tick();
+  assert.equal(f.store.getState().sessionActivity.s.status, 'running');
   assert.equal(f.store.getState().sessionId, 'other');
   assert.equal(f.calls.some(([method]) => method === 'cancel'), false);
-  status = 'completed';
-  await f.actions.listSessions();
+  activeRun = undefined;
+  f.sessionsChanged();
+  await tick(); await tick();
   assert.equal(f.store.getState().sessions.find(s => s.sessionId === 's').activeRun, undefined);
+  assert.equal(f.store.getState().sessionActivity.s, undefined);
 });
 
 test("actions project user input and only applied selected-session events, then clear on dispose", async (t) => {

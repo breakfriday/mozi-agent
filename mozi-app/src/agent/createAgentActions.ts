@@ -78,11 +78,16 @@ export function createAgentActions(
   const finishedRuns = new Set<string>();
   let offEvent: () => void = () => {};
   let offRuntime: () => void = () => {};
+  let offSessions: () => void = () => {};
+  let offVisibility: () => void = () => {};
 
-  let activityTimer: ReturnType<typeof setInterval> | undefined;
-  let activityRefresh = false;
+  // Session-list refreshes are push-driven (sessions.changed), not polled.
+  // At most one background list per connection; changes during it trigger one more.
+  let listJob: number | undefined;
+  let listDirty = false;
 
-  async function listSessions(background = false) {
+  /** Resolves false only when a newer list or connection superseded this one. */
+  async function listSessions(background = false): Promise<boolean> {
     const version = ++listVersion;
     const token = connection;
     if (!background) store.setState({ sessionsLoading: true, sessionsError: null });
@@ -95,7 +100,7 @@ export function createAgentActions(
           limit: 100,
           ...(cursor ? { cursor } : {}),
         });
-        if (version !== listVersion || token !== connection) return;
+        if (version !== listVersion || token !== connection) return false;
         sessions.push(...page.items);
         cursor = page.nextCursor;
         if (cursor && cursors.has(cursor))
@@ -105,20 +110,6 @@ export function createAgentActions(
           };
         if (cursor) cursors.add(cursor);
       } while (cursor);
-      // Older agents may omit activity from the catalog. An absent field must
-      // not erase a known live Run; reconcile it against run.get first.
-      const knownActivity = store.getState().sessionActivity;
-      await Promise.all(sessions.map(async (session) => {
-        const known = knownActivity[session.sessionId];
-        if (session.activeRun || !known) return;
-        try {
-          const run = await api.getRun({ sessionId: session.sessionId, runId: known.id });
-          session.activeRun = isTerminalRun(run.status) ? undefined : { id: run.id, status: run.status };
-        } catch (error) {
-          if (appError(error).code !== "RUN_NOT_FOUND") session.activeRun = known;
-        }
-      }));
-      if (version !== listVersion || token !== connection) return;
       store.setState({ sessions, sessionActivity: Object.fromEntries(sessions.flatMap((session) =>
         session.activeRun ? [[session.sessionId, session.activeRun]] : [])) });
       const state = store.getState();
@@ -129,13 +120,36 @@ export function createAgentActions(
         !state.sessionOperation
       )
         await activateSession(null);
+      return true;
     } catch (error) {
       if (!background && version === listVersion && token === connection)
         store.setState({ sessionsError: appError(error) });
+      return version === listVersion && token === connection;
     } finally {
       if (version === listVersion && token === connection)
         store.setState({ sessionsLoading: false });
     }
+  }
+
+  function requestList(retries = 0) {
+    if (!attached || store.getState().runtime.state !== "ready") return;
+    const token = connection;
+    if (listJob === token) {
+      listDirty = true;
+      return;
+    }
+    listJob = token;
+    listDirty = false;
+    void listSessions(true).then((applied) => {
+      // A newer connection may already own the slot; leave it alone.
+      if (listJob !== token) return;
+      listJob = undefined;
+      if (token !== connection) return;
+      // A superseded list may predate the change we were told about; retry a
+      // bounded number of times so a dropped result cannot leave stale rows.
+      if (listDirty) requestList();
+      else if (!applied && retries < 3) requestList(retries + 1);
+    });
   }
 
   async function activateSession(sessionId: string | null) {
@@ -456,14 +470,16 @@ export function createAgentActions(
     if (!attached) return;
     attached = false;
     projection?.reset();
-    clearInterval(activityTimer);
-    activityTimer = undefined;
+    listJob = undefined;
+    listDirty = false;
     lifecycle++;
     generation++;
     connection++;
     listVersion++;
     offEvent();
     offRuntime();
+    offSessions();
+    offVisibility();
     if (subscription)
       void api
         .unsubscribeSession({ subscriptionId: subscription.subscriptionId })
@@ -492,12 +508,17 @@ export function createAgentActions(
       if (owner === lifecycle) receiveRuntime(notice);
     });
     log.info("chat.initialized", { stage: "real_bridge" });
-    activityTimer = setInterval(() => {
-      const state = store.getState();
-      if (state.runtime.state !== "ready" || state.sessionsLoading || state.sessionOperation || activityRefresh) return;
-      activityRefresh = true;
-      void listSessions(true).finally(() => { activityRefresh = false; });
-    }, 2000);
+    offSessions = api.onSessionsChanged(() => {
+      if (owner === lifecycle) requestList();
+    });
+    // Safety net only: catch up once when the window becomes visible again.
+    if (typeof document !== "undefined") {
+      const onVisible = () => {
+        if (owner === lifecycle && document.visibilityState === "visible") requestList();
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      offVisibility = () => document.removeEventListener("visibilitychange", onVisible);
+    }
     void refresh();
     return () => {
       if (owner === lifecycle) dispose();
