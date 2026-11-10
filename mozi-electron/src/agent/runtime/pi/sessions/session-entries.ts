@@ -1,11 +1,13 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isModelCallView, type ModelCallView } from "../../../../../../shared/agent";
+import type { PriorSessionsDetails } from "../../agent-runtime";
 import { validResponseModel } from "../model-call/response-model-collector";
 
 // Persisted names are part of the existing JSONL format; changing them requires migration.
 export const RUN_ENTRY = "mozi.run";
 export const USAGE_ENTRY = "mozi.model-call-usage";
 export const RESPONSE_MODEL_ENTRY = "mozi.provider-response-model";
+export const PRIOR_SESSIONS_CUSTOM_TYPE = "mozi.prior-sessions";
 
 export interface RunEntryData {
   runId: string;
@@ -51,4 +53,31 @@ export function parseResponseModelEntry(entry: SessionEntry): ResponseModelEntry
   const data = record(entry.data);
   if (typeof data?.nativeEntryId !== "string" || !validResponseModel(data.responseModelId)) return;
   return { nativeEntryId: data.nativeEntryId, responseModelId: data.responseModelId };
+}
+
+const nonNegativeInt = (v: unknown): v is number =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
+export function isPriorSessionsDetails(value: unknown): value is PriorSessionsDetails {
+  const data = record(value);
+  if (!data || data.packerVersion !== 1) return false;
+  if (!Array.isArray(data.sourceSessionIds) || !data.sourceSessionIds.every((id) => typeof id === "string" && id.length > 0)) {
+    return false;
+  }
+  if (!Array.isArray(data.sources) || !data.sources.every((s) => {
+    const item = record(s);
+    return !!item && typeof item.sessionId === "string" && item.sessionId.length > 0 && typeof item.title === "string";
+  })) {
+    return false;
+  }
+  const stats = record(data.stats);
+  if (!stats
+    || !nonNegativeInt(stats.rawChars)
+    || !nonNegativeInt(stats.packedChars)
+    || !nonNegativeInt(stats.estimatedTokens)
+    || !nonNegativeInt(stats.omittedTurns)
+    || !nonNegativeInt(stats.truncatedSessions)) {
+    return false;
+  }
+  return true;
 }

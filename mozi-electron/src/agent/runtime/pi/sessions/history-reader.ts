@@ -1,9 +1,15 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { RuntimeHistoryMessage, RuntimeTool } from "../../agent-runtime";
+import type { RuntimeDerivation, RuntimeHistoryMessage, RuntimeTool } from "../../agent-runtime";
 import type { ModelCallView } from "../../../../../../shared/agent";
 import { displayParts } from "./content-mapper";
 import { normalizeUsage } from "../model-call/usage-collector";
-import { parseRunEntry, parseUsageEntry, parseResponseModelEntry } from "./session-entries";
+import {
+  isPriorSessionsDetails,
+  parseRunEntry,
+  parseUsageEntry,
+  parseResponseModelEntry,
+  PRIOR_SESSIONS_CUSTOM_TYPE,
+} from "./session-entries";
 import { toolCalls, toolOutput } from "./tool-execution-collector";
 
 /** Converts the selected native branch into displayable history without I/O or mutation. */
@@ -90,4 +96,13 @@ export function readUsage(entries: readonly SessionEntry[]): ModelCallView[] {
     calls.set(call.id, call);
   }
   return [...calls.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+}
+
+export function readDerivation(entries: readonly SessionEntry[]): RuntimeDerivation | undefined {
+  const entry = entries.find((e) => e.type === "custom_message" && e.customType === PRIOR_SESSIONS_CUSTOM_TYPE);
+  if (!entry || entry.type !== "custom_message" || !isPriorSessionsDetails(entry.details)) return undefined;
+  const text = typeof entry.content === "string"
+    ? entry.content
+    : displayParts(entry.content, false).map((p) => p.text).join("\n");
+  return { text, details: structuredClone(entry.details) };
 }

@@ -248,8 +248,12 @@ export function registerAgentIpc(
       return success(request.requestId, { removed });
     }
     if (
-      "sessionId" in request.params &&
-      !canAccessSession(client.sender, request.params.sessionId)
+      ("sessionId" in request.params &&
+        !canAccessSession(client.sender, request.params.sessionId)) ||
+      ("sourceSessionIds" in request.params &&
+        request.params.sourceSessionIds?.some(
+          (id) => !canAccessSession(client.sender, id),
+        ))
     ) {
       return errorResponse(
         request.requestId,

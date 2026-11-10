@@ -21,6 +21,8 @@ export class AgentController {
       case "model.setDefault": return models.setDefault(request.params.model);
       case "session.setModel": return sessions.setModel(request.params);
       case "session.create": return sessions.create(request.params);
+      case "session.previewContext": return sessions.previewContext(request.params);
+      case "session.context": return sessions.context(request.params);
       case "session.list": return sessions.list(request.params);
       case "session.rename": return sessions.rename(request.params);
       case "session.delete": return sessions.delete(request.params);

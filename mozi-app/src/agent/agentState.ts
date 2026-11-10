@@ -61,6 +61,7 @@ export function installAgentSnapshot(
     {
       ...state,
       usage: snapshot.usage,
+      derivedFrom: snapshot.derivedFrom,
       sessionActivity,
       modelSelection: snapshot.session.model ?? null,
       sessionId: snapshot.session.sessionId,
@@ -103,6 +104,11 @@ export function applyAgentEvent(
         { ...event.data.session, activeRun: state.sessions.find((session) => session.sessionId === event.sessionId)?.activeRun },
         (session) => session.sessionId,
       );
+      if (state.derivedFrom?.some((item) => item.sessionId === event.sessionId)) {
+        next.derivedFrom = state.derivedFrom.map((item) =>
+          item.sessionId === event.sessionId ? { ...item, title: event.data.session.title } : item,
+        );
+      }
       next.sessionsLoading = false;
       break;
     case "run.started":

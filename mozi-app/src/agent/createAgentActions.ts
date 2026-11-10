@@ -131,7 +131,13 @@ export function createAgentActions(
     }
   }
 
-  function requestList(retries = 0) {
+  function invalidateList() {
+    ++listVersion;
+    if (listJob === connection) listDirty = true;
+    store.setState({ sessionsLoading: false });
+  }
+
+  function requestList() {
     if (!attached || store.getState().runtime.state !== "ready") return;
     const token = connection;
     if (listJob === token) {
@@ -140,15 +146,12 @@ export function createAgentActions(
     }
     listJob = token;
     listDirty = false;
-    void listSessions(true).then((applied) => {
+    void listSessions(true).then(() => {
       // A newer connection may already own the slot; leave it alone.
       if (listJob !== token) return;
       listJob = undefined;
       if (token !== connection) return;
-      // A superseded list may predate the change we were told about; retry a
-      // bounded number of times so a dropped result cannot leave stale rows.
       if (listDirty) requestList();
-      else if (!applied && retries < 3) requestList(retries + 1);
     });
   }
 
@@ -173,7 +176,6 @@ export function createAgentActions(
         ? { id: state.activeRunId, status: state.runs.find((run) => run.id === state.activeRunId)?.status ?? "accepted" as const }
         : undefined }
       : session);
-    ++listVersion;
     generation++;
     if (subscription)
       void api
@@ -216,38 +218,44 @@ export function createAgentActions(
     rememberSession(sessionId);
   }
 
-  async function newSession() {
+  async function newSession(options?: { sourceSessionIds?: string[]; title?: string }) {
     const state = store.getState();
     if (state.inFlightSubmissionId || state.sessionOperation) return;
     const token = connection;
     const operation = ++operationVersion;
-    ++listVersion;
     store.setState({
       sessionOperation: "new",
       sessionsError: null,
-      sessionsLoading: false,
     });
+    const hasCustomOptions = Boolean(options?.sourceSessionIds?.length || options?.title);
     try {
       // Reuse an uncertain creation when the current draft already has submissions.
-      const input = state.sessionId
-        ? (newCreateInput ??= { clientOperationId: crypto.randomUUID() })
-        : (createInput ??= {
+      const input = hasCustomOptions
+        ? {
             clientOperationId: crypto.randomUUID(),
+            ...(options?.title ? { title: options.title } : {}),
+            ...(options?.sourceSessionIds?.length ? { sourceSessionIds: options.sourceSessionIds } : {}),
             ...(state.modelSelection ? { model: state.modelSelection } : {}),
-          });
+          }
+        : state.sessionId
+          ? (newCreateInput ??= { clientOperationId: crypto.randomUUID() })
+          : (createInput ??= {
+              clientOperationId: crypto.randomUUID(),
+              ...(state.modelSelection ? { model: state.modelSelection } : {}),
+            });
       const created = await api.createSession(input);
       if (token !== connection) return;
-      ++listVersion;
-      if (state.sessionId) {
-        newCreateInput = undefined;
-        store.setState({ sessionOperation: null, sessionsLoading: false });
+      invalidateList();
+      if (state.sessionId || hasCustomOptions) {
+        if (!hasCustomOptions) newCreateInput = undefined;
+        store.setState({ sessionOperation: null });
         await activateSession(created.sessionId);
       } else {
         createInput = undefined;
         bindCreatedSession(created.sessionId);
         await synchronize().catch(() => {});
       }
-      if (token === connection) void listSessions();
+      if (token === connection) requestList();
     } catch (error) {
       if (token === connection)
         store.setState({ sessionsError: appError(error) });
@@ -263,11 +271,9 @@ export function createAgentActions(
       throw new Error("请等待当前操作完成。");
     const token = connection;
     const operation = ++operationVersion;
-    ++listVersion;
     store.setState({
       sessionOperation: sessionId,
       sessionsError: null,
-      sessionsLoading: false,
     });
     try {
       if (title !== undefined) {
@@ -276,23 +282,35 @@ export function createAgentActions(
           title: title.trim(),
         });
         if (token !== connection) throw new Error("Agent 连接已变化，请重试。");
-        ++listVersion;
-        store.setState({ sessionsLoading: false });
+        invalidateList();
         store.setState((current) => ({
           sessions: current.sessions.map((item) =>
             item.sessionId === sessionId ? { ...result.session, activeRun: item.activeRun } : item,
           ),
+          ...(current.derivedFrom?.some((item) => item.sessionId === sessionId)
+            ? {
+                derivedFrom: current.derivedFrom.map((item) =>
+                  item.sessionId === sessionId ? { ...item, title: result.session.title } : item,
+                ),
+              }
+            : {}),
         }));
       } else {
         await api.deleteSession({ sessionId });
         if (token !== connection) throw new Error("Agent 连接已变化，请重试。");
-        ++listVersion;
+        invalidateList();
         localSessions.delete(sessionId);
-        store.setState({ sessionsLoading: false });
         store.setState((current) => ({
           sessions: current.sessions.filter(
             (item) => item.sessionId !== sessionId,
           ),
+          ...(current.derivedFrom?.some((item) => item.sessionId === sessionId)
+            ? {
+                derivedFrom: current.derivedFrom.map((item) =>
+                  item.sessionId === sessionId ? { ...item, deleted: true } : item,
+                ),
+              }
+            : {}),
           sessionOperation: null,
         }));
         if (store.getState().sessionId === sessionId) {
@@ -397,9 +415,8 @@ export function createAgentActions(
     const state = store.getState();
     if (event.sessionId !== state.sessionId) return;
     if (["session.updated", "run.updated", "run.finished"].includes(event.type) && event.seq > state.lastSeq) {
-      // A list response requested before this event must not restore the old title.
-      ++listVersion;
-      store.setState({ sessionsLoading: false });
+      // A list response requested before this event must not restore the old state.
+      invalidateList();
     }
     if (event.type === "run.finished") finishedRuns.add(event.runId);
     if (state.syncStatus === "syncing") {
@@ -557,7 +574,7 @@ export function createAgentActions(
         sessionId = created.sessionId;
         createInput = undefined;
         bindCreatedSession(sessionId);
-        void listSessions();
+        requestList();
       }
       if (store.getState().syncStatus !== "ready" && !(await synchronize()))
         return;
@@ -570,9 +587,8 @@ export function createAgentActions(
         content: pending.content,
       });
       if (token !== generation) return;
-      ++listVersion;
+      invalidateList();
       store.setState((state) => ({
-        sessionsLoading: false,
         sessionActivity: finishedRuns.has(accepted.runId) || state.runs.some((run) => run.id === accepted.runId && isTerminalRun(run.status))
           ? state.sessionActivity
           : { ...state.sessionActivity, [sessionId!]: { id: accepted.runId, status: state.runs.find((run) => run.id === accepted.runId)?.status ?? "accepted" } },
@@ -667,11 +683,9 @@ export function createAgentActions(
       return;
     }
     const token = generation;
-    ++listVersion;
     const operation = ++operationVersion;
     store.setState({
       sessionOperation: `model:${state.sessionId}`,
-      sessionsLoading: false,
       error: null,
     });
     try {
@@ -680,10 +694,9 @@ export function createAgentActions(
         model,
       });
       if (token !== generation) return;
-      ++listVersion;
+      invalidateList();
       store.setState((current) => ({
         modelSelection: session.model ?? null,
-        sessionsLoading: false,
         sessions: current.sessions.map((item) =>
           item.sessionId === session.sessionId ? session : item,
         ),
@@ -705,6 +718,10 @@ export function createAgentActions(
     listSessions,
     activateSession,
     newSession,
+    previewSessionContext: (input: ParamsOf<"session.previewContext">) =>
+      api.previewSessionContext(input),
+    getSessionContext: (sessionId: string) =>
+      api.getSessionContext({ sessionId }),
     renameSession: (sessionId: string, title: string) =>
       mutateSession(sessionId, title),
     deleteSession: (sessionId: string) => mutateSession(sessionId),

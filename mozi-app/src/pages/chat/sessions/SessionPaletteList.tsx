@@ -13,6 +13,14 @@ import { groupNames, type SessionListProps } from "./session-navigation";
 import { SessionTitleHighlight } from "./SessionTitleHighlight";
 import styles from "./session-palette-list.module.css";
 
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 10_000) {
+    const wan = tokens / 10_000;
+    return `${Number.isInteger(wan) ? wan : wan.toFixed(1)} 万`;
+  }
+  return tokens.toLocaleString("zh-CN");
+}
+
 export function SessionPaletteList({
   items,
   query,
@@ -28,6 +36,12 @@ export function SessionPaletteList({
   listId,
   onOpen: switchTo,
   onAction: beginAction,
+  selectedIds = [],
+  onToggleSelect,
+  onSelectGroup,
+  onClearSelection,
+  onCreateDerived,
+  preview,
   activeIndex,
   setSelected,
   onExecute,
@@ -41,6 +55,22 @@ export function SessionPaletteList({
   const commands = filterCommands(search);
   const count = commandMode ? commands.length : items.length;
   const onNew = () => onExecute("session.create");
+  const selectedSet = new Set(selectedIds);
+  const allEmpty = Boolean(
+    preview?.data &&
+      preview.data.sources.length > 0 &&
+      preview.data.sources.every((s) => s.empty),
+  );
+  const overBudget = Boolean(preview?.data?.overBudget);
+  const truncatedCount =
+    preview?.data?.sources.filter((s) => s.omittedTurns > 0).length ?? 0;
+  const canCreateDerived =
+    selectedIds.length > 0 &&
+    !disabled &&
+    !preview?.loading &&
+    !preview?.error &&
+    !allEmpty &&
+    !overBudget;
   return (
     <div className={styles.panel} data-session-switcher>
       <div className={styles.searchBar}>
@@ -62,7 +92,6 @@ export function SessionPaletteList({
           }
           onChange={(e) => {
             setQuery(e.target.value);
-            setSelected(0);
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -73,6 +102,15 @@ export function SessionPaletteList({
                   (activeIndex + (e.key === "ArrowDown" ? 1 : -1) + count) %
                     count,
                 );
+            } else if (
+              e.key === " " &&
+              !commandMode &&
+              onToggleSelect &&
+              (e.ctrlKey || e.metaKey || e.shiftKey || !query)
+            ) {
+              e.preventDefault();
+              if (items[activeIndex])
+                onToggleSelect(items[activeIndex].sessionId);
             } else if (e.key === "Enter") {
               e.preventDefault();
               if (commandMode) {
@@ -137,6 +175,10 @@ export function SessionPaletteList({
               .map((session, index) => ({ session, index }))
               .filter((item) => item.session.group === group);
             if (!grouped.length) return null;
+            const groupIds = grouped.map((g) => g.session.sessionId);
+            const allGroupSelected =
+              groupIds.length > 0 &&
+              groupIds.every((id) => selectedSet.has(id));
             return (
               <div role="group" aria-label={name} key={name}>
                 <div
@@ -146,13 +188,50 @@ export function SessionPaletteList({
                 >
                   <span>{name}</span>
                   <span className={styles.count}>{grouped.length}</span>
+                  {onSelectGroup && (
+                    <button
+                      type="button"
+                      className={styles.groupSelectBtn}
+                      disabled={disabled}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onSelectGroup(groupIds)}
+                    >
+                      {allGroupSelected ? "取消本组" : "全选本组"}
+                    </button>
+                  )}
                 </div>
-                {grouped.map(({ session, index }) => (
-                  <div key={session.sessionId} className={styles.row}>
+                {grouped.map(({ session, index }) => {
+                  const checked = selectedSet.has(session.sessionId);
+                  return (
+                  <div
+                    key={session.sessionId}
+                    className={styles.row}
+                    data-current={session.sessionId === currentId || undefined}
+                    data-checked={checked || undefined}
+                  >
+                    {onToggleSelect && (
+                      <label
+                        className={styles.checkboxWrap}
+                        title="勾选以作为新会话的前置上下文"
+                        onMouseDown={(e) => e.preventDefault()}
+                      >
+                        <input
+                          type="checkbox"
+                          className={styles.checkbox}
+                          checked={checked}
+                          disabled={disabled || (!checked && selectedIds.length >= 20)}
+                          aria-label={`选择会话 ${session.title || "新会话"}`}
+                          onChange={() => onToggleSelect(session.sessionId)}
+                        />
+                      </label>
+                    )}
                     <div
                       id={`${listId}-${index}`}
                       role="option"
                       aria-selected={index === activeIndex}
+                      aria-current={
+                        session.sessionId === currentId ? "true" : undefined
+                      }
                       aria-disabled={disabled}
                       className={styles.option}
                       onMouseDown={(e) => e.preventDefault()}
@@ -201,7 +280,8 @@ export function SessionPaletteList({
                       />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })}
@@ -227,8 +307,48 @@ export function SessionPaletteList({
           )}
         </p>
       )}
+      {!commandMode && selectedIds.length > 0 && (
+        <div className={styles.selectionBar} role="status" aria-live="polite">
+          <div className={styles.selectionSummary}>
+            <span>
+              已选 {selectedIds.length} 个
+              {preview?.loading && " · 正在计算预算…"}
+              {!preview?.loading && preview?.error && ` · ${preview.error}`}
+              {!preview?.loading && !preview?.error && preview?.data && (
+                <>
+                  {allEmpty
+                    ? " · 所选会话无可用内容"
+                    : ` · 约 ${formatTokenCount(preview.data.estimatedTokens)} token / 预算 ${formatTokenCount(preview.data.budgetTokens)}`}
+                  {truncatedCount > 0 && ` · ${truncatedCount} 个会话有省略`}
+                  {overBudget && " · 超出预算，请减少会话"}
+                </>
+              )}
+            </span>
+            {onClearSelection && (
+              <button
+                type="button"
+                className={styles.clearSelectionBtn}
+                disabled={disabled}
+                onClick={onClearSelection}
+              >
+                清空
+              </button>
+            )}
+          </div>
+          {onCreateDerived && (
+            <button
+              type="button"
+              className={styles.createDerivedBtn}
+              disabled={!canCreateDerived}
+              onClick={onCreateDerived}
+            >
+              基于选中会话新建对话
+            </button>
+          )}
+        </div>
+      )}
       <div className={styles.footer}>
-        <span>↑ ↓ 选择 · ↵ 确认 · Esc 关闭{!commandMode && ` · ${formatKeymap(getAction("session.delete").keymap)} 删除`}</span>
+        <span>↑ ↓ 选择 · 空格 勾选 · ↵ 确认 · Esc 关闭{!commandMode && ` · ${formatKeymap(getAction("session.delete").keymap)} 删除`}</span>
         <span>
           {disabled
             ? "连接就绪且当前操作完成后可切换"

@@ -20,6 +20,17 @@ export class ModelService {
     return auth;
   }
   defaultSelection(): ModelSelection | undefined { return this.store.getDefaultModel() ?? this.startupDefault; }
+  async contextWindow(selection?: ModelSelection): Promise<number | undefined> {
+    this.control.assertAvailable();
+    if (!this.catalog) return undefined;
+    const target = selection ?? this.defaultSelection();
+    if (!target) return undefined;
+    const providers = await this.catalog.listProviders();
+    const provider = providers.find(item => item.id === target.providerId);
+    if (!provider) return undefined;
+    const model = [...provider.models, ...provider.customModels].find(item => item.id === target.modelId);
+    return model?.contextWindow;
+  }
   async settings(): Promise<ModelSettings> {
     this.control.assertAvailable();
     const defaultModel = this.defaultSelection();

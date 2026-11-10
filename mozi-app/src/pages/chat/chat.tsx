@@ -9,9 +9,11 @@ import { MarkdownText } from "@/components/assistant-ui/elements/markdown-text";
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
+  PaperClipOutlined,
   StopOutlined,
   UserOutlined,
 } from "@ant-design/icons";
+import { Modal } from "antd";
 import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
@@ -30,6 +32,23 @@ const suggestions = [
   "检查播放器是否异常",
   "帮我分析一段日志",
   "整理问题排查步骤",
+];
+const derivedQuickPrompts = [
+  {
+    label: "总结工作",
+    prompt:
+      "基于前置会话材料，按项目分组总结完成的工作、进行中的事项和遇到的问题，每条标注来源 [S#]。仅依据材料，不需要读取文件。",
+  },
+  {
+    label: "提炼重点",
+    prompt:
+      "基于前置会话材料，按投入程度提炼工作重点，指出投入大但没有收尾的事项，每条标注来源 [S#]。仅依据材料，不需要读取文件。",
+  },
+  {
+    label: "列出待办",
+    prompt:
+      "基于前置会话材料，列出所有未完成、被阻塞或提到要后续处理的事项，并给出下一步动作，标注来源 [S#]。",
+  },
 ];
 const groupReasoning = groupPartByType({ reasoning: ["group-reasoning"] });
 
@@ -116,12 +135,162 @@ function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseMo
   );
 }
 
+function DerivedContextBar() {
+  const sessionId = useAgentStore((state) => state.sessionId);
+  const derivedFrom = useAgentStore((state) => state.derivedFrom);
+  const disabled = useAgentStore(
+    (state) =>
+      state.sessionOperation !== null ||
+      state.inFlightSubmissionId !== null ||
+      state.activeRunId !== null ||
+      state.runtime.state !== "ready",
+  );
+  const [expanded, setExpanded] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextText, setContextText] = useState<string>("");
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  if (!sessionId || !derivedFrom || derivedFrom.length === 0) return null;
+
+  const visibleSources = expanded ? derivedFrom : derivedFrom.slice(0, 3);
+  const hiddenCount = Math.max(0, derivedFrom.length - visibleSources.length);
+
+  const openContextModal = async () => {
+    setContextOpen(true);
+    setContextLoading(true);
+    setContextError(null);
+    try {
+      const res = await agentActions.getSessionContext(sessionId);
+      setContextText(res.derivation?.text || "暂无前置会话上下文内容。");
+    } catch (err) {
+      setContextError(err instanceof Error ? err.message : "加载前置上下文失败。");
+    } finally {
+      setContextLoading(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!sessionId || deleting || disabled) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await agentActions.deleteSession(sessionId);
+      setDeleteOpen(false);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "删除会话失败，请重试。");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <>
+      <div className={styles.derivedBar} role="region" aria-label="前置会话来源">
+        <div className={styles.derivedSources}>
+          <span className={styles.derivedLabel}>
+            <PaperClipOutlined /> 来自 {derivedFrom.length} 个会话：
+          </span>
+          {visibleSources.map((source) => (
+            <button
+              key={source.sessionId}
+              type="button"
+              className={styles.derivedPill}
+              disabled={source.deleted || disabled}
+              title={
+                source.deleted
+                  ? `${source.title}（已删除）`
+                  : `跳转到源会话：${source.title}`
+              }
+              onClick={() => {
+                if (!source.deleted && !disabled) {
+                  void agentActions.activateSession(source.sessionId);
+                }
+              }}
+            >
+              {source.title}
+              {source.deleted ? "（已删除）" : ""}
+            </button>
+          ))}
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className={styles.derivedMore}
+              onClick={() => setExpanded(true)}
+            >
+              +{hiddenCount}
+            </button>
+          )}
+        </div>
+        <div className={styles.derivedActions}>
+          <button
+            type="button"
+            className={styles.derivedActionLink}
+            onClick={() => void openContextModal()}
+          >
+            查看上下文
+          </button>
+          <span className={styles.derivedDot}>·</span>
+          <button
+            type="button"
+            className={`${styles.derivedActionLink} ${styles.derivedDangerLink}`}
+            disabled={disabled}
+            onClick={() => {
+              setDeleteError(null);
+              setDeleteOpen(true);
+            }}
+          >
+            删除此会话
+          </button>
+        </div>
+      </div>
+      <Modal
+        title={`携带的前置会话上下文（共 ${derivedFrom.length} 个会话）`}
+        open={contextOpen}
+        onCancel={() => setContextOpen(false)}
+        footer={null}
+        width={720}
+        centered
+      >
+        {contextLoading ? (
+          <p role="status">正在加载前置上下文…</p>
+        ) : contextError ? (
+          <p role="alert">{contextError}</p>
+        ) : (
+          <pre className={styles.contextPreviewPre}>{contextText}</pre>
+        )}
+      </Modal>
+      <Modal
+        title="永久删除此派生会话"
+        open={deleteOpen}
+        onCancel={() => {
+          if (!deleting) setDeleteOpen(false);
+        }}
+        onOk={() => void confirmDelete()}
+        okText={deleting ? "删除中…" : "确认删除"}
+        cancelText="取消"
+        okButtonProps={{ danger: true, disabled: deleting || disabled }}
+        cancelButtonProps={{ disabled: deleting }}
+        centered
+      >
+        <p>删除此会话将清除当前总结/讨论记录及携带的上下文副本（不影响原会话）。</p>
+        {deleteError && <p role="alert">{deleteError}</p>}
+      </Modal>
+    </>
+  );
+}
+
 function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const composerAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const runtime = useAgentStore((state) => state.runtime);
   const error = useAgentStore((state) => state.error);
+  const derivedFrom = useAgentStore((state) => state.derivedFrom);
+  const hasDerived = Boolean(derivedFrom && derivedFrom.length > 0);
   const busy = useAgentStore((state) => state.inFlightSubmissionId !== null || state.syncStatus === "syncing");
   const errorText = error?.code === "RUNTIME_UNAVAILABLE" ? "Agent 后台尚未连接，请稍后检查连接。" : error?.message;
 
@@ -168,20 +337,50 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
           <div className={styles.welcome}>
             <MoziIcon animated />
             <h2 lang="en">Hello, I’m Mozi.</h2>
-            <div className={styles.suggestions}>
-              {suggestions.map((prompt) => (
-                <ThreadPrimitive.Suggestion
-                  key={prompt}
-                  prompt={prompt}
-                  method="replace"
-                  autoSend={false}
+            {hasDerived ? (
+              <div className={styles.suggestions}>
+                {derivedQuickPrompts.map((item) => (
+                  <ThreadPrimitive.Suggestion
+                    key={item.label}
+                    prompt={item.prompt}
+                    method="replace"
+                    autoSend={false}
+                    className={styles.suggestion}
+                    onClick={() => {
+                      requestAnimationFrame(() => {
+                        inputRef.current?.focus({ preventScroll: true });
+                      });
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <ArrowUpOutlined />
+                  </ThreadPrimitive.Suggestion>
+                ))}
+                <button
+                  type="button"
                   className={styles.suggestion}
+                  onClick={() => inputRef.current?.focus({ preventScroll: true })}
                 >
-                  {prompt}
+                  <span>继续讨论</span>
                   <ArrowUpOutlined />
-                </ThreadPrimitive.Suggestion>
-              ))}
-            </div>
+                </button>
+              </div>
+            ) : (
+              <div className={styles.suggestions}>
+                {suggestions.map((prompt) => (
+                  <ThreadPrimitive.Suggestion
+                    key={prompt}
+                    prompt={prompt}
+                    method="replace"
+                    autoSend={false}
+                    className={styles.suggestion}
+                  >
+                    {prompt}
+                    <ArrowUpOutlined />
+                  </ThreadPrimitive.Suggestion>
+                ))}
+              </div>
+            )}
           </div>
         </AuiIf>
         <div className={styles.messages}>
@@ -275,6 +474,7 @@ export function ChatPage() {
         </header>
         {monitorError && <p role="alert">{monitorError}</p>}
         <ModelControls />
+        <DerivedContextBar />
         <ChatThread key={sessionId} onUsage={openUsage} />
       </div>
     </section>

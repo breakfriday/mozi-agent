@@ -2,6 +2,26 @@ import type { RefObject } from "react";
 import type { InputRef } from "antd";
 import type { AgentState } from "@/agent/types";
 
+export type ContextPreviewState = {
+  loading: boolean;
+  error?: string;
+  data?: {
+    sources: {
+      sessionId: string;
+      title: string;
+      turns: number;
+      omittedTurns: number;
+      running: boolean;
+      derived: boolean;
+      empty: boolean;
+    }[];
+    packedChars: number;
+    estimatedTokens: number;
+    budgetTokens: number;
+    overBudget: boolean;
+  };
+};
+
 export type SessionListProps = {
   items: (AgentState["sessions"][number] & { group: number })[];
   query: string;
@@ -17,6 +37,12 @@ export type SessionListProps = {
   listId: string;
   onOpen: (id: string) => void;
   onAction: (kind: "rename" | "delete", id: string, title: string) => void;
+  selectedIds?: string[];
+  onToggleSelect?: (id: string) => void;
+  onSelectGroup?: (ids: string[]) => void;
+  onClearSelection?: () => void;
+  onCreateDerived?: () => void;
+  preview?: ContextPreviewState;
 };
 
 export const groupNames = ["今天", "昨天", "本周", "更早"];

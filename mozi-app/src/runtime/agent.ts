@@ -94,6 +94,8 @@ export function createAgentApi(getBridge: () => AgentBridgeApi | undefined = get
     setDefaultModel: (input) => call("model.setDefault", input, (api) => api.setDefaultModel(input)),
     setSessionModel: (input) => call("session.setModel", input, (api) => api.setSessionModel(input)),
     createSession: (input) => call("session.create", input, (api) => api.createSession(input)),
+    previewSessionContext: (input) => call("session.previewContext", input, (api) => api.previewSessionContext(input)),
+    getSessionContext: (input) => call("session.context", input, (api) => api.getSessionContext(input)),
     listSessions: (input) => call("session.list", input, (api) => api.listSessions(input)),
     renameSession: (input) => call("session.rename", input, (api) => api.renameSession(input)),
     deleteSession: (input) => call("session.delete", input, (api) => api.deleteSession(input)),

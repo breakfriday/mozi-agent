@@ -47,12 +47,34 @@ export interface RuntimeSession {
   cancel(): Promise<void>;
   dispose(): void;
 }
+export interface PriorSessionsDetails {
+  packerVersion: 1;
+  sourceSessionIds: string[];
+  sources: { sessionId: string; title: string }[];
+  stats: {
+    rawChars: number;
+    packedChars: number;
+    estimatedTokens: number;
+    omittedTurns: number;
+    truncatedSessions: number;
+  };
+}
+export interface InitialContext {
+  customType: string;
+  text: string;
+  details: PriorSessionsDetails;
+}
+export interface RuntimeDerivation {
+  text: string;
+  details: PriorSessionsDetails;
+}
 export interface AgentRuntime {
   readUsage?(descriptor: RuntimeSessionDescriptor): Promise<ModelCallView[]>;
+  readDerivation?(descriptor: RuntimeSessionDescriptor): Promise<RuntimeDerivation | undefined>;
   setSessionName(descriptor: RuntimeSessionDescriptor, name: string): void;
   /** Synchronous: no new execution may acquire the file during deletion. */
   deleteSession(descriptor: RuntimeSessionDescriptor): void;
-  createSession(): Promise<RuntimeSessionDescriptor>;
+  createSession(options?: { initialContext?: InitialContext }): Promise<RuntimeSessionDescriptor>;
   listSessions(): Promise<RuntimeSessionInfo[]>;
   openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession>;
   readHistory(descriptor: RuntimeSessionDescriptor): Promise<RuntimeHistoryMessage[]>;

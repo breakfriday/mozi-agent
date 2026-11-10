@@ -121,6 +121,8 @@ export function createAgentPreloadApi(
     setDefaultModel: (input) => request("model.setDefault", input),
     setSessionModel: (input) => request("session.setModel", input),
     createSession: (input) => request("session.create", input),
+    previewSessionContext: (input) => request("session.previewContext", input),
+    getSessionContext: (input) => request("session.context", input),
     listSessions: (input = {}) => request("session.list", input),
     renameSession: (input) => request("session.rename", input),
     deleteSession: (input) => request("session.delete", input),

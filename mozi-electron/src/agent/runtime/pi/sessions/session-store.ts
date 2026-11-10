@@ -1,12 +1,12 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, writeFileSync, lstatSync, realpathSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import type { RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../agent-runtime";
+import type { InitialContext, RuntimeDerivation, RuntimeHistoryMessage, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../../agent-runtime";
 import { failure } from "../../../errors";
 import type { PiConfig } from "../types";
 import { EMPTY_SESSION_TITLE, titleFromFirstMessage } from "../../../sessions/session-title";
 import type { ModelCallView } from "../../../../../../shared/agent";
-import { readHistory, readUsage } from "./history-reader";
+import { readDerivation, readHistory, readUsage } from "./history-reader";
 
 /** Owns native session storage, identity checks and active writer reservations. */
 export class PiSessionStore {
@@ -16,7 +16,7 @@ export class PiSessionStore {
     this.sessionDir = path.join(config.dataDir, "pi-sessions");
     mkdirSync(this.sessionDir, { recursive: true });
   }
-  async createSession(): Promise<RuntimeSessionDescriptor> {
+  async createSession(options?: { initialContext?: InitialContext }): Promise<RuntimeSessionDescriptor> {
     const manager = SessionManager.create(this.config.cwd, this.sessionDir);
     const filePath = manager.getSessionFile()!;
     // Pi defers writing until its first message. Persist the SDK-generated header
@@ -24,6 +24,16 @@ export class PiSessionStore {
     const fd = openSync(filePath, "wx", 0o600);
     try { writeFileSync(fd, JSON.stringify(manager.getHeader()) + "\n"); fsyncSync(fd); }
     finally { closeSync(fd); }
+    if (options?.initialContext) {
+      try {
+        const opened = SessionManager.open(filePath, this.sessionDir, this.config.cwd);
+        const { customType, text, details } = options.initialContext;
+        opened.appendCustomMessageEntry(customType, text, false, details);
+      } catch {
+        try { unlinkSync(filePath); } catch { /* ignore cleanup error */ }
+        throw failure("INTERNAL_ERROR", "无法写入前置会话上下文。");
+      }
+    }
     return { sessionId: manager.getSessionId(), engine: "pi", locator: filePath, cwd: this.config.cwd };
   }
   open(descriptor: RuntimeSessionDescriptor): SessionManager {
@@ -88,5 +98,8 @@ export class PiSessionStore {
   async readUsage(descriptor: RuntimeSessionDescriptor): Promise<ModelCallView[]> {
     // Consumption includes all recorded branches, even if no longer in the current context.
     return readUsage(this.open(descriptor).getEntries());
+  }
+  async readDerivation(descriptor: RuntimeSessionDescriptor): Promise<RuntimeDerivation | undefined> {
+    return readDerivation(this.open(descriptor).getEntries());
   }
 }

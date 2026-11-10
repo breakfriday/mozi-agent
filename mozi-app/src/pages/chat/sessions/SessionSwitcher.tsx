@@ -15,7 +15,11 @@ import { useAgentStore } from "@/agent/agentStore";
 import { agentActions } from "@/agent/agentActions";
 import { bridgeApi } from "@/runtime/bridge";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { dateGroup, revealSelection } from "./session-navigation";
+import {
+  dateGroup,
+  revealSelection,
+  type ContextPreviewState,
+} from "./session-navigation";
 import { SessionPaletteList } from "./SessionPaletteList";
 import styles from "./session-switcher.module.css";
 
@@ -27,6 +31,12 @@ export function SessionSwitcher({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [previewResult, setPreviewResult] = useState<{
+    key: string;
+    data?: ContextPreviewState["data"];
+    error?: string;
+  } | null>(null);
   const [action, setAction] = useState<{
     kind: "rename" | "delete";
     id: string;
@@ -46,6 +56,7 @@ export function SessionSwitcher({
   const listId = useId();
   const sessions = useAgentStore((s) => s.sessions);
   const currentId = useAgentStore((s) => s.sessionId);
+  const modelSelection = useAgentStore((s) => s.modelSelection);
   const sessionActivity = useAgentStore((s) => s.sessionActivity);
   const loading = useAgentStore((s) => s.sessionsLoading);
   const error = useAgentStore((s) => s.sessionsError);
@@ -57,12 +68,7 @@ export function SessionSwitcher({
   );
   const search = query.trim();
   const now = new Date();
-  const items = sessions
-    .filter((s) =>
-      (s.title || "新会话")
-        .toLocaleLowerCase()
-        .includes(search.toLocaleLowerCase()),
-    )
+  const sortedSessions = sessions
     .map((s) => ({ ...s, group: dateGroup(s.updatedAt, now) }))
     .sort(
       (a, b) =>
@@ -70,10 +76,31 @@ export function SessionSwitcher({
         Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
         a.sessionId.localeCompare(b.sessionId),
     );
+  const items = sortedSessions.filter((s) =>
+    (s.title || "新会话")
+      .toLocaleLowerCase()
+      .includes(search.toLocaleLowerCase()),
+  );
+  const getCurrentIndex = (list = sortedSessions) => {
+    const idx = currentId
+      ? list.findIndex((s) => s.sessionId === currentId)
+      : -1;
+    return idx >= 0 ? idx : 0;
+  };
   const resultCount = search.startsWith(">")
     ? filterCommands(search).length
     : items.length;
   const activeIndex = Math.min(selected, Math.max(0, resultCount - 1));
+
+  const handleQueryChange = (nextQuery: string) => {
+    setQuery(nextQuery);
+    const nextSearch = nextQuery.trim();
+    if (nextSearch.startsWith(">")) {
+      setSelected(0);
+      return;
+    }
+    setSelected(nextSearch ? 0 : getCurrentIndex(sortedSessions));
+  };
 
   const show = () => {
     // Opening a panel must not leave a background chat control focused.
@@ -82,8 +109,53 @@ export function SessionSwitcher({
       focused.blur();
     focusComposer.current = false;
     setQuery("");
-    setSelected(0);
+    setSelectedIds([]);
+    setPreviewResult(null);
+    setSelected(getCurrentIndex());
     setOpen(true);
+  };
+
+  const toggleSelect = (id: string) => {
+    if (disabled) return;
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((item) => item !== id);
+      if (prev.length >= 20) return prev;
+      return [...prev, id];
+    });
+  };
+
+  const selectGroup = (groupIds: string[]) => {
+    if (disabled || !groupIds.length) return;
+    setSelectedIds((prev) => {
+      const allIn = groupIds.every((id) => prev.includes(id));
+      if (allIn) return prev.filter((id) => !groupIds.includes(id));
+      const next = [...prev];
+      for (const id of groupIds) {
+        if (next.length >= 20) break;
+        if (!next.includes(id)) next.push(id);
+      }
+      return next;
+    });
+  };
+
+  const createDerivedSession = async () => {
+    if (disabled || action || creating.current || selectedIds.length === 0) return;
+    creating.current = true;
+    try {
+      await agentActions.newSession({ sourceSessionIds: selectedIds });
+      if (!useAgentStore.getState().sessionsError) {
+        focusComposer.current = true;
+        setSelectedIds([]);
+        setOpen(false);
+        requestAnimationFrame(() => {
+          getContainer()
+            .querySelector<HTMLElement>('[aria-label="消息内容"]')
+            ?.focus({ preventScroll: true });
+        });
+      }
+    } finally {
+      creating.current = false;
+    }
   };
 
   const createSession = async () => {
@@ -152,6 +224,43 @@ export function SessionSwitcher({
     if (open) revealSelection(results.current);
   }, [open, activeIndex, query]);
 
+  const selectionKey =
+    open && selectedIds.length > 0
+      ? `${selectedIds.join(",")}:${modelSelection?.providerId ?? ""}:${modelSelection?.modelId ?? ""}`
+      : "";
+  const preview: ContextPreviewState = !selectionKey
+    ? { loading: false }
+    : previewResult?.key !== selectionKey
+      ? { loading: true }
+      : { loading: false, data: previewResult.data, error: previewResult.error };
+
+  useEffect(() => {
+    if (!selectionKey || selectedIds.length === 0) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void agentActions
+        .previewSessionContext({
+          sourceSessionIds: selectedIds,
+          ...(modelSelection ? { model: modelSelection } : {}),
+        })
+        .then((data) => {
+          if (!cancelled) setPreviewResult({ key: selectionKey, data });
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setPreviewResult({
+              key: selectionKey,
+              error: err instanceof Error ? err.message : "预览失败",
+            });
+          }
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectionKey, selectedIds, modelSelection]);
+
   const switchTo = (id: string) => {
     if (action || disabled) return;
     setOpen(false);
@@ -187,7 +296,10 @@ export function SessionSwitcher({
     try {
       if (action.kind === "rename")
         await agentActions.renameSession(action.id, name.trim());
-      else await agentActions.deleteSession(action.id);
+      else {
+        await agentActions.deleteSession(action.id);
+        setSelectedIds((prev) => prev.filter((id) => id !== action.id));
+      }
       setAction(null);
     } catch {
       setActionError(
@@ -217,7 +329,7 @@ export function SessionSwitcher({
   const listProps = {
     items,
     query,
-    setQuery,
+    setQuery: handleQueryChange,
     currentId,
     sessionActivity,
     disabled,
@@ -225,6 +337,12 @@ export function SessionSwitcher({
     error: error?.message,
     onOpen: switchTo,
     onAction: beginAction,
+    selectedIds,
+    onToggleSelect: toggleSelect,
+    onSelectGroup: selectGroup,
+    onClearSelection: () => setSelectedIds([]),
+    onCreateDerived: () => void createDerivedSession(),
+    preview,
   };
   return (
     <>

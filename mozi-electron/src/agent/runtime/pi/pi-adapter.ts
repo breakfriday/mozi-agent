@@ -1,4 +1,4 @@
-import type { AgentRuntime, RuntimeHistoryMessage, RuntimeSession, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../agent-runtime";
+import type { AgentRuntime, InitialContext, RuntimeDerivation, RuntimeHistoryMessage, RuntimeSession, RuntimeSessionDescriptor, RuntimeSessionInfo } from "../agent-runtime";
 import { PiSessionStore } from "./sessions/session-store";
 import { PiSessionFactory } from "./sessions/session-factory";
 import type { PiConfig, PiModelBinding } from "./types";
@@ -31,10 +31,11 @@ export class PiAdapter implements AgentRuntime, ModelCatalog {
   }
   setSessionName(descriptor: RuntimeSessionDescriptor, name: string): void { this.store.setSessionName(descriptor, name); }
   deleteSession(descriptor: RuntimeSessionDescriptor): void { this.store.deleteSession(descriptor); }
-  createSession(): Promise<RuntimeSessionDescriptor> { return this.store.createSession(); }
+  createSession(options?: { initialContext?: InitialContext }): Promise<RuntimeSessionDescriptor> { return this.store.createSession(options); }
   listSessions(): Promise<RuntimeSessionInfo[]> { return this.store.listSessions(); }
   readHistory(descriptor: RuntimeSessionDescriptor): Promise<RuntimeHistoryMessage[]> { return this.store.readHistory(descriptor); }
   readUsage(descriptor: RuntimeSessionDescriptor) { return this.store.readUsage(descriptor); }
+  readDerivation(descriptor: RuntimeSessionDescriptor): Promise<RuntimeDerivation | undefined> { return this.store.readDerivation(descriptor); }
   async openSession(descriptor: RuntimeSessionDescriptor): Promise<RuntimeSession> {
     const { provider, modelId } = this.config;
     if (!provider || !modelId) throw new Error("请先在 Mozi 中选择并配置模型。");

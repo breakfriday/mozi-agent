@@ -105,7 +105,11 @@
 }
 .option[aria-selected="true"] {
   background: var(--app-selected-background);
-  box-shadow: inset 3px 0 var(--app-border-hover-color);
+  box-shadow: inset 3px 0 var(--app-primary-color);
+}
+.option[aria-current="true"] .title {
+  color: var(--app-heading-color);
+  font-weight: 600;
 }
 .option[aria-disabled="true"] {
   opacity: 0.5;
@@ -126,7 +130,27 @@
   border-radius: 2px;
   font-weight: 650;
 }
-.current,
+.current {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--app-primary-color) 38%, transparent);
+  background: color-mix(in srgb, var(--app-primary-color) 14%, transparent);
+  color: var(--app-primary-color);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.current::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
 .time {
   flex-shrink: 0;
   color: var(--app-muted-color);
@@ -206,3 +230,90 @@
 }
 
 .running { flex-shrink: 0; color: var(--app-primary-color); font-size: 11px; }
+
+.groupSelectBtn {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-muted-color);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.groupSelectBtn:hover {
+  background: var(--app-hover-background);
+  color: var(--app-text-color);
+}
+.groupSelectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.checkboxWrap {
+  display: grid;
+  place-items: center;
+  padding-left: 8px;
+  cursor: pointer;
+}
+.checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--app-primary-color);
+  cursor: pointer;
+}
+.checkbox:disabled {
+  cursor: not-allowed;
+}
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 8px;
+  background: var(--app-input-background);
+  font-size: 12px;
+  color: var(--app-text-color);
+}
+.selectionSummary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.clearSelectionBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--app-border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-muted-color);
+  font-size: 11px;
+  cursor: pointer;
+}
+.clearSelectionBtn:hover {
+  background: var(--app-hover-background);
+  color: var(--app-text-color);
+}
+.createDerivedBtn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--app-primary-color);
+  color: var(--app-primary-contrast-color);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.createDerivedBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

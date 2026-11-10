@@ -31,7 +31,14 @@ test("every public method has matching parameter and result validation", () => {
       session: { sessionId: "session", title: "Chat", createdAt: timestamp, updatedAt: timestamp, model: { providerId: "bailian-tp", modelId: "test" } },
     }],
     "runtime.getState": [{}, { state: "unavailable" }],
-    "session.create": [{ clientOperationId: "operation" }, { sessionId: "session" }],
+    "session.create": [{ clientOperationId: "operation", sourceSessionIds: ["s1", "s2"] }, { sessionId: "session" }],
+    "session.previewContext": [{ sourceSessionIds: ["s1"] }, {
+      sources: [{ sessionId: "s1", title: "Source 1", activeFrom: timestamp, activeTo: timestamp, turns: 3, omittedTurns: 0, running: false, derived: false, empty: false }],
+      packedChars: 1200, estimatedTokens: 400, budgetTokens: 40000, overBudget: false,
+    }],
+    "session.context": [{ sessionId: "session" }, {
+      derivation: { text: "<prior_sessions>...</prior_sessions>", sources: [{ sessionId: "s1", title: "Source 1", deleted: false }] },
+    }],
     "session.list": [{}, { items: [] }],
     "session.rename": [{ sessionId: "session", title: "Renamed" }, {
       session: { sessionId: "session", title: "Renamed", createdAt: timestamp, updatedAt: timestamp },
@@ -72,6 +79,11 @@ test("every public method has matching parameter and result validation", () => {
 test("requests reject unsupported content, extra keys, invalid decisions, and invalid version", () => {
   for (const input of [
     request("session.create", {}),
+    request("session.create", { clientOperationId: "c", sourceSessionIds: [] }),
+    request("session.create", { clientOperationId: "c", sourceSessionIds: ["dup", "dup"] }),
+    request("session.create", { clientOperationId: "c", sourceSessionIds: Array.from({ length: 21 }, (_, i) => `s${i}`) }),
+    request("session.previewContext", { sourceSessionIds: [] }),
+    request("session.context", { sessionId: "" }),
     request("provider.save", { providerId: "constructor", apiKey: "secret" }),
     request("provider.save", { providerId: "custom", baseUrl: "file:///tmp/private" }),
     request("provider.save", { providerId: "custom", baseUrl: "https://user:secret@example.com/v1" }),

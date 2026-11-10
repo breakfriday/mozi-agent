@@ -1,5 +1,5 @@
 import { AGENT_MAX_MESSAGE_BYTES, isApiResultFor, buildUsageMonitor, TOOL_OUTCOMES } from "../../../../shared/agent";
-import type { EventPayload, ModelCallView, ModelSelection, ParamsOf, ResultOf, RunView, SessionSnapshot, ToolOutcome, ToolView } from "../../../../shared/agent";
+import type { DerivedSourceView, EventPayload, ModelCallView, ModelSelection, ParamsOf, ResultOf, RunView, SessionSnapshot, ToolOutcome, ToolView } from "../../../../shared/agent";
 import { createAgentLogger } from "../../../../shared/agent/logging";
 import type { MetadataStore } from "../storage/metadata-store";
 import type { AgentRuntime } from "../runtime/agent-runtime";
@@ -8,10 +8,37 @@ import type { MessageLink, SessionMetadata } from "../storage/metadata";
 import type { AcceptedRunChange, CompletedMessageChange, FinishedRunChange, MessageDelta, SessionProjectionSeed, StartedMessageChange } from "./types/session-projection";
 import { SessionProjection } from "./session-projection";
 import { projectHistory } from "./history-projection";
+import { computeBudgetTokens, packSessionsContext, type PackedContext, type PackSource } from "./session-context-packer";
 import type { AgentEventPublisher } from "../events/event-publisher";
 import type { ModelService } from "../models/model-service";
 import { failure } from "../errors";
 import { EMPTY_SESSION_TITLE } from "./session-title";
+
+const PRIOR_SESSIONS_CUSTOM_TYPE = "mozi.prior-sessions";
+const SOURCE_READ_CONCURRENCY = 4;
+
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await worker(items[current]!, current);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+function sameStringArray(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((val, idx) => val === right[idx]);
+}
 
 const log = createAgentLogger("agent-service");
 const now = () => new Date().toISOString();
@@ -63,6 +90,10 @@ export class SessionService {
       this.assertExists(sessionId);
       const { seed, confirmedLinks } = projectHistory(metadata, this.repository.readSession(sessionId), history);
       if (this.runtime.readUsage) seed.snapshot.usage = buildUsageMonitor(await this.runtime.readUsage(metadata.descriptor));
+      if (this.runtime.readDerivation) {
+        const derivation = await this.runtime.readDerivation(metadata.descriptor);
+        if (derivation) seed.snapshot.derivedFrom = this.resolveDerivedFrom(derivation.details.sources);
+      }
       this.control.assertAvailable();
       this.assertExists(sessionId);
       // A rename/model update may have completed while usage was loading.
@@ -78,28 +109,164 @@ export class SessionService {
     try { return await job; } finally { this.loading.delete(sessionId); }
   }
 
-  create(input: ParamsOf<"session.create">): Promise<{ sessionId: string }> {
+  private resolveDerivedFrom(sources: readonly { sessionId: string; title: string }[]): DerivedSourceView[] {
+    return sources.map((source) => {
+      const live = this.catalog.get(source.sessionId);
+      return {
+        sessionId: source.sessionId,
+        title: live ? live.session.title : source.title,
+        deleted: !live,
+      };
+    });
+  }
+
+  private validateSourceSessionIds(sourceSessionIds: readonly string[]): string[] {
+    if (!Array.isArray(sourceSessionIds)
+      || sourceSessionIds.length < 1
+      || sourceSessionIds.length > 20
+      || new Set(sourceSessionIds).size !== sourceSessionIds.length
+      || sourceSessionIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw failure("INVALID_ARGUMENT", "前置会话需要 1–20 个不重复的会话 ID。");
+    }
+    for (const id of sourceSessionIds) {
+      if (!this.catalog.has(id)) throw failure("SESSION_NOT_FOUND", "所选前置会话不存在。");
+    }
+    return [...sourceSessionIds];
+  }
+
+  private async collectPackSources(sourceSessionIds: readonly string[], model?: ModelSelection): Promise<PackedContext> {
+    const validIds = this.validateSourceSessionIds(sourceSessionIds);
+    const activeSessionIds = new Set(this.repository.unfinishedRuns().map((run) => run.sessionId));
+    const sources = await mapConcurrent(validIds, SOURCE_READ_CONCURRENCY, async (id): Promise<PackSource> => {
+      this.control.assertAvailable();
+      const metadata = this.catalog.get(id);
+      if (!metadata) throw failure("SESSION_NOT_FOUND", "所选前置会话不存在。");
+      const [messages, derivation] = await Promise.all([
+        this.runtime.readHistory(metadata.descriptor),
+        this.runtime.readDerivation ? this.runtime.readDerivation(metadata.descriptor) : Promise.resolve(undefined),
+      ]);
+      this.control.assertAvailable();
+      const latest = this.catalog.get(id);
+      if (!latest) throw failure("SESSION_NOT_FOUND", "所选前置会话不存在。");
+      return {
+        sessionId: id,
+        title: latest.session.title,
+        cwd: latest.descriptor.cwd,
+        running: activeSessionIds.has(id),
+        derived: !!derivation,
+        ...(derivation ? { derivedCount: derivation.details.sources.length } : {}),
+        messages,
+      };
+    });
+    const contextWindow = await this.models.contextWindow(model);
+    this.control.assertAvailable();
+    const budgetTokens = computeBudgetTokens(contextWindow);
+    return packSessionsContext(sources, { budgetTokens });
+  }
+
+  async previewContext(input: ParamsOf<"session.previewContext">): Promise<ResultOf<"session.previewContext">> {
+    this.control.assertAvailable();
+    const packed = await this.collectPackSources(input.sourceSessionIds, input.model);
+    this.control.assertAvailable();
+    return structuredClone({
+      sources: packed.sources,
+      packedChars: packed.packedChars,
+      estimatedTokens: packed.estimatedTokens,
+      budgetTokens: packed.budgetTokens,
+      overBudget: packed.overBudget,
+    });
+  }
+
+  async context(input: ParamsOf<"session.context">): Promise<ResultOf<"session.context">> {
+    this.control.assertAvailable();
+    this.assertExists(input.sessionId);
+    const metadata = this.catalog.get(input.sessionId)!;
+    const derivation = this.runtime.readDerivation
+      ? await this.runtime.readDerivation(metadata.descriptor)
+      : undefined;
+    this.control.assertAvailable();
+    this.assertExists(input.sessionId);
+    if (!derivation) return {};
+    return structuredClone({
+      derivation: {
+        text: derivation.text,
+        sources: this.resolveDerivedFrom(derivation.details.sources),
+      },
+    });
+  }
+
+  async create(input: ParamsOf<"session.create">): Promise<{ sessionId: string }> {
+    this.control.assertAvailable();
     const title = input.title?.replace(/[\r\n]+/g, " ").trim() || EMPTY_SESSION_TITLE;
+    const requestedSources = input.sourceSessionIds ? this.validateSourceSessionIds(input.sourceSessionIds) : undefined;
+    const existingBeforeQueue = this.repository.findCreation(input.clientOperationId);
+    const packed = !existingBeforeQueue && requestedSources
+      ? await this.collectPackSources(requestedSources, input.model)
+      : undefined;
+    if (packed) {
+      if (packed.details.sources.length === 0 || !packed.text) {
+        throw failure("INVALID_ARGUMENT", "所选前置会话没有可用内容。");
+      }
+      if (packed.overBudget) {
+        throw failure("CAPACITY_EXCEEDED", "所选前置会话超出上下文预算，请减少会话数量。");
+      }
+    }
     const job = this.createQueue.then(async () => {
       this.control.assertAvailable();
       const existing = this.repository.findCreation(input.clientOperationId);
       if (existing) {
         this.assertExists(existing.sessionId);
+        const existingMeta = this.catalog.get(existing.sessionId)!;
+        const existingDerivation = this.runtime.readDerivation
+          ? await this.runtime.readDerivation(existingMeta.descriptor)
+          : undefined;
+        this.control.assertAvailable();
+        this.assertExists(existing.sessionId);
         if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId
           || existing.model?.thinkingLevel !== input.model?.thinkingLevel
           || existing.model?.webMode !== input.model?.webMode
-          || existing.model?.webSearch !== input.model?.webSearch || existing.model?.webExtractor !== input.model?.webExtractor) throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
+          || existing.model?.webSearch !== input.model?.webSearch || existing.model?.webExtractor !== input.model?.webExtractor
+          || !sameStringArray(existingDerivation?.details.sourceSessionIds, requestedSources)) {
+          throw failure("SUBMISSION_CONFLICT", "同一创建操作的内容发生变化。");
+        }
         return { sessionId: existing.sessionId };
+      }
+      let finalPacked = packed;
+      if (requestedSources) {
+        for (const id of requestedSources) this.assertExists(id);
+        if (!finalPacked) {
+          finalPacked = await this.collectPackSources(requestedSources, input.model);
+          if (finalPacked.details.sources.length === 0 || !finalPacked.text) {
+            throw failure("INVALID_ARGUMENT", "所选前置会话没有可用内容。");
+          }
+          if (finalPacked.overBudget) {
+            throw failure("CAPACITY_EXCEEDED", "所选前置会话超出上下文预算，请减少会话数量。");
+          }
+        }
       }
       const model = input.model ?? this.models.defaultSelection();
       if (model) await this.models.prepare(model);
       this.control.assertAvailable();
-      const descriptor = await this.runtime.createSession();
+      if (requestedSources) {
+        for (const id of requestedSources) this.assertExists(id);
+      }
+      const details = finalPacked && requestedSources
+        ? { ...finalPacked.details, sourceSessionIds: requestedSources }
+        : undefined;
+      const descriptor = finalPacked && details
+        ? await this.runtime.createSession({
+            initialContext: { customType: PRIOR_SESSIONS_CUSTOM_TYPE, text: finalPacked.text, details },
+          })
+        : await this.runtime.createSession();
       if (input.title?.trim()) this.runtime.setSessionName(descriptor, title);
+      const derivedFrom = details ? this.resolveDerivedFrom(details.sources) : undefined;
       const seed: SessionProjectionSeed = {
         messageLinks: [],
-        snapshot: { session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
-          lastSeq: 0, messages: [], runs: [], tools: [], approvals: [] },
+        snapshot: {
+          session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
+          ...(derivedFrom ? { derivedFrom } : {}),
+          lastSeq: 0, messages: [], runs: [], tools: [], approvals: [],
+        },
       };
       this.assertSnapshot(seed.snapshot);
       const metadata: SessionMetadata = { descriptor, session: seed.snapshot.session, titleSource: input.title?.trim() ? "explicit" : "automatic" };
@@ -215,6 +382,9 @@ export class SessionService {
     this.control.assertAvailable();
     this.assertExists(input.sessionId);
     const snapshot = state.toSnapshot();
+    if (snapshot.derivedFrom) {
+      snapshot.derivedFrom = this.resolveDerivedFrom(snapshot.derivedFrom);
+    }
     this.assertSnapshot(snapshot);
     return snapshot;
   }
