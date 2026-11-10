@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { dialog, ipcMain } from "electron";
+import process from "node:process";
+import { app, dialog, ipcMain } from "electron";
 import type { WindowService } from "../services/window.service";
 import { DEFAULT_PARTICLE_SETTINGS, type ParticleSettings, parseParticleProjection, PARTICLE_PROJECTION_CHANNEL } from "../../../../shared/particles";
 
@@ -13,10 +14,14 @@ type Dependencies = {
 function resolveNativeBinary(explicit?: string): string | undefined {
   const override = explicit ?? process.env.MOZI_PARTICLES_BIN;
   if (override) return fs.existsSync(override) ? override : undefined;
-  return [
-    path.resolve(__dirname, "../../../mozi-particles-rs/target/release/mozi-particles"),
-    path.resolve(__dirname, "../../../mozi-particles-rs/target/debug/mozi-particles"),
-  ].find(candidate => fs.existsSync(candidate));
+  const binName = process.platform === "win32" ? "mozi-particles.exe" : "mozi-particles";
+  const candidates = app?.isPackaged
+    ? [path.join(process.resourcesPath, binName)]
+    : [
+        path.resolve(__dirname, "../../../mozi-particles-rs/target/release", binName),
+        path.resolve(__dirname, "../../../mozi-particles-rs/target/debug", binName),
+      ];
+  return candidates.find(candidate => fs.existsSync(candidate));
 }
 
 /** Owns the native renderer process and its renderer projection inlet. */

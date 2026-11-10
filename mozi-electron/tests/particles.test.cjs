@@ -64,6 +64,29 @@ test("missing native binary reports failure without a fallback", () => {
   assert.equal(s.errors.length, 1);
 });
 
+test("packaged app resolves native binary from process.resourcesPath", () => {
+  const spawned = [];
+  const ipcMain = new EventEmitter();
+  const expectedBin = path.join("/packaged/resources", "mozi-particles");
+  const load = createLoader({
+    electron: { app: { isPackaged: true }, ipcMain, dialog: { showErrorBox: () => {} } },
+    "node:process": { env: {}, platform: "linux", resourcesPath: "/packaged/resources" },
+    "node:fs": { existsSync: (candidate) => candidate === expectedBin },
+    "node:child_process": { spawn: (bin) => {
+      spawned.push(bin);
+      const child = new EventEmitter();
+      child.stdin = Object.assign(new EventEmitter(), { write: () => {} });
+      child.kill = () => {};
+      return child;
+    } },
+  });
+  const { installParticleSidecar } = load(path.resolve(__dirname, "../src/main/particles/index.ts"));
+  const controller = installParticleSidecar({ windows: { getWindowForWebContents: () => undefined } });
+  assert.equal(controller.open(), true);
+  assert.deepEqual(spawned, [expectedBin]);
+  controller.dispose();
+});
+
 test("spawn failure and native exit allow retry", () => {
   const s = setup();
   s.controller.open();

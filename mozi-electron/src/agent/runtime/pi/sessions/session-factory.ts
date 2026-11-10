@@ -40,7 +40,7 @@ export class PiSessionFactory {
     const piDir = path.join(this.config.dataDir, "providers");
     const modelRuntime = binding.runtime;
     const model = binding.model;
-    const settings = SettingsManager.inMemory({});
+    const settings = SettingsManager.inMemory({ cacheWarming: "off" });
     const browser =
       (binding?.webMode ?? (this.browser ? "browser" : "provider")) ===
       "browser"

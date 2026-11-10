@@ -1,8 +1,10 @@
 {
   "name": "mozi-electron",
   "productName": "mozi-electron",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DualElectron desktop shell",
+  "author": "breakhappy",
+  "license": "UNLICENSED",
   "main": ".vite/build/main.js",
   "private": true,
   "type": "commonjs",
@@ -28,7 +30,7 @@
   },
   "dependencies": {
     "@aiwayds/pi-bailian-token-plan": "1.1.2",
-    "@earendil-works/pi-coding-agent": "1.0.3",
+    "@earendil-works/pi-coding-agent": "1.5.1",
     "electron-squirrel-startup": "^1.0.1",
     "pi-antigravity": "0.11.0"
   },
