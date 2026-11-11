@@ -27,6 +27,12 @@ export type CancelRunResult = {
 import type { ProviderAuthState, ProviderAuthEvent, ProviderCatalogEvent } from "./auth";
 
 export type MethodMap = {
+  "project.list": { params: Record<string, never>; result: { items: import("./models").ProjectSummary[] } };
+  "project.create": { params: { projectId: Id; name: string }; result: { project: import("./models").ProjectSummary } };
+  "project.rename": { params: { projectId: Id; name: string }; result: { project: import("./models").ProjectSummary } };
+  "project.delete": { params: { projectId: Id }; result: { projectId: Id } };
+  "session.move": { params: { sessionId: Id; projectId: Id | null }; result: { session: SessionSummary } };
+
   "provider.refreshModels": { params: { providerId: string }; result: ModelSettings };
   "provider.auth.start": { params: { providerId: string }; result: ProviderAuthState };
   "provider.auth.status": { params: { providerId: string }; result: ProviderAuthState };
@@ -45,7 +51,7 @@ export type MethodMap = {
     result: RuntimeNotice;
   };
   "session.create": {
-    params: { clientOperationId: Id; title?: string; model?: ModelSelection; sourceSessionIds?: Id[] };
+    params: { clientOperationId: Id; projectId?: Id | null; title?: string; model?: ModelSelection; sourceSessionIds?: Id[] };
     result: { sessionId: Id };
   };
   "session.previewContext": {

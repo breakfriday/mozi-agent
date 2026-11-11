@@ -144,7 +144,10 @@ const approvalView = object<ApprovalView>({
   status: oneOf(...APPROVAL_STATUSES),
   createdAt: date, resolvedAt: optional(date),
 });
-const sessionSummary = object<SessionSummary>({ activeRun: optional(object({ id, status: oneOf("accepted", "running", "waiting_approval", "cancelling") })), sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
+const nullableId: Guard<string | null> = (value): value is string | null => value === null || id(value);
+const projectName: Guard<string> = (value): value is string => string(value) && value.trim().length > 0 && value.length <= 100;
+const projectSummary = object<import("./models").ProjectSummary>({ id, name: projectName, createdAt: date, updatedAt: date });
+const sessionSummary = object<SessionSummary>({ projectId: optional(nullableId), activeRun: optional(object({ id, status: oneOf("accepted", "running", "waiting_approval", "cancelling") })), sessionId: id, title: string, createdAt: date, updatedAt: date, model: optional(isModelSelection) });
 const tokenFields = { input: sequence, output: sequence, cacheRead: sequence, cacheWrite: sequence,
   totalTokens: sequence, reasoning: optional(sequence) };
 const tokenUsage = object<TokenUsage>(tokenFields);
@@ -235,7 +238,12 @@ const paramsValidators = {
   "model.setDefault": object<ParamsOf<"model.setDefault">>({ model: isModelSelection }),
   "session.setModel": object<ParamsOf<"session.setModel">>({ sessionId: id, model: isModelSelection }),
   "runtime.getState": object<ParamsOf<"runtime.getState">>({}),
-  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, title: optional(string), model: optional(isModelSelection), sourceSessionIds: optional(sourceSessionIdsList) }),
+  "project.list": object<ParamsOf<"project.list">>({}),
+  "project.create": object<ParamsOf<"project.create">>({ projectId: id, name: projectName }),
+  "project.rename": object<ParamsOf<"project.rename">>({ projectId: id, name: projectName }),
+  "project.delete": object<ParamsOf<"project.delete">>({ projectId: id }),
+  "session.move": object<ParamsOf<"session.move">>({ sessionId: id, projectId: nullableId }),
+  "session.create": object<ParamsOf<"session.create">>({ clientOperationId: id, projectId: optional(nullableId), title: optional(string), model: optional(isModelSelection), sourceSessionIds: optional(sourceSessionIdsList) }),
   "session.previewContext": object<ParamsOf<"session.previewContext">>({ sourceSessionIds: sourceSessionIdsList, model: optional(isModelSelection) }),
   "session.context": object<ParamsOf<"session.context">>({ sessionId: id }),
   "session.list": object<ParamsOf<"session.list">>({
@@ -281,6 +289,11 @@ const resultValidators = {
   "model.setDefault": modelSettings,
   "session.setModel": object<ResultOf<"session.setModel">>({ session: sessionSummary }),
   "runtime.getState": isRuntimeNotice,
+  "project.list": object<ResultOf<"project.list">>({ items: array(projectSummary) }),
+  "project.create": object<ResultOf<"project.create">>({ project: projectSummary }),
+  "project.rename": object<ResultOf<"project.rename">>({ project: projectSummary }),
+  "project.delete": object<ResultOf<"project.delete">>({ projectId: id }),
+  "session.move": object<ResultOf<"session.move">>({ session: sessionSummary }),
   "session.create": object<ResultOf<"session.create">>({ sessionId: id }),
   "session.previewContext": object<ResultOf<"session.previewContext">>({
     sources: array(previewSourceStat),
@@ -344,6 +357,10 @@ export function responseMatchesRequest(request: AgentRequest, value: unknown): b
     case "run.cancel": return result.sessionId === request.params.sessionId && result.runId === request.params.runId;
     case "run.get": return result.sessionId === request.params.sessionId && result.id === request.params.runId;
     case "session.delete": return result.sessionId === request.params.sessionId;
+    case "project.create":
+    case "project.rename": return isRecord(result.project) && result.project.id === request.params.projectId;
+    case "project.delete": return result.projectId === request.params.projectId;
+    case "session.move": return isRecord(result.session) && result.session.sessionId === request.params.sessionId && result.session.projectId === request.params.projectId;
     case "session.setModel":
     case "session.rename":
     case "session.snapshot": return isRecord(result.session) && result.session.sessionId === request.params.sessionId;

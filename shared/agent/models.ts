@@ -98,7 +98,10 @@ export type ApprovalView = {
   resolvedAt?: string;
 };
 
+export type ProjectSummary = { id: Id; name: string; createdAt: string; updatedAt: string };
+
 export type SessionSummary = {
+  projectId?: Id | null;
   /** Live activity, derived from unfinished runs rather than persisted session metadata. */
   activeRun?: Pick<RunView, "id" | "status">;
   model?: ModelSelection;
