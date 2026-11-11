@@ -146,3 +146,45 @@ test('a provider that resolves after cancellation cannot persist a login', async
   f.manager.cancel('antigravity', login.loginId); release(); await tick();
   assert.equal(f.committed, 0); assert.equal(f.manager.status('antigravity').phase, 'cancelled');
 });
+
+test('OpenAI Sign in with ChatGPT persists a stable deviceId, validates 1455 callbacks and releases its port on cancel', async t => {
+  const { openaiPlugin } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/openai/index.ts'));
+  const { getOrCreateDeviceId } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/providers/openai/provider.ts'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mozi-openai-oauth-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const firstId = getOrCreateDeviceId(dir);
+  const secondId = getOrCreateDeviceId(dir);
+  assert.equal(firstId, secondId);
+  assert.equal(fs.statSync(path.join(dir, 'device.json')).mode & 0o777, 0o600);
+  assert.equal(
+    openaiPlugin.oauth.normalizeInput('http://localhost:1455/auth/callback?code=c&state=s&client_id=cid'),
+    'http://127.0.0.1:1455/auth/callback?code=c&state=s&client_id=cid',
+  );
+  assert.throws(() => openaiPlugin.oauth.normalizeInput('http://127.0.0.1:1455/auth/callback?code=c&state=s'), e => e.code === 'INVALID_ARGUMENT');
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const runtime = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, credentials: {
+    read: async () => undefined, list: async () => [], delete: async () => {},
+    modify: async (_id, fn) => fn(undefined),
+  } });
+  runtime.registerProvider('openai', openaiPlugin.createConfig({ cwd: dir, agentDir: dir, onInvalidGrant: () => {} }));
+  openaiPlugin.validateRuntime(runtime, { cwd: dir, agentDir: dir, onInvalidGrant: () => {} });
+  assert.ok(runtime.getModels('openai').some(m => m.id === 'gpt-6-sol'));
+  const controller = new AbortController(); let ready;
+  const opened = new Promise(resolve => { ready = resolve; });
+  const login = runtime.login('openai', 'oauth', {
+    signal: controller.signal,
+    notify: event => { if (event.type === 'auth_url') ready(event.url); },
+    prompt: async () => waitForAbort(controller.signal),
+  });
+  const outcome = login.then(() => 'unexpected', () => 'cancelled');
+  try {
+    const url = new URL(await opened);
+    assert.equal(url.origin, 'https://auth.openai.com');
+    assert.equal(url.pathname, '/api/accounts/authorize');
+    assert.equal(url.searchParams.get('ext_agent_host_id'), `urn:uuid:${firstId}`);
+    assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:1455/auth/callback');
+  } finally { controller.abort(); }
+  assert.equal(await outcome, 'cancelled');
+  await tick();
+  await assert.rejects(fetch('http://127.0.0.1:1455/auth/callback'));
+});

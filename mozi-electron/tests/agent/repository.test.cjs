@@ -30,13 +30,13 @@ for (const version of [1, 2]) test(`authorized development reset replaces v${ver
   const repository = new SqliteMetadataRepository(filename);
   assert.equal(repository.listSessions().length, 0); repository.close();
   const db = new DatabaseSync(filename);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 7);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
   assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name),
-    ['creations', 'deleted_creations', 'deleted_sessions', 'message_links', 'model_settings', 'runs', 'sessions']);
+    ['creations', 'deleted_creations', 'deleted_sessions', 'message_links', 'model_settings', 'projects', 'runs', 'sessions']);
   assert.equal(db.prepare('PRAGMA table_info(sessions)').all().some(column => ['record', 'last_seq', 'file_path'].includes(column.name)), false);
   db.close();
 });
-test('v7 reopens without resetting metadata; unknown versions are never discarded', t => {
+test('v8 reopens without resetting metadata; unknown versions are never discarded', t => {
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('create', metadata()); repository.close();
   const reopened = new SqliteMetadataRepository(filename);
@@ -111,7 +111,7 @@ test('v5 title migration preserves existing metadata and records title provenanc
   const original = new SqliteMetadataRepository(filename);
   original.create('operation', metadata()); original.close();
   const old = new DatabaseSync(filename);
-  old.exec('ALTER TABLE sessions DROP COLUMN title_source; PRAGMA user_version=5;'); old.close();
+  old.exec('DROP INDEX sessions_project_updated; ALTER TABLE sessions DROP COLUMN project_id; ALTER TABLE creations DROP COLUMN project_id; DROP TABLE projects; ALTER TABLE sessions DROP COLUMN title_source; PRAGMA user_version=5;'); old.close();
   const upgraded = new SqliteMetadataRepository(filename);
   assert.equal(upgraded.listSessions()[0].session.title, 'keep');
   assert.equal(upgraded.listSessions()[0].titleSource, undefined);
@@ -144,11 +144,54 @@ test('v6 upgrade preserves previously soft-deleted sessions without purging hist
   const filename = file(t), repository = new SqliteMetadataRepository(filename);
   repository.create('legacy', metadata()); repository.close();
   const old = new DatabaseSync(filename);
-  old.exec("DROP TABLE deleted_creations; DROP TABLE deleted_sessions; UPDATE sessions SET deleted_at='2026-01-01'; PRAGMA user_version=6;");
+  old.exec("DROP INDEX sessions_project_updated; ALTER TABLE sessions DROP COLUMN project_id; ALTER TABLE creations DROP COLUMN project_id; DROP TABLE projects; DROP TABLE deleted_creations; DROP TABLE deleted_sessions; UPDATE sessions SET deleted_at='2026-01-01'; PRAGMA user_version=6;");
   old.close();
   const migrated = new SqliteMetadataRepository(filename);
   assert.equal(migrated.listSessions().length, 0);
   assert.deepEqual(Array.from(migrated.deletedSessionIds()), ['s']);
   assert.equal(migrated.findCreation('legacy').sessionId, 's');
   migrated.close();
+});
+
+test('v7 project migration is incremental; ordinary saves cannot overwrite membership', t => {
+  const filename = file(t);
+  let repository = new SqliteMetadataRepository(filename);
+  repository.create('operation', metadata()); repository.close();
+  const old = new DatabaseSync(filename);
+  old.exec(`DROP INDEX sessions_project_updated; ALTER TABLE sessions DROP COLUMN project_id;
+    ALTER TABLE creations DROP COLUMN project_id; DROP TABLE projects; PRAGMA user_version=7;`);
+  old.close();
+  repository = new SqliteMetadataRepository(filename);
+  assert.equal(repository.listSessions()[0].session.projectId, null);
+  const project = { id: 'p', name: 'Project', createdAt: metadata().session.createdAt, updatedAt: metadata().session.updatedAt };
+  repository.saveProject(project);
+  repository.moveSession('s', 'p');
+  repository.saveSession({ ...metadata(), session: { ...metadata().session, title: 'Automatic title', projectId: null } });
+  assert.equal(repository.listSessions()[0].session.projectId, 'p');
+  assert.equal(repository.listSessions()[0].session.title, 'Automatic title');
+  assert.throws(() => repository.moveSession('s', 'missing'), /FOREIGN KEY/);
+  repository.close();
+  repository = new SqliteMetadataRepository(filename);
+  assert.equal(repository.listSessions()[0].session.projectId, 'p');
+  assert.equal(repository.listProjects()[0].name, 'Project');
+  repository.deleteProject('p');
+  assert.equal(repository.listSessions()[0].session.projectId, null);
+  assert.equal(repository.findCreation('operation').sessionId, 's');
+  assert.equal(repository.listSessions()[0].descriptor.cwd, '/tmp');
+  repository.close();
+});
+
+test('project creation membership is atomic and original creation intent survives moves/deletion', t => {
+  const repository = new SqliteMetadataRepository(file(t));
+  t.after(() => repository.close());
+  const project = { id: 'p', name: 'Project', createdAt: metadata().session.createdAt, updatedAt: metadata().session.updatedAt };
+  assert.throws(() => repository.create('failed', { ...metadata(), session: { ...metadata().session, projectId: 'missing' } }), /FOREIGN KEY/);
+  assert.equal(repository.listSessions().length, 0);
+  assert.equal(repository.findCreation('failed'), undefined);
+  repository.saveProject(project);
+  repository.create('operation', { ...metadata(), session: { ...metadata().session, projectId: 'p' } });
+  repository.moveSession('s', null);
+  repository.deleteProject('p');
+  assert.equal(repository.findCreation('operation').projectId, 'p');
+  assert.equal(repository.listSessions()[0].session.projectId, null);
 });

@@ -7,9 +7,14 @@ import {
   type ActionId,
 } from "@/config/action-config";
 import { Input } from "antd";
+import { useEffect, useEffectEvent, useRef } from "react";
+import type { ProjectNavigationEntry } from "./project-navigation";
+import { revealSelection } from "./session-navigation";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { SessionMenu } from "./SessionMenu";
-import { groupNames, type SessionListProps } from "./session-navigation";
+import type { ProjectSummary } from "../../../../../shared/agent";
+import { ProjectControls, MoveSessionButton } from "./ProjectControls";
+import { type SessionListProps } from "./session-navigation";
 import { SessionTitleHighlight } from "./SessionTitleHighlight";
 import styles from "./session-palette-list.module.css";
 
@@ -22,6 +27,8 @@ function formatTokenCount(tokens: number): string {
 }
 
 export function SessionPaletteList({
+  activePane, onPaneChange, onClose,
+  projects, groups, navigation, activeProjectKey, onSelectProject, onProjectsChanged, onNewProjectSession,
   items,
   query,
   setQuery,
@@ -46,15 +53,90 @@ export function SessionPaletteList({
   setSelected,
   onExecute,
 }: SessionListProps & {
+  activePane: "projects" | "sessions";
+  onPaneChange: (pane: "projects" | "sessions") => void;
+  onClose: () => void;
+  projects: ProjectSummary[];
+  groups: { id: number; name: string }[];
+  navigation: ProjectNavigationEntry[];
+  activeProjectKey: string;
+  onSelectProject: (key: string) => void;
+  onProjectsChanged: () => void;
+  onNewProjectSession: (id: string) => void;
+
   onExecute: (id: ActionId) => void;
   activeIndex: number;
   setSelected: (index: number) => void;
 }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const projectList = useRef<HTMLDivElement>(null);
+  const projectIndex = navigation.findIndex(p => p.key === activeProjectKey);
+  const activeProject = navigation[projectIndex];
+  useEffect(() => { revealSelection(projectList.current); }, [activeProjectKey, query]);
   const search = query.trim();
   const commandMode = search.startsWith(">");
   const commands = filterCommands(search);
   const count = commandMode ? commands.length : items.length;
   const onNew = () => onExecute("session.create");
+  const enterPane = (pane: "projects" | "sessions") => {
+    // Like Chat reading mode: release the input, never focus the destination list.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement) focused.blur();
+    onPaneChange(pane);
+  };
+  const handleNavigation = useEffectEvent((event: KeyboardEvent) => {
+    if (!active || event.defaultPrevented || event.isComposing) return;
+    const root = panel.current;
+    const dialog = root?.closest('[role="dialog"]');
+    if (!root || !dialog) return;
+    // Portalled edit dialogs and menus own their keys, even if their input blurs.
+    const overlays = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="menu"], [role="listbox"]');
+    if ([...overlays].some(el => el !== dialog && !root.contains(el) && el.getClientRects().length > 0)) return;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body && !dialog.contains(focused)) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+      event.preventDefault(); inputRef.current?.focus(); return;
+    }
+    if (event.key === "F6" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      enterPane(commandMode || activePane === "projects" ? "sessions" : "projects");
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    const isSearch = focused === inputRef.current?.input;
+    const isControl = focused instanceof HTMLElement && focused.matches('input, textarea, select, button, [contenteditable="true"], [role="combobox"]');
+    if (isSearch && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault(); enterPane("sessions"); return;
+    }
+    if (isControl) return;
+    const pane = commandMode ? "sessions" : activePane;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      if (!commandMode) enterPane(event.key === "ArrowLeft" ? "projects" : "sessions");
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      if (pane === "projects" && navigation.length)
+        onSelectProject(navigation[(projectIndex + direction + navigation.length) % navigation.length].key);
+      else if (pane === "sessions" && count) setSelected((activeIndex + direction + count) % count);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (pane === "projects") enterPane("sessions");
+      else if (commandMode) { if (commands[activeIndex]) onExecute(commands[activeIndex].action); }
+      else if (items[activeIndex]) switchTo(items[activeIndex].sessionId);
+    } else if (event.key === " " && pane === "sessions" && !commandMode) {
+      event.preventDefault(); if (items[activeIndex]) onToggleSelect?.(items[activeIndex].sessionId);
+    } else if (event.key === "Escape") {
+      event.preventDefault(); onClose();
+    }
+  });
+  useEffect(() => {
+    if (!active) return;
+    const listener = (event: KeyboardEvent) => handleNavigation(event);
+    document.addEventListener("keydown", listener);
+    return () => document.removeEventListener("keydown", listener);
+  }, [active]);
+
   const selectedSet = new Set(selectedIds);
   const allEmpty = Boolean(
     preview?.data &&
@@ -72,13 +154,13 @@ export function SessionPaletteList({
     !allEmpty &&
     !overBudget;
   return (
-    <div className={styles.panel} data-session-switcher>
+    <div ref={panel} className={styles.panel} data-session-switcher data-session-switcher-open={active || undefined} data-active-pane={activePane}>
       <div className={styles.searchBar}>
         <Input
           ref={inputRef}
           value={query}
           prefix={<SearchOutlined />}
-          placeholder="搜索会话，或输入 > 执行命令"
+          placeholder="搜索项目或会话，或输入 > 执行命令"
           aria-label="搜索会话标题"
           role="combobox"
           aria-expanded={active}
@@ -97,20 +179,7 @@ export function SessionPaletteList({
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
-              if (count)
-                setSelected(
-                  (activeIndex + (e.key === "ArrowDown" ? 1 : -1) + count) %
-                    count,
-                );
-            } else if (
-              e.key === " " &&
-              !commandMode &&
-              onToggleSelect &&
-              (e.ctrlKey || e.metaKey || e.shiftKey || !query)
-            ) {
-              e.preventDefault();
-              if (items[activeIndex])
-                onToggleSelect(items[activeIndex].sessionId);
+              enterPane("sessions");
             } else if (e.key === "Enter") {
               e.preventDefault();
               if (commandMode) {
@@ -138,11 +207,42 @@ export function SessionPaletteList({
           {error}
         </p>
       )}
+      <div className={commandMode ? styles.commandLayout : styles.columns}>
+        {!commandMode && <aside className={styles.projectPane} aria-label="项目导航">
+          <div className={styles.paneHeading}>项目</div>
+          <div ref={projectList} className={styles.projectList} tabIndex={0} role="listbox" aria-label="项目列表"
+            aria-activedescendant={projectIndex >= 0 ? `${listId}-project-${projectIndex}` : undefined}
+            data-active={activePane === "projects" || undefined}
+            onFocus={() => onPaneChange("projects")}>
+            {navigation.map((entry, index) => <div key={entry.key} id={`${listId}-project-${index}`} role="option"
+              aria-selected={entry.key === activeProjectKey} className={styles.projectOption}
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => { onSelectProject(entry.key); enterPane("projects"); }}>
+              <span className={styles.projectName} title={entry.name}><SessionTitleHighlight text={entry.name} query={search} /></span>
+              {entry.sessions.some(s => sessionActivity[s.sessionId]) && <span className={styles.running} aria-label="项目内有正在运行的会话">●</span>}
+              <span className={styles.count}>{entry.sessions.length}</span>
+            </div>)}
+            {!navigation.length && <p className={styles.status}>没有匹配的项目或会话</p>}
+          </div>
+          <div className={styles.paneFooter}><ProjectControls disabled={disabled} onChanged={onProjectsChanged} /></div>
+        </aside>}
+        <section className={styles.sessionPane} aria-label="会话导航">
+          {!commandMode && <div className={styles.paneHeading}>
+            <span className={styles.projectName}>{activeProject?.name ?? "无匹配项目"}</span>
+            {activeProject && (activeProject.project
+              ? <ProjectControls project={activeProject.project} disabled={disabled} onChanged={onProjectsChanged}
+                  onNew={() => onNewProjectSession(activeProjectKey)} />
+              : <button type="button" className={styles.groupSelectBtn} disabled={disabled} onClick={() => onNewProjectSession("")}>＋ 新建会话</button>)}
+          </div>}
       <div
         ref={resultsRef}
         className={styles.results}
         id={`${listId}`}
         role="listbox"
+        tabIndex={0}
+        aria-activedescendant={count ? `${listId}-${commandMode ? "command-" : ""}${activeIndex}` : undefined}
+        data-active={activePane === "sessions" || undefined}
+        onFocus={() => onPaneChange("sessions")}
         aria-label={commandMode ? "匹配的命令" : "匹配的会话"}
         aria-busy={loading}
       >
@@ -170,7 +270,7 @@ export function SessionPaletteList({
             </div>
           ))}
         {!commandMode &&
-          groupNames.map((name, group) => {
+          groups.map(({ name, id: group }) => {
             const grouped = items
               .map((session, index) => ({ session, index }))
               .filter((item) => item.session.group === group);
@@ -184,11 +284,10 @@ export function SessionPaletteList({
                 <div
                   className={styles.group}
                   data-session-group-heading
-                  aria-hidden="true"
                 >
                   <span>{name}</span>
                   <span className={styles.count}>{grouped.length}</span>
-                  {onSelectGroup && (
+                  {onSelectGroup && grouped.length > 0 && (
                     <button
                       type="button"
                       className={styles.groupSelectBtn}
@@ -263,6 +362,8 @@ export function SessionPaletteList({
                       </time>
                     </div>
                     <div className={styles.actions}>
+                      <MoveSessionButton sessionId={session.sessionId} projectId={session.projectId} projects={projects}
+                        disabled={disabled} onChanged={onProjectsChanged} />
                       <SessionMenu
                         className={styles.menuTrigger}
                         title={session.title || "新会话"}
@@ -285,7 +386,6 @@ export function SessionPaletteList({
               </div>
             );
           })}
-      </div>
       {!count && (
         <p className={styles.empty} role="status">
           {commandMode
@@ -295,18 +395,21 @@ export function SessionPaletteList({
               : search
                 ? "没有匹配的会话"
                 : "暂无历史会话"}
-          {!commandMode && !loading && (
+          {!commandMode && !loading && activeProject && (
             <button
               type="button"
               className={styles.emptyNew}
               disabled={disabled}
-              onClick={onNew}
+              onClick={() => onNewProjectSession(activeProjectKey)}
             >
               {getAction("session.create").desc}
             </button>
           )}
         </p>
       )}
+      </div>
+        </section>
+      </div>
       {!commandMode && selectedIds.length > 0 && (
         <div className={styles.selectionBar} role="status" aria-live="polite">
           <div className={styles.selectionSummary}>
@@ -348,7 +451,7 @@ export function SessionPaletteList({
         </div>
       )}
       <div className={styles.footer}>
-        <span>↑ ↓ 选择 · 空格 勾选 · ↵ 确认 · Esc 关闭{!commandMode && ` · ${formatKeymap(getAction("session.delete").keymap)} 删除`}</span>
+        <span>↑ ↓ 选择 · ← → 切栏 · 空格 勾选 · ↵ 打开 · Ctrl/⌘ F 搜索 · Esc 关闭{!commandMode && ` · ${formatKeymap(getAction("session.delete").keymap)} 删除`}</span>
         <span>
           {disabled
             ? "连接就绪且当前操作完成后可切换"

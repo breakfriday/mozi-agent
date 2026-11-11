@@ -38,7 +38,14 @@ export interface ProviderPlugin {
     onInvalidGrant(): void;
   }): ProviderConfig | Promise<ProviderConfig>;
   normalizeSettings?(settings: SavedProvider): SavedProvider;
-  validateRuntime?(runtime: ModelRuntime): void;
+  validateRuntime?(
+    runtime: ModelRuntime,
+    context: {
+      cwd: string;
+      agentDir: string;
+      onInvalidGrant(): void;
+    },
+  ): void;
   supportsWebTools?(model: ProviderModel): boolean;
   supportsWebExtractor?(model: ProviderModel): boolean;
   configureAgent?(agent: AgentSession["agent"], visualBrowser: boolean): void;

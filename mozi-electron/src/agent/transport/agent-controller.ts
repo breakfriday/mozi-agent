@@ -20,6 +20,11 @@ export class AgentController {
       case "provider.remove": return models.remove(request.params.providerId);
       case "model.setDefault": return models.setDefault(request.params.model);
       case "session.setModel": return sessions.setModel(request.params);
+      case "project.list": return sessions.listProjects();
+      case "project.create": return sessions.saveProject(request.params, true);
+      case "project.rename": return sessions.saveProject(request.params, false);
+      case "project.delete": return sessions.deleteProject(request.params);
+      case "session.move": return sessions.move(request.params);
       case "session.create": return sessions.create(request.params);
       case "session.previewContext": return sessions.previewContext(request.params);
       case "session.context": return sessions.context(request.params);

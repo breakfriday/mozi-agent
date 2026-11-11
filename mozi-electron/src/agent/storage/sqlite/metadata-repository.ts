@@ -27,7 +27,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     try {
       this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7) {
+      if (version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8) {
         if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported Agent database version.");
         this.db.exec("PRAGMA foreign_keys=OFF;");
         // Authorized development reset; native session files are never deleted.
@@ -40,10 +40,10 @@ export class SqliteMetadataRepository implements MetadataStore {
           this.db.exec("PRAGMA user_version=3;");
         });
       }
-      if (version !== 4 && version !== 5 && version !== 6 && version !== 7) this.transaction(() => {
+      if (version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN deleted_at TEXT; PRAGMA user_version=4;");
       });
-      if (version !== 5 && version !== 6 && version !== 7) this.transaction(() => {
+      if (version !== 5 && version !== 6 && version !== 7 && version !== 8) this.transaction(() => {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model TEXT;
           ALTER TABLE runs ADD COLUMN model_config_version TEXT;
@@ -51,13 +51,21 @@ export class SqliteMetadataRepository implements MetadataStore {
           CREATE TABLE model_settings (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL);
           PRAGMA user_version=5;`);
       });
-      if (version !== 6 && version !== 7) this.transaction(() => {
+      if (version !== 6 && version !== 7 && version !== 8) this.transaction(() => {
         this.db.exec("ALTER TABLE sessions ADD COLUMN title_source TEXT CHECK(title_source IN ('automatic', 'explicit')); PRAGMA user_version=6;");
       });
-      if (version !== 7) this.transaction(() => {
+      if (version !== 7 && version !== 8) this.transaction(() => {
         this.db.exec(`CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS deleted_creations (operation_id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
           PRAGMA user_version=7;`);
+      });
+      if (version !== 8) this.transaction(() => {
+        this.db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+          -- Original creation intent must survive project deletion for retry checks.
+          ALTER TABLE creations ADD COLUMN project_id TEXT;
+          CREATE INDEX sessions_project_updated ON sessions(project_id, updated_at DESC, id);
+          PRAGMA user_version=8;`);
       });
       this.db.exec("PRAGMA foreign_keys=ON;");
     } catch (error) { this.db.close(); throw error; }
@@ -72,6 +80,20 @@ export class SqliteMetadataRepository implements MetadataStore {
     try { const result = work(); this.db.exec("COMMIT"); return result; }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
+  listProjects(): import("../../../../../shared/agent").ProjectSummary[] {
+    return this.statement("SELECT * FROM projects ORDER BY created_at, id").all().map(row => ({
+      id: String(row.id), name: String(row.name), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    }));
+  }
+  saveProject(project: import("../../../../../shared/agent").ProjectSummary): void {
+    this.statement(`INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at`)
+      .run(project.id, project.name, project.createdAt, project.updatedAt);
+  }
+  deleteProject(projectId: string): void { this.statement("DELETE FROM projects WHERE id=?").run(projectId); }
+  moveSession(sessionId: string, projectId: string | null): void {
+    this.statement("UPDATE sessions SET project_id=? WHERE id=?").run(projectId, sessionId);
+  }
   getDefaultModel(): ModelSelection | undefined {
     const row = this.statement("SELECT selection FROM model_settings WHERE id=1").get();
     return row ? parse<ModelSelection>(row.selection) : undefined;
@@ -83,7 +105,7 @@ export class SqliteMetadataRepository implements MetadataStore {
     return this.statement("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY created_at, id").all().map(row => ({
       ...(row.title_source ? { titleSource: row.title_source as SessionMetadata["titleSource"] } : {}),
       descriptor: { sessionId: String(row.id), engine: String(row.engine), locator: String(row.locator), cwd: String(row.cwd) },
-      session: { ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}), sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
+      session: { projectId: row.project_id === null ? null : String(row.project_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}), sessionId: String(row.id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) },
     }));
   }
   deletedSessionIds(): string[] {
@@ -101,6 +123,8 @@ export class SqliteMetadataRepository implements MetadataStore {
       this.statement("DELETE FROM sessions WHERE id=?").run(sessionId);
     });
   }
+  // Deliberately exclude project_id: runtime/title saves may carry stale metadata.
+  // Membership is owned by moveSession, creation transactions and project deletion.
   saveSession({ descriptor, session, titleSource }: SessionMetadata): void {
     this.statement(`INSERT INTO sessions (id, engine, locator, cwd, title, created_at, updated_at, model, title_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET engine=excluded.engine, locator=excluded.locator, cwd=excluded.cwd,
@@ -126,18 +150,19 @@ export class SqliteMetadataRepository implements MetadataStore {
     const row = this.statement("SELECT * FROM runs WHERE session_id=? AND id=?").get(sessionId, runId);
     return row ? runView(row) : undefined;
   }
-  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection } | undefined {
-    const row = this.statement("SELECT title, session_id, model FROM creations WHERE operation_id=?").get(operationId);
+  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection; projectId?: string | null } | undefined {
+    const row = this.statement("SELECT title, session_id, model, project_id FROM creations WHERE operation_id=?").get(operationId);
     if (!row) {
       const deleted = this.statement("SELECT session_id FROM deleted_creations WHERE operation_id=?").get(operationId);
       return deleted ? { title: "", sessionId: String(deleted.session_id) } : undefined;
     }
-    return { title: String(row.title), sessionId: String(row.session_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}) };
+    return { title: String(row.title), sessionId: String(row.session_id), projectId: row.project_id === null ? null : String(row.project_id), ...(row.model ? { model: parse<ModelSelection>(row.model) } : {}) };
   }
   create(operationId: string, metadata: SessionMetadata, model?: ModelSelection): void {
     this.transaction(() => {
       this.saveSession(metadata);
-      this.statement("INSERT INTO creations (operation_id, title, session_id, model) VALUES (?, ?, ?, ?)").run(operationId, metadata.session.title, metadata.descriptor.sessionId, model ? JSON.stringify(model) : null);
+      this.moveSession(metadata.session.sessionId, metadata.session.projectId ?? null);
+      this.statement("INSERT INTO creations (operation_id, title, session_id, model, project_id) VALUES (?, ?, ?, ?, ?)").run(operationId, metadata.session.title, metadata.descriptor.sessionId, model ? JSON.stringify(model) : null, metadata.session.projectId ?? null);
     });
   }
   findSubmission(sessionId: string, clientMessageId: string): SubmissionRecord | undefined {

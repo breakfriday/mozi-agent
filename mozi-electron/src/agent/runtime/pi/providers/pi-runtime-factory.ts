@@ -150,6 +150,12 @@ export class PiRuntimeFactory implements RuntimeFactory {
       });
     }
     enforceOwnedAuth(runtime);
+    for (const plugin of registry.all())
+      plugin.validateRuntime?.(runtime, {
+        cwd: paths.cwd,
+        agentDir: path.join(paths.dataDir, "providers"),
+        onInvalidGrant: () => context.onInvalidGrant(plugin.id),
+      });
     for (const [id, credential] of Object.entries(credentials)) {
       if (
         credential.type === "api_key" &&
@@ -158,7 +164,6 @@ export class PiRuntimeFactory implements RuntimeFactory {
       )
         await runtime.setRuntimeApiKey(id, credential.key);
     }
-    for (const plugin of registry.all()) plugin.validateRuntime?.(runtime);
     await runtime.refresh({ allowNetwork: false });
     return {
       runtime,

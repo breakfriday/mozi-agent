@@ -195,6 +195,54 @@ export class SessionService {
     });
   }
 
+  listProjects(): ResultOf<"project.list"> {
+    this.control.assertAvailable();
+    return { items: this.repository.listProjects() };
+  }
+  private assertProject(projectId: string | null | undefined): void {
+    if (projectId && !this.repository.listProjects().some(p => p.id === projectId))
+      throw failure("INVALID_ARGUMENT", "项目不存在或已删除。");
+  }
+  saveProject(input: ParamsOf<"project.create">, create: boolean): ResultOf<"project.create"> {
+    this.control.assertAvailable();
+    const name = input.name.replace(/[\r\n]+/g, " ").trim();
+    if (!name || name.length > 100) throw failure("INVALID_ARGUMENT", "项目名称需要 1–100 个字符。");
+    const projects = this.repository.listProjects();
+    const existing = projects.find(p => p.id === input.projectId);
+    if (!create && !existing) throw failure("INVALID_ARGUMENT", "项目不存在。");
+    if (create && existing) {
+      if (existing.name !== name) throw failure("SUBMISSION_CONFLICT", "项目创建请求发生变化。");
+      return { project: existing };
+    }
+    if (projects.some(p => p.id !== input.projectId && p.name === name))
+      throw failure("INVALID_ARGUMENT", "已存在同名项目。");
+    const at = now();
+    const project = { id: input.projectId, name, createdAt: existing?.createdAt ?? at, updatedAt: at };
+    this.control.write(() => this.repository.saveProject(project));
+    return { project };
+  }
+  private commitProject(sessionId: string, projectId: string | null): void {
+    const metadata = this.catalog.get(sessionId)!;
+    const session = { ...metadata.session, projectId };
+    this.sessions.get(sessionId)?.prepareSessionUpdated(session).commit();
+    metadata.session = session;
+  }
+  deleteProject(input: ParamsOf<"project.delete">): ResultOf<"project.delete"> {
+    this.control.assertAvailable();
+    this.control.write(() => this.repository.deleteProject(input.projectId));
+    for (const [id, metadata] of this.catalog)
+      if (metadata.session.projectId === input.projectId) this.commitProject(id, null);
+    return input;
+  }
+  move(input: ParamsOf<"session.move">): ResultOf<"session.move"> {
+    this.control.assertAvailable();
+    this.assertExists(input.sessionId);
+    this.assertProject(input.projectId);
+    this.control.write(() => this.repository.moveSession(input.sessionId, input.projectId));
+    this.commitProject(input.sessionId, input.projectId);
+    return { session: structuredClone(this.catalog.get(input.sessionId)!.session) };
+  }
+
   async create(input: ParamsOf<"session.create">): Promise<{ sessionId: string }> {
     this.control.assertAvailable();
     const title = input.title?.replace(/[\r\n]+/g, " ").trim() || EMPTY_SESSION_TITLE;
@@ -222,7 +270,7 @@ export class SessionService {
           : undefined;
         this.control.assertAvailable();
         this.assertExists(existing.sessionId);
-        if (existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId
+        if ((existing.projectId ?? null) !== (input.projectId ?? null) || existing.title !== title || existing.model?.providerId !== input.model?.providerId || existing.model?.modelId !== input.model?.modelId
           || existing.model?.thinkingLevel !== input.model?.thinkingLevel
           || existing.model?.webMode !== input.model?.webMode
           || existing.model?.webSearch !== input.model?.webSearch || existing.model?.webExtractor !== input.model?.webExtractor
@@ -244,6 +292,7 @@ export class SessionService {
           }
         }
       }
+      this.assertProject(input.projectId);
       const model = input.model ?? this.models.defaultSelection();
       if (model) await this.models.prepare(model);
       this.control.assertAvailable();
@@ -258,12 +307,16 @@ export class SessionService {
             initialContext: { customType: PRIOR_SESSIONS_CUSTOM_TYPE, text: finalPacked.text, details },
           })
         : await this.runtime.createSession();
+      // Creation may await the native runtime while another window deletes the project.
+      // Do not leave an orphan native session on this expected validation failure.
+      try { this.assertProject(input.projectId); }
+      catch (error) { this.runtime.deleteSession(descriptor); throw error; }
       if (input.title?.trim()) this.runtime.setSessionName(descriptor, title);
       const derivedFrom = details ? this.resolveDerivedFrom(details.sources) : undefined;
       const seed: SessionProjectionSeed = {
         messageLinks: [],
         snapshot: {
-          session: { sessionId: descriptor.sessionId, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
+          session: { sessionId: descriptor.sessionId, projectId: input.projectId ?? null, title, ...(model ? { model } : {}), createdAt: now(), updatedAt: now() },
           ...(derivedFrom ? { derivedFrom } : {}),
           lastSeq: 0, messages: [], runs: [], tools: [], approvals: [],
         },

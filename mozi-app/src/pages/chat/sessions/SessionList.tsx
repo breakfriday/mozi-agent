@@ -9,6 +9,7 @@ import styles from "./session-list.module.css";
 function SessionItem() {
   const aui = useAui();
   const id = useAuiState((s) => s.threadListItem.id);
+  const projectId = useAgentStore(s => s.sessions.find(item => item.sessionId === id)?.projectId);
   const title = useAuiState((s) => s.threadListItem.title || "新会话");
   const disabled = useAgentStore((s) => s.sessionOperation !== null || s.inFlightSubmissionId !== null || s.runtime.state !== "ready");
   const running = useAgentStore((s) => s.runtime.state === "ready" && !!s.sessionActivity[id]);
@@ -32,6 +33,7 @@ function SessionItem() {
     }
   }
 
+  if (projectId) return null;
   return (
     <ThreadListItemPrimitive.Root className={styles.item}>
       <ThreadListItemPrimitive.Trigger className={styles.trigger} disabled={disabled} title={title}>

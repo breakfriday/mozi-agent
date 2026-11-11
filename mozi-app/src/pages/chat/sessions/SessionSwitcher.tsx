@@ -20,6 +20,8 @@ import {
   revealSelection,
   type ContextPreviewState,
 } from "./session-navigation";
+import type { ProjectSummary } from "../../../../../shared/agent";
+import { buildProjectNavigation } from "./project-navigation";
 import { SessionPaletteList } from "./SessionPaletteList";
 import styles from "./session-switcher.module.css";
 
@@ -29,8 +31,28 @@ export function SessionSwitcher({
   getContainer: () => HTMLElement;
 }) {
   const [open, setOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsError, setProjectsError] = useState("");
+  const [projectRevision, setProjectRevision] = useState(0);
+  const refreshProjects = () => setProjectRevision(v => v + 1);
+  const runtimeReady = useAgentStore(s => s.runtime.state === "ready");
+  const [activePane, setActivePane] = useState<"projects" | "sessions">("sessions");
+  const [projectKey, setProjectKey] = useState("");
+  const [rememberedSessions, setRememberedSessions] = useState<Record<string, string>>({});
+  const beforeSearch = useRef<{ projectKey: string; rememberedSessions: Record<string, string> } | null>(null);
+  useEffect(() => {
+    if (!runtimeReady) return;
+    let active = true;
+    let revision = 0;
+    const refresh = () => { const current = ++revision; void bridgeApi.agent.listProjects().then(result => {
+      if (active && current === revision) { setProjects(result.items); setProjectsError(""); }
+    }).catch(e => { if (active && current === revision) setProjectsError(e instanceof Error ? e.message : "项目加载失败"); }); };
+    refresh();
+    const unsubscribe = bridgeApi.agent.onSessionsChanged(refresh);
+    return () => { active = false; unsubscribe(); };
+  }, [runtimeReady, open, projectRevision]);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(0);
+  const [commandIndex, setCommandIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewResult, setPreviewResult] = useState<{
     key: string;
@@ -67,39 +89,33 @@ export function SessionSwitcher({
       s.runtime.state !== "ready",
   );
   const search = query.trim();
-  const now = new Date();
-  const sortedSessions = sessions
-    .map((s) => ({ ...s, group: dateGroup(s.updatedAt, now) }))
-    .sort(
-      (a, b) =>
-        a.group - b.group ||
-        Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
-        a.sessionId.localeCompare(b.sessionId),
-    );
-  const items = sortedSessions.filter((s) =>
-    (s.title || "新会话")
-      .toLocaleLowerCase()
-      .includes(search.toLocaleLowerCase()),
-  );
-  const getCurrentIndex = (list = sortedSessions) => {
-    const idx = currentId
-      ? list.findIndex((s) => s.sessionId === currentId)
-      : -1;
-    return idx >= 0 ? idx : 0;
+  const navigation = buildProjectNavigation(projects, sessions, query);
+  const activeProject = navigation.find(p => p.key === projectKey) ?? navigation[0];
+  const activeProjectKey = activeProject?.key ?? "";
+  const items = (activeProject?.sessions ?? []).map(s => ({ ...s, group: activeProjectKey ? 0 : dateGroup(s.updatedAt, new Date()) }));
+  const navigationGroups = activeProjectKey ? [{ id: 0, name: activeProject?.name ?? "" }]
+    : ["今天", "昨天", "本周", "更早"].map((name, id) => ({ id, name }));
+  const rememberedIndex = items.findIndex(s => s.sessionId === rememberedSessions[activeProjectKey]);
+  const activeIndex = search.startsWith(">")
+    ? Math.min(commandIndex, Math.max(0, filterCommands(search).length - 1))
+    : Math.max(0, rememberedIndex);
+  const setSelected = (index: number) => {
+    if (search.startsWith(">")) setCommandIndex(index);
+    else if (items[index]) setRememberedSessions(prev => ({ ...prev, [activeProjectKey]: items[index].sessionId }));
   };
-  const resultCount = search.startsWith(">")
-    ? filterCommands(search).length
-    : items.length;
-  const activeIndex = Math.min(selected, Math.max(0, resultCount - 1));
-
   const handleQueryChange = (nextQuery: string) => {
-    setQuery(nextQuery);
-    const nextSearch = nextQuery.trim();
-    if (nextSearch.startsWith(">")) {
-      setSelected(0);
-      return;
+    if (!query.trim() && nextQuery.trim()) beforeSearch.current = { projectKey: activeProjectKey, rememberedSessions };
+    if (!nextQuery.trim() && beforeSearch.current) {
+      setProjectKey(beforeSearch.current.projectKey);
+      setRememberedSessions(beforeSearch.current.rememberedSessions);
+      beforeSearch.current = null;
     }
-    setSelected(nextSearch ? 0 : getCurrentIndex(sortedSessions));
+    if (nextQuery.trim()) {
+      const nextNavigation = buildProjectNavigation(projects, sessions, nextQuery);
+      setProjectKey(nextNavigation.some(p => p.key === activeProjectKey) ? activeProjectKey : nextNavigation[0]?.key ?? "");
+    }
+    setQuery(nextQuery);
+    setCommandIndex(0);
   };
 
   const show = () => {
@@ -108,10 +124,17 @@ export function SessionSwitcher({
     if (focused instanceof HTMLElement && !focused.closest('[role="dialog"]'))
       focused.blur();
     focusComposer.current = false;
+    setActivePane("sessions");
     setQuery("");
     setSelectedIds([]);
     setPreviewResult(null);
-    setSelected(getCurrentIndex());
+    beforeSearch.current = null;
+    const current = sessions.find(s => s.sessionId === currentId);
+    if (current) {
+      const key = current.projectId ?? "";
+      setProjectKey(key);
+      setRememberedSessions(prev => ({ ...prev, [key]: current.sessionId }));
+    }
     setOpen(true);
   };
 
@@ -139,7 +162,8 @@ export function SessionSwitcher({
   };
 
   const createDerivedSession = async () => {
-    if (disabled || action || creating.current || selectedIds.length === 0) return;
+    if (disabled || action || creating.current || selectedIds.length === 0)
+      return;
     creating.current = true;
     try {
       await agentActions.newSession({ sourceSessionIds: selectedIds });
@@ -207,7 +231,16 @@ export function SessionSwitcher({
     },
     "session.delete": () => {
       const session = items[activeIndex];
-      if (!open || search.startsWith(">") || disabled || loading || !session || sessionActivity[session.sessionId]) return;
+      if (
+        !open ||
+        activePane === "projects" ||
+        search.startsWith(">") ||
+        disabled ||
+        loading ||
+        !session ||
+        sessionActivity[session.sessionId]
+      )
+        return;
       beginAction("delete", session.sessionId, session.title || "新会话", true);
     },
     "session.switcher": () => {
@@ -222,7 +255,7 @@ export function SessionSwitcher({
 
   useEffect(() => {
     if (open) revealSelection(results.current);
-  }, [open, activeIndex, query]);
+  }, [open, activeIndex, query, activeProjectKey]);
 
   const selectionKey =
     open && selectedIds.length > 0
@@ -232,7 +265,11 @@ export function SessionSwitcher({
     ? { loading: false }
     : previewResult?.key !== selectionKey
       ? { loading: true }
-      : { loading: false, data: previewResult.data, error: previewResult.error };
+      : {
+          loading: false,
+          data: previewResult.data,
+          error: previewResult.error,
+        };
 
   useEffect(() => {
     if (!selectionKey || selectedIds.length === 0) return;
@@ -268,8 +305,7 @@ export function SessionSwitcher({
   };
 
   const deletingRunning =
-    action?.kind === "delete" &&
-    !!sessionActivity[action.id];
+    action?.kind === "delete" && !!sessionActivity[action.id];
   const beginAction = (
     kind: "rename" | "delete",
     id: string,
@@ -287,7 +323,8 @@ export function SessionSwitcher({
       saving ||
       disabled ||
       deletingRunning ||
-      (action.typedConfirmation && deleteAnswer.trim().toLowerCase() !== "yes") ||
+      (action.typedConfirmation &&
+        deleteAnswer.trim().toLowerCase() !== "yes") ||
       (action.kind === "rename" && !name.trim())
     )
       return;
@@ -323,7 +360,8 @@ export function SessionSwitcher({
       target.focus({ preventScroll: true });
       return;
     }
-    input.current?.focus({ preventScroll: true });
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement) focused.blur();
     if (visible) revealSelection(results.current);
   };
   const listProps = {
@@ -378,7 +416,7 @@ export function SessionSwitcher({
         title="切换会话"
         open={open}
         centered
-        width={600}
+        width="clamp(600px, 70vw, 1080px)"
         footer={null}
         onCancel={() => {
           if (!action) setOpen(false);
@@ -388,7 +426,23 @@ export function SessionSwitcher({
         afterOpenChange={afterOpen}
       >
         <span hidden data-session-switcher />
+        {projectsError && <p role="alert">{projectsError}<button onClick={refreshProjects}>重试</button></p>}
         <SessionPaletteList
+          activePane={activePane}
+          onPaneChange={setActivePane}
+          onClose={() => setOpen(false)}
+          projects={projects}
+          groups={navigationGroups}
+          onProjectsChanged={refreshProjects}
+          navigation={navigation}
+          activeProjectKey={activeProjectKey}
+          onSelectProject={setProjectKey}
+          onNewProjectSession={async id => {
+            await agentActions.newSession(id ? { projectId: id } : undefined);
+            if (!useAgentStore.getState().sessionsError) {
+              setOpen(false); focusComposer.current = true;
+            }
+          }}
           {...listProps}
           active={open}
           inputRef={input}
@@ -468,7 +522,13 @@ export function SessionSwitcher({
                 autoComplete="off"
                 onChange={(event) => setDeleteAnswer(event.target.value)}
                 onPressEnter={(event) => {
-                  if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat || saving) return;
+                  if (
+                    event.nativeEvent.isComposing ||
+                    event.keyCode === 229 ||
+                    event.repeat ||
+                    saving
+                  )
+                    return;
                   event.preventDefault();
                   event.stopPropagation();
                   const answer = deleteAnswer.trim().toLowerCase();
@@ -495,7 +555,8 @@ export function SessionSwitcher({
                   saving ||
                   disabled ||
                   deletingRunning ||
-                  (action?.typedConfirmation && deleteAnswer.trim().toLowerCase() !== "yes") ||
+                  (action?.typedConfirmation &&
+                    deleteAnswer.trim().toLowerCase() !== "yes") ||
                   (action?.kind === "rename" && !name.trim())
                 }
                 onClick={() => void confirmAction()}

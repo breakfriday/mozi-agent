@@ -7,6 +7,7 @@ export type ProviderDisplayFilter = string | readonly string[];
 export const PROVIDER_DISPLAY_FILTER: ProviderDisplayFilter = [
   "bailian-tp",
   "antigravity",
+  "openai",
   "deepseek",
   // "google",
   // "google-vertex",

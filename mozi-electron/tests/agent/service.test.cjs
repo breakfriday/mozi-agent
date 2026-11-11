@@ -828,3 +828,51 @@ test('session list reports independent activity for concurrent sessions and clea
   await tick();
   assert.ok((await f.call('session.list', {})).items.every(s => !s.activeRun));
 });
+
+test('projects organize running sessions without changing cwd or losing membership on title updates', async t => {
+  const f = await fixture(t);
+  await f.call('project.create', { projectId: 'p', name: ' Project ' });
+  await f.call('project.create', { projectId: 'p', name: 'Project' });
+  assert.equal((await f.call('project.list', {})).items.length, 1);
+  await assert.rejects(f.call('project.create', { projectId: 'duplicate', name: 'Project' }), error => error.code === 'INVALID_ARGUMENT');
+  const creation = { clientOperationId: 'project-session', projectId: 'p' };
+  const { sessionId } = await f.call('session.create', creation);
+  assert.equal((await f.call('session.snapshot', { sessionId })).session.projectId, 'p');
+  const cwd = f.repository.listSessions()[0].descriptor.cwd;
+  const { runId } = await f.call('run.start', input(sessionId)); await tick();
+  await f.call('session.move', { sessionId, projectId: null });
+  await f.call('session.move', { sessionId, projectId: 'p' });
+  f.executions[0].emit({ type: 'session.title', title: 'Automatic project title' });
+  assert.equal(f.repository.listSessions()[0].session.projectId, 'p');
+  assert.equal(f.repository.listSessions()[0].descriptor.cwd, cwd);
+  await f.call('project.rename', { projectId: 'p', name: 'Renamed' });
+  assert.equal((await f.call('project.list', {})).items[0].name, 'Renamed');
+  await f.call('project.delete', { projectId: 'p' });
+  assert.equal((await f.call('session.list', {})).items[0].projectId, null);
+  assert.equal((await f.call('session.snapshot', { sessionId })).session.projectId, null);
+  assert.equal(f.nativeSessions.length, 1);
+  assert.equal((await f.call('session.create', creation)).sessionId, sessionId);
+  await assert.rejects(f.call('session.create', { ...creation, projectId: null }), error => error.code === 'SUBMISSION_CONFLICT');
+  await assert.rejects(f.call('session.move', { sessionId, projectId: 'missing' }), error => error.code === 'INVALID_ARGUMENT');
+  await f.call('run.cancel', { sessionId, runId }); await tick();
+  await f.service.close();
+  const restored = await reopen(t, f);
+  assert.equal((await restored.call('session.list', {})).items[0].projectId, null);
+  assert.equal((await restored.call('project.list', {})).items.length, 0);
+  assert.deepEqual(f.fatal, []);
+});
+
+test('project deleted during native creation rejects without leaving orphan session', async t => {
+  const f = await fixture(t);
+  await f.call('project.create', { projectId: 'p', name: 'Project' });
+  const create = f.runtime.createSession;
+  f.runtime.createSession = async (...args) => {
+    const descriptor = await create(...args);
+    await f.call('project.delete', { projectId: 'p' });
+    return descriptor;
+  };
+  await assert.rejects(f.call('session.create', { clientOperationId: 'race', projectId: 'p' }), error => error.code === 'INVALID_ARGUMENT');
+  assert.equal(f.repository.listSessions().length, 0);
+  assert.equal(f.nativeSessions.length, 0);
+  assert.deepEqual(f.fatal, []);
+});

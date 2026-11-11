@@ -22,6 +22,11 @@ test("thinking levels are validated throughout model selection", () => {
 
 test("every public method has matching parameter and result validation", () => {
   const cases = {
+    "project.list": [{}, { items: [] }],
+    "project.create": [{ projectId: "p", name: "Project" }, { project: { id: "p", name: "Project", createdAt: timestamp, updatedAt: timestamp } }],
+    "project.rename": [{ projectId: "p", name: "Renamed" }, { project: { id: "p", name: "Renamed", createdAt: timestamp, updatedAt: timestamp } }],
+    "project.delete": [{ projectId: "p" }, { projectId: "p" }],
+    "session.move": [{ sessionId: "session", projectId: null }, { session: { sessionId: "session", projectId: null, title: "Chat", createdAt: timestamp, updatedAt: timestamp } }],
     "provider.refreshModels": [{ providerId: "antigravity" }, { providers: [] }],
     "model.settings": [{}, { providers: [] }],
     "provider.save": [{ providerId: "bailian-tp", apiKey: "test-only" }, { providers: [] }],
@@ -78,6 +83,10 @@ test("every public method has matching parameter and result validation", () => {
 
 test("requests reject unsupported content, extra keys, invalid decisions, and invalid version", () => {
   for (const input of [
+    request("project.create", { projectId: "p", name: "  " }),
+    request("project.rename", { projectId: "p", name: "x".repeat(101) }),
+    request("session.move", { sessionId: "s" }),
+    request("session.move", { sessionId: "s", projectId: "" }),
     request("session.create", {}),
     request("session.create", { clientOperationId: "c", sourceSessionIds: [] }),
     request("session.create", { clientOperationId: "c", sourceSessionIds: ["dup", "dup"] }),

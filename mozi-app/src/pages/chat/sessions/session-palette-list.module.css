@@ -317,3 +317,91 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* Two independent scroll panes; changing selection never opens a session. */
+.columns {
+  display: grid;
+  grid-template-columns: clamp(150px, 24%, 230px) minmax(0, 1fr);
+  height: min(440px, 52dvh);
+  min-height: 210px;
+  margin-top: 12px;
+  border: 1px solid var(--app-border-color, #8883);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.projectPane,
+.sessionPane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.projectPane {
+  border-right: 1px solid var(--app-border-color, #8883);
+  background: var(--app-hover-background);
+}
+.paneHeading {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--app-border-color, #8883);
+  font-size: 12px;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+.projectList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  overscroll-behavior: contain;
+}
+.projectOption {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.projectName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projectOption[aria-selected="true"] {
+  background: var(--app-selected-background);
+  color: var(--app-heading-color);
+}
+.projectList,
+.sessionPane > .results {
+  outline: none;
+}
+.projectList[data-active="true"] .projectOption[aria-selected="true"],
+.results[data-active="true"] .option[aria-selected="true"] {
+  box-shadow: inset 3px 0 var(--app-primary-color);
+}
+.results:not([data-active="true"]) .option[aria-selected="true"] {
+  box-shadow: none;
+}
+.sessionPane > .results {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin-top: 0;
+  padding: 6px;
+}
+.paneFooter {
+  padding: 6px;
+  border-top: 1px solid var(--app-border-color, #8883);
+}
+.commandLayout {
+  max-height: min(440px, 52dvh);
+  overflow-y: auto;
+}

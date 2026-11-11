@@ -18,6 +18,12 @@ export function OAuthProviderEditor({ provider, onClose }: { provider: ProviderV
   const alive = useRef(true);
   const revision = useRef(-1);
   const active = !!state && ["starting", "waiting", "completing"].includes(state.phase);
+  const accountLabel =
+    provider.id === "antigravity"
+      ? "Google"
+      : provider.id === "openai"
+        ? "ChatGPT"
+        : provider.name;
 
   useEffect(() => {
     alive.current = true;
@@ -45,13 +51,13 @@ export function OAuthProviderEditor({ provider, onClose }: { provider: ProviderV
   return <Modal open title={`连接 ${provider.name}`} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>}>
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       <Typography.Paragraph>
-        在系统浏览器中使用 Google 账号授权。授权完成后将自动返回连接状态；关闭此窗口不会取消登录。
+        在系统浏览器中使用 {accountLabel} 账号授权。授权完成后将自动返回连接状态；关闭此窗口不会取消登录。
       </Typography.Paragraph>
       {!runtimeReady && <Alert type="warning" title="Agent 未连接，请等待恢复后查看登录状态。" />}
-      {reauthRequired && <Alert type="warning" title="Google 授权已失效，请重新登录。" />}
+      {reauthRequired && <Alert type="warning" title={`${accountLabel} 授权已失效，请重新登录。`} />}
       {error && <Alert type="error" title={error} />}
       <Alert type={state?.phase === "failed" || state?.phase === "expired" ? "warning" : "info"}
-        title={active ? (state?.phase === "completing" ? "正在完成授权…" : "等待 Google 授权…") : configured ? "已连接 Google 账号" : "尚未连接"}
+        title={active ? (state?.phase === "completing" ? "正在完成授权…" : `等待 ${accountLabel} 授权…`) : configured ? `已连接 ${accountLabel} 账号` : "尚未连接"}
         description={state?.message} />
       <Alert type={catalog?.catalogStatus === "failed" ? "warning" : "info"}
         title={catalog?.catalogMessage ?? "登录后可同步账号支持的最新模型。"} />
@@ -60,7 +66,7 @@ export function OAuthProviderEditor({ provider, onClose }: { provider: ProviderV
           onClick={() => void action(async () => {
             const next = await bridgeApi.agent.startProviderAuth({ providerId: provider.id });
             if (alive.current && next.revision >= revision.current) { revision.current = next.revision; setState(next); }
-          })}>{configured ? "重新登录" : "使用 Google 登录"}</Button>}
+          })}>{configured ? "重新登录" : `使用 ${accountLabel} 登录`}</Button>}
         {active && <Button disabled={!runtimeReady || busy} onClick={() => void action(() => bridgeApi.agent.cancelProviderAuth({ providerId: provider.id, loginId: state.loginId }))}>取消登录</Button>}
         {active && state.authUrl && <Button disabled={!runtimeReady || busy} onClick={() => void action(() => bridgeApi.agent.openProviderAuth({ providerId: provider.id, loginId: state.loginId }))}>重新打开浏览器</Button>}
         {configured && <Button disabled={!runtimeReady || busy || active || catalog?.catalogStatus === "refreshing"}

@@ -5,6 +5,7 @@ import type { ProviderPlugin } from "./provider-plugin";
 import { deepseekPlugin } from "./deepseek";
 import { createBailianPlugin } from "./bailian";
 import { antigravityPlugin } from "./antigravity";
+import { openaiPlugin } from "./openai";
 import { ProviderRegistry } from "./provider-registry";
 import { CredentialRepository } from "./credential-repository";
 import { FileProviderConfigurationStore } from "./provider-configuration-store";
@@ -21,6 +22,7 @@ export function createPiProviderManager(
     deepseekPlugin,
     createBailianPlugin(),
     antigravityPlugin,
+    openaiPlugin,
   ],
 ): PiProviderManager {
   const registry = new ProviderRegistry(plugins);

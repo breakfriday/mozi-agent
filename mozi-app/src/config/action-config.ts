@@ -104,7 +104,8 @@ export function getAction(id: ActionId): ActionConfig {
 export function matchesWhen(when?: ActionWhen): boolean {
   if (!when) return true;
   const active = document.activeElement;
-  const dialog = active?.closest('[role="dialog"]') ?? null;
+  const dialog = active?.closest('[role="dialog"]')
+    ?? document.querySelector('[data-session-switcher-open="true"]')?.closest('[role="dialog"]') ?? null;
   const inSessionSwitcher = Boolean(
     dialog?.querySelector("[data-session-switcher]"),
   );

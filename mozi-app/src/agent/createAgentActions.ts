@@ -218,7 +218,7 @@ export function createAgentActions(
     rememberSession(sessionId);
   }
 
-  async function newSession(options?: { sourceSessionIds?: string[]; title?: string }) {
+  async function newSession(options?: { sourceSessionIds?: string[]; title?: string; projectId?: string }) {
     const state = store.getState();
     if (state.inFlightSubmissionId || state.sessionOperation) return;
     const token = connection;
@@ -227,13 +227,14 @@ export function createAgentActions(
       sessionOperation: "new",
       sessionsError: null,
     });
-    const hasCustomOptions = Boolean(options?.sourceSessionIds?.length || options?.title);
+    const hasCustomOptions = Boolean(options?.sourceSessionIds?.length || options?.title || options?.projectId);
     try {
       // Reuse an uncertain creation when the current draft already has submissions.
       const input = hasCustomOptions
         ? {
             clientOperationId: crypto.randomUUID(),
             ...(options?.title ? { title: options.title } : {}),
+            ...(options?.projectId ? { projectId: options.projectId } : {}),
             ...(options?.sourceSessionIds?.length ? { sourceSessionIds: options.sourceSessionIds } : {}),
             ...(state.modelSelection ? { model: state.modelSelection } : {}),
           }

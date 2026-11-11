@@ -175,7 +175,15 @@ export function registerAgentIpc(
     if (key === lastOpenedAuth) return;
     try {
       const url = new URL(state.authUrl);
-      if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password) return;
+      const allowed =
+        !url.username &&
+        !url.password &&
+        ((url.origin === "https://accounts.google.com" &&
+          url.pathname === "/o/oauth2/v2/auth") ||
+          (url.origin === "https://auth.openai.com" &&
+            (url.pathname === "/api/accounts/authorize" ||
+              url.pathname === "/oauth/authorize")));
+      if (!allowed) return;
       lastOpenedAuth = key;
       void shell.openExternal(url.href).catch(() => {
         for (const client of clients.values()) send(client, AGENT_CHANNELS.auth, {
@@ -199,7 +207,7 @@ export function registerAgentIpc(
   // not, so background sessions' run state reaches the sidebar without polling.
   // Payload-free: renderers re-read session.list. Same-tick changes coalesce.
   const SESSION_LIST_EVENTS = new Set(["run.updated", "run.finished", "session.updated"]);
-  const SESSION_LIST_METHODS = new Set(["session.create", "session.delete", "session.rename", "session.setModel"]);
+  const SESSION_LIST_METHODS = new Set(["session.create", "session.delete", "session.rename", "session.setModel", "session.move"]);
   const changedSessions = new Set<string>();
   let sessionsFlush: ReturnType<typeof setTimeout> | undefined;
   function sessionsChanged(sessionId: string) {
@@ -248,6 +256,7 @@ export function registerAgentIpc(
       return success(request.requestId, { removed });
     }
     if (
+      (request.method.startsWith("project.") && !canAccessSession(client.sender, "")) ||
       ("sessionId" in request.params &&
         !canAccessSession(client.sender, request.params.sessionId)) ||
       ("sourceSessionIds" in request.params &&
@@ -294,6 +303,10 @@ export function registerAgentIpc(
       windowId: client.sender.id,
     });
     const response = await transport.request(request);
+    if (["project.create", "project.rename", "project.delete"].includes(request.method) && response.ok) {
+      for (const target of clients.values())
+        if (canAccessSession(target.sender, "")) send(target, AGENT_CHANNELS.sessions, null);
+    }
     if (SESSION_LIST_METHODS.has(request.method) && response.ok) {
       const sessionId = "sessionId" in request.params ? request.params.sessionId
         : isResponseFor("session.create", response) && response.ok ? response.result.sessionId : undefined;

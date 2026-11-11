@@ -6,6 +6,10 @@ import type { MessageLink, RunMetadata, SessionMetadata, SessionMetadataDetails,
  * must also serialize the SessionService prepare/persist/commit operations.
  */
 export interface MetadataStore {
+  listProjects(): import("../../../../shared/agent").ProjectSummary[];
+  saveProject(project: import("../../../../shared/agent").ProjectSummary): void;
+  deleteProject(projectId: string): void;
+  moveSession(sessionId: string, projectId: string | null): void;
   getDefaultModel(): ModelSelection | undefined;
   setDefaultModel(model: ModelSelection): void;
   listSessions(): SessionMetadata[];
@@ -15,7 +19,7 @@ export interface MetadataStore {
   readSession(sessionId: string): SessionMetadataDetails;
   unfinishedRuns(): RunView[];
   findRun(sessionId: string, runId: string): RunView | undefined;
-  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection } | undefined;
+  findCreation(operationId: string): { title: string; sessionId: string; model?: ModelSelection; projectId?: string | null } | undefined;
   create(operationId: string, metadata: SessionMetadata, model?: ModelSelection): void;
   findSubmission(sessionId: string, clientMessageId: string): SubmissionRecord | undefined;
   accept(metadata: RunMetadata, link: MessageLink): void;

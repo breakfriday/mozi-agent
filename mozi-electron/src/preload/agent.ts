@@ -107,6 +107,11 @@ export function createAgentPreloadApi(
   }
 
   const api = {
+    listProjects: () => request("project.list", {}),
+    createProject: input => request("project.create", input),
+    renameProject: input => request("project.rename", input),
+    deleteProject: input => request("project.delete", input),
+    moveSession: input => request("session.move", input),
     getRuntimeState: () => request("runtime.getState", {}),
     startProviderAuth: (input) => request("provider.auth.start", input),
     statusProviderAuth: (input) => request("provider.auth.status", input),
@@ -135,7 +140,10 @@ export function createAgentPreloadApi(
     respondApproval: (input) => request("approval.respond", input),
     onProviderModelsChanged(listener) {
       if (disposed) return () => {};
-      const handler = (_event: unknown, value: unknown) => { if (value === "antigravity") listener(value); };
+      const handler = (_event: unknown, value: unknown) => {
+        if (typeof value === "string" && value.length > 0 && value.length <= 120)
+          listener(value);
+      };
       ipc.on(AGENT_CHANNELS.catalog, handler);
       const off = () => { ipc.removeListener(AGENT_CHANNELS.catalog, handler); eventCleanups.delete(off); };
       eventCleanups.add(off); return off;

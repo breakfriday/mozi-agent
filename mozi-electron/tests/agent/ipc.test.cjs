@@ -225,7 +225,7 @@ test("only successful deletion closes its monitor and removes subscriptions", as
 });
 
 
-test("OAuth events reach trusted windows; main opens only Google authorization URLs once per request", async t => {
+test("OAuth events reach trusted windows; main opens only Google and OpenAI authorization URLs once per request", async t => {
   const f = setup(t); const sender = f.window(); const child = f.connect();
   await f.call(sender, "runtime.getState");
   const state = { providerId: "antigravity", loginId: "login", phase: "waiting", revision: 1,
@@ -234,7 +234,9 @@ test("OAuth events reach trusted windows; main opens only Google authorization U
   emit({}); emit({ revision: 2 }); assert.equal(f.opened.length, 1);
   assert.equal(sender.sent.filter(x => x.channel === "mozi:agent:auth").length, 2);
   emit({ openRequest: 2 }); assert.equal(f.opened.length, 2);
-  emit({ openRequest: 3, authUrl: "https://evil.example/auth" }); assert.equal(f.opened.length, 2);
+  emit({ openRequest: 3, providerId: "openai", authUrl: "https://auth.openai.com/api/accounts/authorize?state=fixture" });
+  assert.equal(f.opened.length, 3);
+  emit({ openRequest: 4, authUrl: "https://evil.example/auth" }); assert.equal(f.opened.length, 3);
   sender.mainFrame.url = "https://evil.example/";
   const count = sender.sent.length; emit({ authUrl: undefined }); assert.equal(sender.sent.length, count);
 });
