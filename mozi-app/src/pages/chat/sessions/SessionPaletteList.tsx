@@ -87,8 +87,14 @@ export function SessionPaletteList({
   const handleNavigation = useEffectEvent((event: KeyboardEvent) => {
     if (!active || event.defaultPrevented || event.isComposing) return;
     const root = panel.current;
-    const dialog = root?.closest('[role="dialog"]');
-    if (!root || !dialog) return;
+    const dialog = root?.closest<HTMLElement>('[role="dialog"]');
+    if (
+      !root ||
+      !dialog ||
+      !dialog.closest('[data-session-switcher-open="true"]') ||
+      dialog.getClientRects().length === 0
+    )
+      return;
     // Portalled edit dialogs and menus own their keys, even if their input blurs.
     const overlays = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="menu"], [role="listbox"]');
     if ([...overlays].some(el => el !== dialog && !root.contains(el) && el.getClientRects().length > 0)) return;
@@ -154,7 +160,7 @@ export function SessionPaletteList({
     !allEmpty &&
     !overBudget;
   return (
-    <div ref={panel} className={styles.panel} data-session-switcher data-session-switcher-open={active || undefined} data-active-pane={activePane}>
+    <div ref={panel} className={styles.panel} data-session-switcher data-active-pane={activePane}>
       <div className={styles.searchBar}>
         <Input
           ref={inputRef}

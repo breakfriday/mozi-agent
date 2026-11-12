@@ -413,6 +413,9 @@ export function SessionSwitcher({
           focusTriggerAfterClose: false,
           trap: open && !action,
         }}
+        wrapProps={{
+          "data-session-switcher-open": open || undefined,
+        }}
         title="切换会话"
         open={open}
         centered

@@ -104,8 +104,22 @@ export function getAction(id: ActionId): ActionConfig {
 export function matchesWhen(when?: ActionWhen): boolean {
   if (!when) return true;
   const active = document.activeElement;
-  const dialog = active?.closest('[role="dialog"]')
-    ?? document.querySelector('[data-session-switcher-open="true"]')?.closest('[role="dialog"]') ?? null;
+  const focusedDialog = active?.closest<HTMLElement>('[role="dialog"]');
+  const validFocusedDialog =
+    focusedDialog &&
+    focusedDialog.getClientRects().length > 0 &&
+    (!focusedDialog.querySelector("[data-session-switcher]") ||
+      Boolean(focusedDialog.closest('[data-session-switcher-open="true"]')))
+      ? focusedDialog
+      : null;
+  const switcherDialog = document.querySelector<HTMLElement>(
+    '[data-session-switcher-open="true"] [role="dialog"]',
+  );
+  const dialog =
+    validFocusedDialog ??
+    (switcherDialog && switcherDialog.getClientRects().length > 0
+      ? switcherDialog
+      : null);
   const inSessionSwitcher = Boolean(
     dialog?.querySelector("[data-session-switcher]"),
   );

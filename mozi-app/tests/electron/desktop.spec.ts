@@ -166,4 +166,11 @@ test("two-pane keyboard navigation preserves selection, scopes search and does n
   await expect(right.locator('[aria-current="true"]')).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "切换会话", exact: true })).not.toBeVisible();
+  const chatInput = page.getByRole("textbox", { name: "消息内容" });
+  await page.keyboard.press("Shift+F6");
+  await expect(chatInput).toBeFocused();
+  await page.keyboard.press("Shift+F6");
+  await expect(chatInput).not.toBeFocused();
+  await page.keyboard.press("F6");
+  await expect(chatInput).toBeFocused();
 });
