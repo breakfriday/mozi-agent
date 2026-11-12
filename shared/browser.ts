@@ -2,6 +2,7 @@
 export const BROWSER_TIMEOUT_MS = 120_000;
 export const BROWSER_MAX_PENDING = 16;
 export const BROWSER_MAX_TEXT = 24_000;
+export const BROWSER_MAX_OFFSET = 2_000_000;
 export const BROWSER_MAX_ELEMENTS = 100;
 export const BROWSER_MAX_INPUT_TEXT = 10_000;
 export const BROWSER_KEYS = ["Enter", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const;
@@ -12,8 +13,8 @@ export type BrowserInputExpectation = { elementId: string; text: string };
 
 export type BrowserOperation =
   | { action: "search"; query: string; limit?: number }
-  | { action: "read"; url: string; target?: never }
-  | { action: "read"; target: "current"; url?: never }
+  | { action: "read"; url: string; offset?: number; target?: never }
+  | { action: "read"; target: "current"; offset?: number; url?: never }
   | { action: "inspect"; query?: string; filter?: "inputs" }
   | { action: "click"; elementId: string; expect?: BrowserInputExpectation }
   | { action: "fill"; elementId: string; text: string }
@@ -35,6 +36,7 @@ const operationFields = {
   limit: { type: "integer", minimum: 1, maximum: 10, description: "搜索结果数量，默认 5，仅用于 search" },
   url: { type: "string", minLength: 1, maxLength: 4096, description: "打开并读取此 HTTP(S) 网址；不可与 target 同时提供" },
   target: { type: "string", enum: ["current"], description: "直接读取 MoziBrowser 当前页面，不导航、不刷新；不可与 url 同时提供" },
+  offset: { type: "integer", minimum: 0, maximum: BROWSER_MAX_OFFSET, description: "read 的 UTF-16 偏移；0 建立新快照，非零仅配合 target=current 续读本会话有效快照，使用上次 offset + content.length" },
   elementId: { type: "string", minLength: 1, maxLength: 100, description: "最近一次 inspect 返回的元素编号；不可猜测；每次 click/fill/press 后需重新 inspect" },
   text: { type: "string", maxLength: BROWSER_MAX_INPUT_TEXT, description: "fill 替换全部输入内容，空字符串清空；不会提交表单" },
   key: { type: "string", enum: [...BROWSER_KEYS], description: "press 的按键；先重新 inspect 获取目标，Enter 可提交搜索，方向键可操作建议列表" },
@@ -44,8 +46,8 @@ export const BROWSER_OPERATION_SCHEMA = {
   type: "object", properties: operationFields, required: ["action"], additionalProperties: false,
   oneOf: [
     { properties: { action: { const: "search" }, query: operationFields.query, limit: operationFields.limit }, required: ["query"], additionalProperties: false },
-    { properties: { action: { const: "read" }, url: operationFields.url }, required: ["url"], additionalProperties: false },
-    { properties: { action: { const: "read" }, target: operationFields.target }, required: ["target"], additionalProperties: false },
+    { properties: { action: { const: "read" }, url: operationFields.url, offset: operationFields.offset }, required: ["url"], additionalProperties: false },
+    { properties: { action: { const: "read" }, target: operationFields.target, offset: operationFields.offset }, required: ["target"], additionalProperties: false },
     { properties: { action: { const: "inspect" }, query: operationFields.query, filter: operationFields.filter }, additionalProperties: false },
     { properties: { action: { const: "click" }, elementId: operationFields.elementId, expect: operationFields.expect }, required: ["elementId"], additionalProperties: false },
     { properties: { action: { const: "fill" }, elementId: operationFields.elementId, text: operationFields.text }, required: ["elementId", "text"], additionalProperties: false },
@@ -58,7 +60,7 @@ export type BrowserElement = { elementId: string; role: string; name: string; di
   editable?: boolean; readOnly?: boolean; inputType?: string; placeholder?: string; focused?: boolean; hasValue?: boolean };
 export type BrowserResult =
   | { kind: "search"; query: string; url: string; results: { title: string; url: string; snippet: string }[] }
-  | { kind: "read"; title: string; url: string; content: string; truncated: boolean }
+  | { kind: "read"; title: string; url: string; content: string; truncated: boolean; offset?: number; totalLength?: number; stability?: "stable" | "best_effort"; warnings?: string[]; capturedAt?: number }
   | { kind: "inspect"; title: string; url: string; elements: BrowserElement[]; truncated: boolean }
   | { kind: "click" | "fill" | "press"; title: string; url: string; elementId: string; dispatched: true; inputVerified?: true };
 export type BrowserErrorCode = "INVALID_ARGUMENT" | "UNAVAILABLE" | "CAPACITY_EXCEEDED" | "CANCELLED"
@@ -100,8 +102,12 @@ export function isBrowserOperation(v: unknown): v is BrowserOperation {
   const only = (...keys: string[]) => Object.keys(v).every(key => keys.includes(key));
   if (v.action === "search") return only("action", "query", "limit") && text(v.query, 1000)
     && (v.limit === undefined || Number.isInteger(v.limit) && Number(v.limit) >= 1 && Number(v.limit) <= 10);
-  if (v.action === "read") return v.target === "current"
-    ? only("action", "target") : only("action", "url") && isBrowserUrl(v.url);
+  if (v.action === "read") {
+    const validOffset = v.offset === undefined || (Number.isInteger(v.offset) && Number(v.offset) >= 0 && Number(v.offset) <= BROWSER_MAX_OFFSET);
+    return validOffset && (v.target === "current"
+      ? only("action", "target", "offset")
+      : only("action", "url", "offset") && isBrowserUrl(v.url));
+  }
   if (v.action === "inspect") return only("action", "query", "filter") && (v.query === undefined || text(v.query, 1000)) && (v.filter === undefined || v.filter === "inputs");
   if (v.action === "click") return only("action", "elementId", "expect") && text(v.elementId, 100) && expectation;
   if (v.action === "fill") return only("action", "elementId", "text") && text(v.elementId, 100) && text(v.text, BROWSER_MAX_INPUT_TEXT, true);
@@ -113,7 +119,12 @@ export function isBrowserResult(v: unknown): v is BrowserResult {
   if (v.kind === "search") return text(v.query, 1000) && Array.isArray(v.results) && v.results.length <= 10
     && v.results.every(r => record(r) && text(r.title, 1000) && isBrowserUrl(r.url) && text(r.snippet, 2000, true));
   if (!text(v.title, 1000, true)) return false;
-  if (v.kind === "read") return text(v.content, BROWSER_MAX_TEXT) && typeof v.truncated === "boolean";
+  if (v.kind === "read") return text(v.content, BROWSER_MAX_TEXT) && typeof v.truncated === "boolean"
+    && (v.capturedAt === undefined || Number.isSafeInteger(v.capturedAt) && Number(v.capturedAt) >= 0)
+    && (v.stability === undefined || v.stability === "stable" || v.stability === "best_effort")
+    && (v.warnings === undefined || Array.isArray(v.warnings) && v.warnings.length <= 20 && v.warnings.every(w => text(w, 200)))
+    && (v.offset === undefined || (Number.isInteger(v.offset) && Number(v.offset) >= 0 && Number(v.offset) <= BROWSER_MAX_OFFSET))
+    && (v.totalLength === undefined || (Number.isInteger(v.totalLength) && Number(v.totalLength) >= 0 && Number(v.totalLength) <= 10_000_000));
   if (v.kind === "click" || v.kind === "fill" || v.kind === "press") return text(v.elementId, 100) && v.dispatched === true && (v.inputVerified === undefined || v.inputVerified === true);
   return v.kind === "inspect" && typeof v.truncated === "boolean" && Array.isArray(v.elements) && v.elements.length <= BROWSER_MAX_ELEMENTS
     && v.elements.every(e => record(e) && text(e.elementId, 100) && text(e.role, 100) && text(e.name, 400, true)

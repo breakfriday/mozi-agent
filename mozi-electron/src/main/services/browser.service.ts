@@ -1,3 +1,5 @@
+import { BrowserReadSnapshots, sliceReadText } from "./browser-read-snapshots";
+import { hasStableReadBody, isReadPlaceholder } from "./browser-read-quality";
 import { BrowserWindow, Menu, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import {
@@ -16,6 +18,7 @@ import {
 } from "../../../../shared/browser";
 
 import { checkPageAccess, type PageAccessCheck } from "./browser-page-access";
+import { extractPage, type ExtractedPage } from "./browser-page-extractor";
 import { BrowserTask } from "./browser-task";
 import { BrowserTaskScheduler } from "./browser-task-scheduler";
 
@@ -25,137 +28,6 @@ type Operation<A extends BrowserOperation["action"]> = Extract<
 >;
 type InteractionOperation = Operation<"click" | "fill" | "press">;
 type PageLocation = { url: string; navigation: number };
-
-type Page = {
-  url: string;
-  title: string;
-  content: string;
-  truncated: boolean;
-  empty: boolean;
-  results: { title: string; url: string; snippet: string }[];
-};
-
-/** Runs in the isolated page world. All inputs are application-owned, never model JavaScript. */
-function extractPage(
-  kind: "search" | "read",
-  limit: number,
-  maxText: number,
-): Page {
-  const tidy = (s: string) =>
-    s
-      .replace(/\u00a0/g, " ")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n[ \t]+/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  const visible = (el: Element) =>
-    el.getClientRects().length > 0 &&
-    getComputedStyle(el).visibility !== "hidden";
-  const bodyText = document.body?.innerText ?? "";
-  const url = location.href;
-  const title = tidy(document.title).slice(0, 1000);
-  const results: Page["results"] = [];
-  if (kind === "search") {
-    for (const item of document.querySelectorAll("#b_results .b_algo")) {
-      if (!visible(item)) continue;
-      const link = item.querySelector<HTMLAnchorElement>("h2 a[href]");
-      if (!link) continue;
-      try {
-        let target = new URL(link.href, url);
-        // Bing may wrap destination URLs in an a1-prefixed base64url parameter.
-        const encoded = target.searchParams.get("u");
-        if (
-          /(^|\.)bing\.com$/.test(target.hostname) &&
-          target.pathname === "/ck/a" &&
-          encoded?.startsWith("a1")
-        ) {
-          const base64 = encoded.slice(2).replace(/-/g, "+").replace(/_/g, "/");
-          const bytes = Uint8Array.from(
-            atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")),
-            (c) => c.charCodeAt(0),
-          );
-          target = new URL(new TextDecoder().decode(bytes));
-        }
-        const heading = tidy(link.innerText).slice(0, 1000);
-        if (
-          !heading ||
-          target.href.length > 4096 ||
-          !["http:", "https:"].includes(target.protocol) ||
-          target.username ||
-          target.password ||
-          results.some((r) => r.url === target.href)
-        )
-          continue;
-        results.push({
-          title: heading,
-          url: target.href,
-          snippet: tidy(
-            item.querySelector<HTMLElement>(".b_caption p, .b_snippet, p")
-              ?.innerText ?? "",
-          ).slice(0, 2000),
-        });
-        if (results.length >= limit) break;
-      } catch {
-        /* Ignore malformed result links. */
-      }
-    }
-    const empty =
-      !!document.querySelector("#b_results .b_no") ||
-      /there are no results for|没有找到与.*相关的结果|找不到.*结果/i.test(
-        bodyText,
-      );
-    return {
-      url,
-      title,
-      content: "",
-      truncated: false,
-      empty,
-      results,
-    };
-  }
-  // Work on a clone: extraction must not alter what the user sees.
-  const candidates = [
-    ...document.querySelectorAll<HTMLElement>('article, main, [role="main"]'),
-  ]
-    .filter(visible)
-    .sort((a, b) => b.innerText.length - a.innerText.length);
-  const root =
-    candidates.find((el) => el.innerText.trim().length >= 100) ?? document.body;
-  if (!root)
-    return {
-      url,
-      title,
-      content: "",
-      truncated: false,
-      empty: false,
-      results,
-    };
-  const clone = root.cloneNode(true) as HTMLElement;
-  const originals = [root, ...root.querySelectorAll("*")];
-  const copies = [clone, ...clone.querySelectorAll("*")];
-  for (let i = originals.length - 1; i > 0; i--) {
-    if (
-      !visible(originals[i]) ||
-      originals[i].matches(
-        'script, style, noscript, nav, header, footer, aside, form, button, svg, [aria-hidden="true"]',
-      )
-    )
-      copies[i].remove();
-  }
-  for (const el of clone.querySelectorAll(
-    "p, div, section, article, li, h1, h2, h3, h4, pre, tr, blockquote, br",
-  ))
-    el.append(document.createTextNode("\n"));
-  const content = tidy(clone.textContent ?? "");
-  return {
-    url,
-    title,
-    content: content.slice(0, maxText),
-    truncated: content.length > maxText,
-    empty: false,
-    results,
-  };
-}
 
 type ElementResponse =
   | Extract<BrowserResult, { kind: "inspect" }>
@@ -501,6 +373,7 @@ export class MoziBrowser {
   private disposed = false;
   private closing = false;
   private navigation = 0;
+  private readonly readSnapshots = new BrowserReadSnapshots();
   private responseStatus?: number;
   private inspected?: {
     token: string;
@@ -539,6 +412,7 @@ export class MoziBrowser {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.readSnapshots.clear();
     this.inspected = undefined;
     this.scheduler.dispose(
       new BrowserFailure("UNAVAILABLE", "Mozi 浏览器已关闭。"),
@@ -682,6 +556,7 @@ export class MoziBrowser {
     contents.on("did-start-navigation", (event) => {
       if (event.isMainFrame) {
         this.navigation++;
+        this.readSnapshots.clear();
         this.responseStatus = undefined;
         this.inspected = undefined;
       }
@@ -689,12 +564,14 @@ export class MoziBrowser {
     contents.on("did-navigate", (_event, _url, status) => {
       this.responseStatus = status;
     });
-    contents.on("render-process-gone", () =>
+    contents.on("render-process-gone", () => {
+      this.readSnapshots.clear();
       this.cancelAll(
         new BrowserFailure("LOAD_FAILED", "浏览器页面进程已退出，请重试。"),
-      ),
-    );
+      );
+    });
     win.on("close", () => {
+      this.readSnapshots.clear();
       this.closing = true;
       this.cancelAll(
         new BrowserFailure("WINDOW_CLOSED", "用户关闭了 Mozi 浏览器。"),
@@ -803,11 +680,13 @@ export class MoziBrowser {
   private async snapshot(
     task: BrowserTask,
     contents: WebContents,
-  ): Promise<Page & { access: PageAccessCheck }> {
+  ): Promise<ExtractedPage & { access: PageAccessCheck }> {
     const navigation = this.navigation;
     const before = contents.getURL();
-    const source = `({ ...(${extractPage.toString()})(${JSON.stringify(task.operation.action === "search" ? "search" : "read")}, ${task.operation.action === "search" ? (task.operation.limit ?? 5) : 5}, ${BROWSER_MAX_TEXT}), access: (${checkPageAccess.toString()})() })`;
-    const page: Page & { access: PageAccessCheck } = await this.wait(
+    const offset =
+      task.operation.action === "read" ? (task.operation.offset ?? 0) : 0;
+    const source = `({ ...(${extractPage.toString()})(${JSON.stringify(task.operation.action === "search" ? "search" : "read")}, ${task.operation.action === "search" ? (task.operation.limit ?? 5) : 5}, ${BROWSER_MAX_TEXT}, ${offset}), access: (${checkPageAccess.toString()})() })`;
+    const page: ExtractedPage & { access: PageAccessCheck } = await this.wait(
       task,
       contents.executeJavaScriptInIsolatedWorld(1001, [{ code: source }]),
     );
@@ -1241,6 +1120,19 @@ export class MoziBrowser {
     operation: Operation<"read">,
   ): Promise<BrowserResult> {
     let currentPage: PageLocation | undefined;
+    const offset = operation.offset ?? 0;
+    if (offset > 0) {
+      if (operation.target !== "current") {
+        throw new BrowserFailure("INVALID_ARGUMENT", "续读必须使用 target=current；read(url) 请从 offset=0 建立新快照。");
+      }
+      currentPage = await this.settledPage(task, contents);
+      task.throwIfCancelled();
+      const result = this.readSnapshots.read(task.context.sessionId, currentPage.navigation, currentPage.url, offset);
+      if (!isBrowserResult(result)) throw new BrowserFailure("EXTRACTION_FAILED", "快照片段无效。");
+      return result;
+    }
+    // A new read explicitly starts a new version, even if that read later fails.
+    this.readSnapshots.delete(task.context.sessionId);
     if (operation.target === "current") {
       // Resolve current state when this queued operation starts, never from model history.
       this.progress(
@@ -1278,6 +1170,24 @@ export class MoziBrowser {
     }
   }
 
+  private commitReadSnapshot(task: BrowserTask, page: ExtractedPage, result: BrowserResult): BrowserResult {
+    if (result.kind !== "read") return result;
+    const capturedAt = Date.now();
+    result.capturedAt = capturedAt;
+    result.offset = 0;
+    if (page.fullContent === undefined) {
+      result.content = sliceReadText(page.content, 0);
+      result.warnings = [...(result.warnings ?? []), "snapshot_not_cached_size_limit"];
+      return result;
+    }
+    result.content = sliceReadText(page.fullContent, 0);
+    result.truncated = result.content.length < page.fullContent.length;
+    result.totalLength = page.fullContent.length;
+    this.readSnapshots.put({ sessionId: task.context.sessionId, navigation: this.navigation,
+      url: page.url, capturedAt, fullContent: page.fullContent, result });
+    return result;
+  }
+
   private async collectPage(
     task: BrowserTask,
     contents: WebContents,
@@ -1287,7 +1197,15 @@ export class MoziBrowser {
     this.progress(task, "extracting", "正在读取页面内容…");
     let previous = "";
     let stable = 0;
+    let previousContent = "";
+    let jitterStable = 0;
     let deadline = Date.now() + 15_000;
+    const resetSampling = () => {
+      previous = "";
+      stable = 0;
+      previousContent = "";
+      jitterStable = 0;
+    };
     for (;;) {
       task.throwIfCancelled();
       if (
@@ -1300,7 +1218,7 @@ export class MoziBrowser {
           "读取期间当前页面发生变化，请重新读取当前页面。",
         );
       }
-      let page: Page & { access: PageAccessCheck };
+      let page: ExtractedPage & { access: PageAccessCheck };
       try {
         page = await this.snapshot(task, contents);
       } catch (error) {
@@ -1311,8 +1229,7 @@ export class MoziBrowser {
           Date.now() >= deadline
         )
           throw error;
-        previous = "";
-        stable = 0;
+        resetSampling();
         await this.pause(task, 400);
         continue;
       }
@@ -1324,8 +1241,7 @@ export class MoziBrowser {
         // Explicit continuation after login/verification permits its resulting page.
         if (currentPage) currentPage = await this.settledPage(task, contents);
         deadline = Date.now() + 15_000;
-        previous = "";
-        stable = 0;
+        resetSampling();
         this.progress(task, "extracting", "正在重新读取页面…");
         continue;
       }
@@ -1341,6 +1257,22 @@ export class MoziBrowser {
           "搜索页面已跳转，请重新搜索或使用网页阅读工具。",
         );
       }
+      if (operation.action === "read" && page.unsupportedType === "pdf") {
+        throw new BrowserFailure(
+          "EXTRACTION_FAILED",
+          "当前地址为 PDF 文档，浏览器网页阅读不支持直接提取 PDF 正文。",
+        );
+      }
+      if (operation.action === "read" && page.unsupportedType === "binary") {
+        throw new BrowserFailure(
+          "EXTRACTION_FAILED",
+          "当前地址为非文本媒体或二进制资源，无法提取网页正文。",
+        );
+      }
+      const offset =
+        operation.action === "read" ? (operation.offset ?? 0) : 0;
+      const loaded = !contents.isLoadingMainFrame();
+
       const result: BrowserResult =
         operation.action === "search"
           ? {
@@ -1355,27 +1287,48 @@ export class MoziBrowser {
               url: page.url,
               content: page.content,
               truncated: page.truncated,
+              ...(operation.offset !== undefined ? { offset } : {}),
+              totalLength: page.totalLength,
+              warnings: page.warnings ?? [],
             };
       const usable =
         operation.action === "search"
           ? page.results.length > 0 || page.empty
-          : page.content.trim().length > 0;
+          : page.content.trim().length > 0 && !isReadPlaceholder(page.content);
       const fingerprint = JSON.stringify(result);
       stable = usable && fingerprint === previous ? stable + 1 : 0;
       previous = fingerprint;
-      if (usable && stable >= 2) {
+
+      if (operation.action === "read" && usable && loaded && hasStableReadBody(previousContent, page.content)) {
+        jitterStable++;
+      } else {
+        jitterStable = 0;
+      }
+      previousContent = usable ? page.content : "";
+
+      if (usable && (stable >= 2 || jitterStable >= 3)) {
+        if (result.kind === "read") {
+          result.stability = stable >= 2 ? "stable" : "best_effort";
+          if (stable < 2) result.warnings = [...(result.warnings ?? []), "dynamic_content_snapshot"];
+        }
         if (!isBrowserResult(result))
           throw new BrowserFailure(
             "EXTRACTION_FAILED",
             "提取结果无效或超过容量。",
           );
-        return result;
+        return this.commitReadSnapshot(task, page, result);
       }
-      if (Date.now() >= deadline)
+      if (Date.now() >= deadline) {
+        if (result.kind === "read" && usable && isBrowserResult(result)) {
+          result.stability = "best_effort";
+          result.warnings = [...(result.warnings ?? []), "stability_deadline_reached"];
+          return this.commitReadSnapshot(task, page, result);
+        }
         throw new BrowserFailure(
           "EXTRACTION_FAILED",
           "未能提取稳定的页面内容；页面可能需要登录、仍在加载或布局不受支持。",
         );
+      }
       await this.pause(task, 400);
     }
   }
