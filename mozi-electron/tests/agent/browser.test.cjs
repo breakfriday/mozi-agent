@@ -19,6 +19,10 @@ test('browser contract validates URLs, bounded results, scopes and result varian
   assert.equal(shared.isBrowserOperation({ action: 'search', query: 'Bing', limit: 11 }), false);
   assert.equal(shared.isBrowserOperation({ action: 'search', query: ' ' }), false);
   assert.equal(shared.isBrowserOperation({ action: 'read', target: 'current' }), true);
+  assert.equal(shared.isBrowserOperation({ action: 'read', target: 'current', offset: 24000 }), true);
+  assert.equal(shared.isBrowserOperation({ action: 'read', url: readResult.url, offset: 0 }), true);
+  assert.equal(shared.isBrowserOperation({ action: 'read', url: readResult.url, offset: -1 }), false);
+  assert.equal(shared.isBrowserOperation({ action: 'read', target: 'current', offset: 1.5 }), false);
   assert.equal(shared.isBrowserOperation({ action: 'inspect' }), true);
   assert.equal(shared.isBrowserOperation({ action: 'inspect', query: '下一页' }), true);
   assert.equal(shared.isBrowserOperation({ action: 'click', elementId: 'snapshot:1' }), true);
@@ -34,6 +38,9 @@ test('browser contract validates URLs, bounded results, scopes and result varian
   ]) assert.equal(shared.isBrowserOperation(operation), false, JSON.stringify(operation));
   assert.equal(shared.isBrowserResult({ ...readResult, content: 'x'.repeat(24001) }), false);
   assert.equal(shared.isBrowserResult(readResult), true);
+  assert.equal(shared.isBrowserResult({ ...readResult, offset: 24000, totalLength: 52000 }), true);
+  assert.equal(shared.isBrowserResult({ ...readResult, offset: -5 }), false);
+  assert.equal(shared.isBrowserResult({ ...readResult, totalLength: '52000' }), false);
   const inspected = { kind: 'inspect', url: readResult.url, title: 'Page', elements: [{ elementId: 'snapshot:1', name: 'More', role: 'button', disabled: false }], truncated: false };
   assert.equal(shared.isBrowserResult(inspected), true);
   assert.equal(shared.isBrowserResult({ ...inspected, elements: Array(101).fill(inspected.elements[0]) }), false);
@@ -51,6 +58,7 @@ test('real Pi schema validation accepts browser operations and rejects mixed or 
   for (const operation of [
     { action: 'search', query: 'Electron', limit: 3 },
     { action: 'read', url: readResult.url }, { action: 'read', target: 'current' },
+    { action: 'read', url: readResult.url, offset: 24000 }, { action: 'read', target: 'current', offset: 48000 },
     { action: 'inspect' }, { action: 'inspect', query: 'More' }, { action: 'click', elementId: 'snapshot:1' },
     { action: 'fill', elementId: 'snapshot:1', text: '' }, { action: 'fill', elementId: 'snapshot:1', text: '中文搜索' },
     ...shared.BROWSER_KEYS.map(key => ({ action: 'press', elementId: 'snapshot:1', key })),

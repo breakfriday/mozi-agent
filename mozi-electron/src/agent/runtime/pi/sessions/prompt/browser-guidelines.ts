@@ -32,16 +32,19 @@ export const BROWSER_GUIDELINES: string[] = [
 `,
   `采集范围与完整性：
 - mozi_browser search 返回摘要，不代表已读来源正文；详细分析需用 mozi_browser(action=read, url) 继续读取相关结果的实际链接。
-- 按用户请求确定范围，需要更多内容时，通过 inspect 观察到的“下一页”“加载更多”“展开”等控件继续采集，操作后重新读取并去重。不要编造滚动、正文偏移或分页参数。
+- 按用户请求确定范围，需要更多内容时，通过 inspect 观察到的“下一页”“加载更多”“展开”等控件继续采集，操作后重新读取并去重。不要编造滚动或分页参数；正文 offset 只能依据已返回的 offset（缺省 0）与 content 的 UTF-16 长度计算。
 - 达到请求范围、明确没有更多内容，或重新观察后仍无进展时停止，不反复点击。
-- mozi_browser read 的 truncated=true 表示正文未完整返回，重复读取同一状态不会获得后续部分；false 也不代表覆盖未加载内容、折叠内容或其他分页。
+- mozi_browser read 的 truncated=true 表示当前片段未完整返回全文；仅当当前片段尚未包含所需信息时，可用 mozi_browser(action=read, target=current, offset=已读末尾偏移) 分段续读后续内容，不传 offset 或 offset=0 会重新采集并替换本会话快照，不能随后拼接旧版本片段。truncated=false 也不代表覆盖未加载内容、折叠内容或其他网页分页。
+- target=current、offset>0 仅续读本会话固定快照；不重新提取、不反映采集后 DOM 变化。capturedAt 标识采集时间。快照过期、淘汰或导航后失效时，从 offset=0 重读并丢弃旧片段，不猜偏移；read(url) 的 offset 必须为 0。下一偏移使用返回 offset + content.length，不能固定加 24000（Emoji 边界可能少一个代码单元）。truncated=false 不代表前文已读或网站完整，片段可能从代码块/表格中间开始。
+- snapshot_not_cached_size_limit 表示正文超过缓存上限，不能继续 offset 读取；如实说明限制，不反复重试。
+- PDF 明确不支持时说明未取得正文，不重复调用或绕过浏览器。
 - inspect 的 truncated=true 表示元素列表不全，可用 query/filter 缩小范围；不要混用不同次 inspect 的结果编号。
 - 上限：mozi_browser search 的 limit 为 1–10（默认 5）；inspect 单次最多 ${BROWSER_MAX_ELEMENTS} 个元素；read 正文最多 ${BROWSER_MAX_TEXT} 字符；fill 文本最多 ${BROWSER_MAX_INPUT_TEXT} 字符。
 `,
   `等待用户与超时：
 - 页面需要登录或验证时，工具调用会在宿主内暂停，由用户在 Mozi 浏览器处理后继续；成功时本次调用直接返回结果，无需也无法在等待期间重复调用。
 - 默认总时限 ${BROWSER_TIMEOUT_MS / 1000} 秒，包含排队、执行及等待用户验证。TIMEOUT 表示任务已结束；错误说明为等待登录或验证超时时，告知用户先在 Mozi 浏览器完成登录或验证，再让你重新读取，不要自动重复提交或绕过验证。
-- read/search 需提取结果连续三次采样一致（约每 400ms 一次，常规窗口约 15 秒）才返回，但不要求整页停止变化；等待仍受总时限约束。
+- search 要求连续三次采样一致；read 优先精确稳定，也可能返回 best_effort 动态快照。warnings 表示已知提取限制；不能把有警告或动态结果宣称为完整稳定全文。常规采样窗口约 15 秒，等待仍受总时限约束。
 `,
   `失败处理：
 工具失败时，错误信息以“[错误码] 说明”开头，按错误码处理：

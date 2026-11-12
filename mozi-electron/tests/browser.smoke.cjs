@@ -529,7 +529,57 @@ app.whenReady().then(async () => {
         <li class="b_algo" hidden><h2><a href="https://hidden.test/">Hidden result</a></h2></li>
         <li class="b_algo"><h2><a href="${target}">Duplicate</a></h2></li></ol>`);
     }
-    if (url.pathname === '/long') return html(`<article>${'<p>Long evidence paragraph. </p>'.repeat(2500)}</article>`);
+    if (url.pathname === '/long') return html(`<article>${Array.from({ length: 1800 }, (_, i) => `<p>Long evidence paragraph #${i + 1}.</p>`).join('')}</article>`);
+    if (url.pathname === '/read-quality-boundaries') return html(`<main>
+      <header><h1>Quality boundary title</h1></header>
+      <aside>Enterprise restriction must survive</aside>
+      <p inert aria-hidden="true">Visible inert evidence</p>
+      <div style="visibility:hidden">Hidden parent evidence<span style="visibility:visible">Visible child evidence</span></div>
+      <div style="display:contents"><p>Contents wrapper evidence</p></div>
+      <div style="height:3000px"></div>
+      <section style="content-visibility:auto;contain-intrinsic-size:300px"><p>Offscreen auto evidence</p></section>
+      <p>${'Main body evidence '.repeat(100)}</p>
+      <table><tr><td rowspan="2">Product A</td><td>Basic</td></tr><tr><td>Professional</td></tr></table>
+      </main>`);
+    if (url.pathname === '/emoji-snapshot') return html(`<main><p>${'a'.repeat(23999)}😀TAIL</p></main>`);
+    if (url.pathname === '/pdf-doc') return new Response('%PDF-1.7 sample', { headers: { 'Content-Type': 'application/pdf' } });
+    if (url.pathname === '/rich-markdown') return html(`
+      <header>Global Top Banner</header>
+      <main>
+        <h1>Repository &amp; Specification</h1>
+        <div class="repo-tree"><span>94</span><span>Branches</span><span>20</span><span>Tags</span><p>.cargo .github Cargo.lock</p></div>
+        <article class="markdown-body">
+          <header>
+            <h2><a href="#spec">#</a> Core Architecture</h2>
+            <time datetime="2026-11-12T10:00:00Z">just now</time>
+          </header>
+          <div style="display:contents">
+            <p>Modern layout inside display:contents keeps <a href="https://example.test/sub?utm_source=noise">clean anchor text</a> and <code>checkVisibility()</code>.</p>
+          </div>
+          <blockquote><p>Important callout inside blockquote.</p></blockquote>
+          <table role="presentation"><tr><td>Layout table fallback paragraph.</td></tr></table>
+          <pre class="language-python"><code>def compute(x):\n    if x &gt; 0:\n        return x * 2</code></pre>
+          <table>
+            <thead><tr><th>Stage</th><th>Duration</th></tr></thead>
+            <tbody><tr><td>Blink Walk</td><td>3ms</td></tr></tbody>
+          </table>
+        </article>
+      </main>
+      <footer>Site Footer</footer>`);
+    if (url.pathname === '/multi-thread') return html(`
+      <main>
+        <h1>Issue #99: Multi-article discussion</h1>
+        <article><p>${'Original issue description with environment details and logs. '.repeat(4)}</p></article>
+        <article><p>${'First maintainer reply explaining root cause and workaround. '.repeat(4)}</p></article>
+        <article><p>${'Second community reply confirming fix in production build. '.repeat(4)}</p></article>
+      </main>`);
+    if (url.pathname === '/live-ticker') return html(`
+      <article>
+        <h1>Live Market Report</h1>
+        <p id="clock">20:25:00</p>
+        <p>${'Substantive settled analysis paragraph that remains stable while a tiny clock ticks. '.repeat(10)}</p>
+      </article>
+      <script>let s=0; setInterval(() => { s=(s+1)%60; document.getElementById('clock').textContent='20:25:'+String(s).padStart(2,'0'); }, 180);</script>`);
     return html(`<nav>Navigation clutter</nav><article><h1>Article</h1><p>Loading evidence…</p><p hidden>Hidden secret</p></article>
       <script>setTimeout(() => document.querySelector('article p').textContent = 'Rendered evidence: visual reading works after JavaScript rendering.', 450);</script>`);
   });
@@ -610,6 +660,71 @@ app.whenReady().then(async () => {
   const long = await read('https://example.test/long', contexts());
   assert.equal(long.truncated, true);
   assert.equal(long.content.length, 24000);
+  assert.ok(long.totalLength > 48000);
+  const captureTime = long.capturedAt;
+  assert.ok(Number.isSafeInteger(captureTime));
+  await current().webContents.executeJavaScript("document.body.innerHTML='<main>DOM changed after snapshot.</main>'");
+  await assert.rejects(browser.execute({ action: 'read', target: 'current', offset: 24000 }, { ...contexts(), sessionId: 'other-snapshot-session' }), e => e.code === 'INVALID_ARGUMENT');
+  const secondSlice = await browser.execute({ action: 'read', target: 'current', offset: 24000 }, contexts());
+  assert.equal(secondSlice.offset, 24000);
+  assert.equal(secondSlice.capturedAt, captureTime);
+  assert.ok(!secondSlice.content.includes("DOM changed"));
+  assert.equal(secondSlice.totalLength, long.totalLength);
+  assert.equal(secondSlice.content.length, 24000);
+  assert.notEqual(secondSlice.content, long.content);
+  const tailSlice = await browser.execute({ action: 'read', target: 'current', offset: 48000 }, contexts());
+  assert.equal(tailSlice.truncated, false);
+  assert.match(tailSlice.content, /Long evidence paragraph #1800\./);
+  await assert.rejects(browser.execute({ action: 'read', target: 'current', offset: long.totalLength + 100 }, contexts()), e => e.code === 'INVALID_ARGUMENT');
+
+  await assert.rejects(browser.execute({ action: 'read', url: 'https://example.test/long', offset: 24000 }, contexts()), e => e.code === 'INVALID_ARGUMENT');
+  assert.match((await readCurrent(contexts())).content, /DOM changed after snapshot/);
+  await assert.rejects(browser.execute({ action: 'read', target: 'current', offset: 24000 }, contexts()), e => e.code === 'INVALID_ARGUMENT');
+  const rich = await read('https://example.test/rich-markdown', contexts());
+  assert.match(rich.content, /^# Repository & Specification/);
+  assert.match(rich.content, /## Core Architecture/);
+  assert.match(rich.content, /just now \(2026-11-12\)/);
+  assert.match(rich.content, /Modern layout inside display:contents keeps clean anchor text and `checkVisibility\(\)`\./);
+  assert.match(rich.content, /> Important callout inside blockquote\./);
+  assert.match(rich.content, /Layout table fallback paragraph\./);
+  assert.doesNotMatch(rich.content, /utm_source=noise|Global Top Banner|Site Footer|Cargo\.lock/);
+  assert.match(rich.content, /```python\ndef compute\(x\):\n    if x > 0:\n        return x \* 2\n```/);
+  assert.match(rich.content, /\| Stage \| Duration \|\n\| --- \| --- \|\n\| Blink Walk \| 3ms \|/);
+
+  const thread = await read('https://example.test/multi-thread', contexts());
+  assert.match(thread.content, /# Issue #99: Multi-article discussion/);
+  assert.match(thread.content, /Original issue description/);
+  assert.match(thread.content, /First maintainer reply/);
+  assert.match(thread.content, /Second community reply/);
+  assert.match(thread.content, /\n\n---\n\n/);
+
+  const boundaries = await read('https://example.test/read-quality-boundaries', contexts());
+  for (const text of ['Quality boundary title', 'Enterprise restriction', 'Visible inert evidence', 'Visible child evidence', 'Contents wrapper evidence', 'Offscreen auto evidence']) assert.ok(boundaries.content.includes(text), text);
+  assert.ok(!boundaries.content.includes('Hidden parent evidence'));
+  assert.ok(boundaries.warnings.includes('complex_table_linearized'));
+  assert.equal(boundaries.stability, 'stable');
+
+  const emojiFirst = await read('https://example.test/emoji-snapshot', contexts());
+  assert.equal(emojiFirst.content.length, 23999);
+  const emojiTail = await browser.execute({ action: 'read', target: 'current', offset: emojiFirst.content.length }, contexts());
+  assert.equal(emojiTail.content, '😀TAIL');
+  assert.equal(emojiTail.capturedAt, emojiFirst.capturedAt);
+  await assert.rejects(browser.execute({ action: 'read', target: 'current', offset: 24000 }, contexts()), e => e.code === 'INVALID_ARGUMENT');
+  await current().webContents.executeJavaScript("history.pushState({}, '', '#new-version')");
+  await assert.rejects(browser.execute({ action: 'read', target: 'current', offset: 23999 }, contexts()), e => e.code === 'INVALID_ARGUMENT');
+
+  const tickerStart = Date.now();
+  const ticker = await read('https://example.test/live-ticker', contexts());
+  assert.ok(Date.now() - tickerStart < 5000, 'ticking clock settles via jitter tolerance instead of timing out at 15s');
+  assert.match(ticker.content, /# Live Market Report/);
+  assert.equal(ticker.stability, 'best_effort');
+  assert.ok(ticker.warnings.includes('dynamic_content_snapshot'));
+  assert.match(ticker.content, /Substantive settled analysis paragraph/);
+
+  const pdfStart = Date.now();
+  await assert.rejects(read('https://example.test/pdf-doc', contexts()), e => e.code === 'EXTRACTION_FAILED' && e.message.includes('PDF'));
+  assert.ok(Date.now() - pdfStart < 4000, 'PDF documents fail fast with explicit reason instead of waiting 15s');
+  console.log('PASS: structured Markdown extraction (display:contents, tables, code indentation, time, multi-article threads, shell peeling), offset continuation, live-ticker tolerance and fast PDF detection.');
   await assert.rejects(read('https://example.test/fail', contexts()), e => e.code === 'LOAD_FAILED');
   await assert.rejects(read('https://example.test/forbidden', contexts()), e => e.code === 'LOAD_FAILED' && e.message.includes('403'));
   const external = new AbortController();
