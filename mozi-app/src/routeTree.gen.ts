@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AngetTokenMonitorRouteImport } from './routes/angetTokenMonitor'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as ParticleSettingsRouteImport } from './routes/particleSettings'
+import { Route as TtsSettingsRouteImport } from './routes/ttsSettings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -34,18 +35,25 @@ const ParticleSettingsRoute = ParticleSettingsRouteImport.update({
   path: '/particleSettings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TtsSettingsRoute = TtsSettingsRouteImport.update({
+  id: '/ttsSettings',
+  path: '/ttsSettings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
   '/particleSettings': typeof ParticleSettingsRoute
+  '/ttsSettings': typeof TtsSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
   '/particleSettings': typeof ParticleSettingsRoute
+  '/ttsSettings': typeof TtsSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,22 @@ export interface FileRoutesById {
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
   '/particleSettings': typeof ParticleSettingsRoute
+  '/ttsSettings': typeof TtsSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
+  fullPaths:
+    '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings' | '/ttsSettings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
-  id: '__root__' | '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings'
+  to:
+    '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings' | '/ttsSettings'
+  id:
+    | '__root__'
+    | '/'
+    | '/angetTokenMonitor'
+    | '/chat'
+    | '/particleSettings'
+    | '/ttsSettings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +84,7 @@ export interface RootRouteChildren {
   AngetTokenMonitorRoute: typeof AngetTokenMonitorRoute
   ChatRoute: typeof ChatRoute
   ParticleSettingsRoute: typeof ParticleSettingsRoute
+  TtsSettingsRoute: typeof TtsSettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +117,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ParticleSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ttsSettings': {
+      id: '/ttsSettings'
+      path: '/ttsSettings'
+      fullPath: '/ttsSettings'
+      preLoaderRoute: typeof TtsSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +132,7 @@ const rootRouteChildren: RootRouteChildren = {
   AngetTokenMonitorRoute: AngetTokenMonitorRoute,
   ChatRoute: ChatRoute,
   ParticleSettingsRoute: ParticleSettingsRoute,
+  TtsSettingsRoute: TtsSettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

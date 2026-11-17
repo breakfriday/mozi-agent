@@ -10,6 +10,7 @@ export const bridgeApi = {
   agent: agentApi,
   projectParticles: (content: import("../../../shared/particles").ParticleProjection | null) => getElectronApi()?.projectParticles?.(content),
   get particleSettings() { return getElectronApi()?.particleSettings; },
+  get tts() { return getElectronApi()?.tts; },
   get available() {
     return Boolean(getElectronApi());
   },

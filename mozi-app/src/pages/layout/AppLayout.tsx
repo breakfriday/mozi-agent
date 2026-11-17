@@ -4,6 +4,7 @@ import {
   MenuUnfoldOutlined,
   MessageOutlined,
   MoonOutlined,
+  SoundOutlined,
   SunOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Grid, Tooltip } from "antd";
@@ -34,6 +35,14 @@ const menuItems: MenuItem[] = [
     label: "智能对话",
   },
   {
+    key: "tts-settings",
+    icon: <SoundOutlined />,
+    label: "语音合成",
+    onHandle: async () => {
+      await bridgeApi.tts?.openSettings();
+    },
+  },
+  {
     key: "dsh",
     icon: <DesktopOutlined />,
     label: "dsh",
@@ -57,19 +66,21 @@ export function AppLayout() {
   const setTheme = useThemeStore((state) => state.setTheme);
   const selectedPath = location.pathname.replace(/\/+$/, "") || "/";
   const particleSettings = selectedPath === "/particleSettings";
+  const ttsSettings = selectedPath === "/ttsSettings";
   const monitor = selectedPath === "/angetTokenMonitor";
+  const standaloneWindow = monitor || particleSettings || ttsSettings;
 
   return (
     <div
       className={styles.appShell}
       data-collapsed={menuCollapsed}
       data-desktop={bridgeApi.available}
-      data-monitor={monitor || particleSettings}
+      data-monitor={standaloneWindow}
       data-chat={selectedPath === "/chat"}
     >
       <header className={styles.header}>
         <div className={styles.brand}>
-          {!monitor && !particleSettings && (
+          {!standaloneWindow && (
             <Button
               type="text"
               icon={
@@ -85,7 +96,13 @@ export function AppLayout() {
             />
           )}
           <span className={styles.brandName}>
-            {monitor ? "Mozi · 用量监控" : particleSettings ? "粒子场设置" : "Mozi"}
+            {monitor
+              ? "Mozi · 用量监控"
+              : particleSettings
+                ? "粒子场设置"
+                : ttsSettings
+                  ? "语音合成配置与测试"
+                  : "Mozi"}
           </span>
         </div>
         <div className={styles.headerActions}>
@@ -107,7 +124,7 @@ export function AppLayout() {
         </div>
       </header>
       <div className={styles.mainLayout}>
-        {!monitor && !particleSettings && (
+        {!standaloneWindow && (
           <aside className={styles.sideBar}>
             <nav id="app-menu" className={styles.menu} aria-label="主导航">
               {menuItems.map((item) => (

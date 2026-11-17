@@ -21,6 +21,7 @@ function setup(platform = "linux", packaged = false) {
   const app = new EventEmitter();
   const mainProcess = Object.assign(new EventEmitter(), { platform, resourcesPath: "/packaged/resources", env: {} });
   const particleLifecycle = { opens: 0, closes: 0, settings: 0 };
+  const ttsLifecycle = { settings: 0, stops: 0, disposed: 0 };
   const agentLifecycle = { stops: 0, forced: 0 };
   Object.assign(app, {
     isPackaged: packaged,
@@ -155,6 +156,7 @@ function setup(platform = "linux", packaged = false) {
     "electron-squirrel-startup": false,
     "./main/particles/settings": { installParticleSettings: () => ({ open() { particleLifecycle.settings++; }, dispose() {} }) },
     "./main/particles": { installParticleSidecar: () => ({ open() { particleLifecycle.opens++; }, clear() { particleLifecycle.clears = (particleLifecycle.clears ?? 0) + 1; }, close() { particleLifecycle.closes++; }, dispose() {} }) },
+    "./main/tts": { installTtsService: () => ({ openSettings() { ttsLifecycle.settings++; }, stop() { ttsLifecycle.stops++; }, dispose() { ttsLifecycle.disposed++; } }) },
     "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
     "../devDeug/config.json": require("../devDeug/config.json"),
     "./main/services/window.service": windowModule,
@@ -168,7 +170,7 @@ function setup(platform = "linux", packaged = false) {
   });
   return {
     app, windows, trays, windowService, trayService, ipcMain, ipcRenderer, handlers, mainProcess, agentLifecycle,
-    startMain, particleLifecycle, load,
+    startMain, particleLifecycle, ttsLifecycle, load,
     registerIpc: (sessionViewer) => ipcModule.registerWindowIpc(windowService, () => trayService.quitApplication(), entry, sessionViewer),
     loadPreload: () => { load("src/preload.ts"); return exposed.electronAPI; },
   };
@@ -560,7 +562,7 @@ test("session viewer IPC validates callers, targets the requested sessionId, and
 });
 
 test("tray controls the particle sidecar without creating a renderer window", async () => {
-  const { windows, trays, startMain, particleLifecycle } = setup();
+  const { windows, trays, startMain, particleLifecycle, ttsLifecycle } = setup();
   startMain();
   await new Promise(setImmediate);
   const actions = trays[0].menu.find(item => item.label === "粒子场").submenu;
@@ -572,6 +574,11 @@ test("tray controls the particle sidecar without creating a renderer window", as
   assert.equal(particleLifecycle.settings, 1);
   assert.equal(particleLifecycle.opens, 1);
   assert.equal(particleLifecycle.closes, 1);
+  const ttsActions = trays[0].menu.find(item => item.label === "语音合成").submenu;
+  ttsActions.find(item => item.label === "语音设置与测试").click();
+  ttsActions.find(item => item.label === "停止当前播报").click();
+  assert.equal(ttsLifecycle.settings, 1);
+  assert.equal(ttsLifecycle.stops, 1);
   assert.equal(windows.length, 1);
   assert.equal(windows[0].destroyed, false);
 });

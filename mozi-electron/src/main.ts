@@ -18,6 +18,7 @@ import { AgentTransport } from "./main/agent/transport";
 
 import { installParticleSettings } from "./main/particles/settings";
 import { installParticleSidecar } from "./main/particles";
+import { installTtsService } from "./main/tts";
 
 const log = createAgentLogger("main");
 
@@ -78,6 +79,7 @@ if (started) {
       const agentIpc = registerAgentIpc(windowService, rendererEntry, transport);
       const particles = installParticleSidecar({ windows: windowService });
       const particleSettings = installParticleSettings({ windows: windowService, entry: rendererEntry, filePath: path.join(app.getPath("userData"), "particle-settings.json"), apply: particles.applySettings });
+      const tts = installTtsService({ windows: windowService, entry: rendererEntry, userDataDir: app.getPath("userData") });
       const agentProcess = new AgentProcessManager(agentIpc.transport, {
         entry: path.join(__dirname, "agent.mjs"),
         dataDir: agentDataDir,
@@ -86,9 +88,9 @@ if (started) {
           : undefined,
       });
       stopAgent = () => agentProcess.stop();
-      disposeAgentIpc = () => { void sessionViewer.dispose(); particleSettings.dispose(); particles.dispose(); agentIpc.dispose(); browser.dispose(); };
+      disposeAgentIpc = () => { void sessionViewer.dispose(); tts.dispose(); particleSettings.dispose(); particles.dispose(); agentIpc.dispose(); browser.dispose(); };
       registerAgentShutdown(agentProcess, disposeAgentIpc);
-      app.on("will-quit", () => { void sessionViewer.dispose(); browser.dispose(); });
+      app.on("will-quit", () => { void sessionViewer.dispose(); tts.dispose(); browser.dispose(); });
       agentProcess.start();
       // ========== Agent 初始化与启动：结束 ==========
 
@@ -98,6 +100,10 @@ if (started) {
           { label: "粒子场设置", click: () => particleSettings.open() },
           { label: "清空投影文字", click: () => particles.clear() },
           { label: "关闭粒子场", click: () => particles.close() },
+        ] },
+        { label: "语音合成", submenu: [
+          { label: "语音设置与测试", click: () => { tts.openSettings(); } },
+          { label: "停止当前播报", click: () => { tts.stop(); } },
         ] },
       ]);
       trayService.showApplication();

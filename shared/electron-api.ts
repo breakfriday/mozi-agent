@@ -38,6 +38,7 @@ export interface WindowCreatePayload {
 export interface ElectronApi {
   projectParticles(content: import("./particles").ParticleProjection | null): void;
   particleSettings: import("./particles").ParticleSettingsApi;
+  tts: import("./tts").TtsBridgeApi;
   app: { quit(): void };
   window: {
     openWindow(payload: WindowCreatePayload): Promise<boolean>;
