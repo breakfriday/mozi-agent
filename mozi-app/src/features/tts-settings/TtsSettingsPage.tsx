@@ -25,6 +25,7 @@ import type {
   TtsSettingsSaveInput,
   TtsSettingsView,
   TtsVolcAuthMode,
+  TtsVolcDialect,
 } from "../../../../shared/tts";
 
 type RunPhase =
@@ -53,7 +54,8 @@ const DEFAULT_SAMPLE_TEXT =
   "你好，我是墨子桌面助手。现在正在通过火山引擎双向流式接口进行语音合成测试，支持边发文字边收音频，延迟更低、韵律更自然。";
 
 function createUtteranceId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+  return typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `utt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -75,7 +77,7 @@ export function TtsSettingsPage() {
   // 测试台输入状态
   const [testText, setTestText] = useState(DEFAULT_SAMPLE_TEXT);
   const [testTone, setTestTone] = useState("");
-  const [simulateStream, setSimulateStream] = useState(true);
+  const [simulateStream, setSimulateStream] = useState(false);
   const [telemetry, setTelemetry] = useState<RunTelemetry>({
     utteranceId: "",
     phase: "idle",
@@ -106,7 +108,8 @@ export function TtsSettingsPage() {
         if (!mounted || activeUtteranceRef.current !== drainedId) return;
         activeUtteranceRef.current = "";
         setTelemetry((prev) =>
-          prev.utteranceId === drainedId && (prev.phase === "playing_tail" || prev.phase === "streaming")
+          prev.utteranceId === drainedId &&
+          (prev.phase === "playing_tail" || prev.phase === "streaming")
             ? { ...prev, phase: "completed" }
             : prev,
         );
@@ -123,7 +126,8 @@ export function TtsSettingsPage() {
         setAppIdInput(initial.credentials.volcengine.appId ?? "");
       })
       .catch((err) => {
-        if (mounted) setPageError(err instanceof Error ? err.message : String(err));
+        if (mounted)
+          setPageError(err instanceof Error ? err.message : String(err));
       });
 
     const offEvent = api.onEvent((event) => {
@@ -144,10 +148,15 @@ export function TtsSettingsPage() {
           setTelemetry((prev) => {
             const now = performance.now();
             const ttfaMs =
-              prev.ttfaMs ?? Math.max(1, Math.round(now - (startedAtRef.current || prev.startedAtMs)));
+              prev.ttfaMs ??
+              Math.max(
+                1,
+                Math.round(now - (startedAtRef.current || prev.startedAtMs)),
+              );
             return {
               ...prev,
-              phase: prev.phase === "playing_tail" ? "playing_tail" : "streaming",
+              phase:
+                prev.phase === "playing_tail" ? "playing_tail" : "streaming",
               ttfaMs,
               audioBytes: prev.audioBytes + event.pcm.byteLength,
               sampleRate: event.sampleRate,
@@ -214,18 +223,27 @@ export function TtsSettingsPage() {
 
   const activeProvider = useMemo(() => {
     if (!view || !draft) return undefined;
-    return view.catalog.find((item) => item.id === draft.activeProviderId) ?? view.catalog[0];
+    return (
+      view.catalog.find((item) => item.id === draft.activeProviderId) ??
+      view.catalog[0]
+    );
   }, [view, draft]);
 
   const selectedModel = useMemo(() => {
     if (!activeProvider || !draft) return undefined;
-    return activeProvider.models.find((m) => m.id === draft.providers.volcengine.modelId);
+    return activeProvider.models.find(
+      (m) => m.id === draft.providers.volcengine.modelId,
+    );
   }, [activeProvider, draft]);
 
   if (!api) {
     return (
       <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
-        <Alert type="info" showIcon message="请在 Mozi 桌面客户端中打开语音合成配置与测试窗口。" />
+        <Alert
+          type="info"
+          showIcon
+          message="请在 Mozi 桌面客户端中打开语音合成配置与测试窗口。"
+        />
       </div>
     );
   }
@@ -236,7 +254,9 @@ export function TtsSettingsPage() {
         {pageError ? (
           <Alert type="error" showIcon message={pageError} />
         ) : (
-          <Typography.Text type="secondary">正在加载语音合成配置…</Typography.Text>
+          <Typography.Text type="secondary">
+            正在加载语音合成配置…
+          </Typography.Text>
         )}
       </div>
     );
@@ -313,7 +333,8 @@ export function TtsSettingsPage() {
     // 若表单或密钥输入框有未保存改动，自动先保存再执行测试，避免填完密钥忘点保存
     const hasPendingSecret =
       Boolean(apiKeyInput.trim()) ||
-      (volc.authMode === "legacy_app" && Boolean(appIdInput.trim() || accessKeyInput.trim()));
+      (volc.authMode === "legacy_app" &&
+        Boolean(appIdInput.trim() || accessKeyInput.trim()));
     if (dirty || hasPendingSecret) {
       const ok = await persistSettings(false);
       if (!ok) return;
@@ -339,15 +360,23 @@ export function TtsSettingsPage() {
 
     const tone = testTone.trim() || undefined;
     if (!simulateStream) {
-      api.sendCommand({ type: "speak", utteranceId, text: content, contextText: tone });
+      // 按句末标点切分依次推入，使首帧 TaskRequest 保持短小，降低大段长文首包响应延迟
+      api.sendCommand({ type: "start", utteranceId, contextText: tone });
+      const sentences = content.match(/[^。！？!?；;\n]+[。！？!?；;\n]*/gu) ?? [content];
+      for (const sentence of sentences) {
+        if (sentence.trim()) {
+          api.sendCommand({ type: "delta", utteranceId, text: sentence });
+        }
+      }
+      api.sendCommand({ type: "finish", utteranceId });
       return;
     }
 
-    // 模拟大模型流式吐字：每 60ms 切分 5 个 Unicode 码点推入双向流式通道
+    // 模拟大模型流式吐字：每 28ms 切分 6 个 Unicode 码点推入双向流式通道
     api.sendCommand({ type: "start", utteranceId, contextText: tone });
     const chars = Array.from(content);
     let cursor = 0;
-    const stepSize = 5;
+    const stepSize = 6;
 
     const pushNextSlice = () => {
       if (activeUtteranceRef.current !== utteranceId) {
@@ -367,7 +396,7 @@ export function TtsSettingsPage() {
 
     pushNextSlice();
     if (cursor < chars.length) {
-      streamTimerRef.current = window.setInterval(pushNextSlice, 60);
+      streamTimerRef.current = window.setInterval(pushNextSlice, 28);
     }
   };
 
@@ -376,12 +405,19 @@ export function TtsSettingsPage() {
     const currentId = activeUtteranceRef.current;
     activeUtteranceRef.current = "";
     playerRef.current?.clearImmediate();
-    api.sendCommand({ type: "cancel", ...(currentId ? { utteranceId: currentId } : {}) });
-    setTelemetry((prev) => (isRunning ? { ...prev, phase: "cancelled" } : prev));
+    api.sendCommand({
+      type: "cancel",
+      ...(currentId ? { utteranceId: currentId } : {}),
+    });
+    setTelemetry((prev) =>
+      isRunning ? { ...prev, phase: "cancelled" } : prev,
+    );
   };
 
   const audioSeconds =
-    telemetry.sampleRate > 0 ? (telemetry.audioBytes / (telemetry.sampleRate * 2)).toFixed(2) : "0.00";
+    telemetry.sampleRate > 0
+      ? (telemetry.audioBytes / (telemetry.sampleRate * 2)).toFixed(2)
+      : "0.00";
 
   const phaseBadge = () => {
     switch (telemetry.phase) {
@@ -403,10 +439,20 @@ export function TtsSettingsPage() {
   };
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "20px 24px 36px" }}>
-      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+    <div
+      style={{ height: "100%", overflowY: "auto", padding: "20px 24px 36px" }}
+    >
+      <div style={{ margin: "0 auto" }}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          {pageError && <Alert type="error" showIcon closable message={pageError} onClose={() => setPageError(null)} />}
+          {pageError && (
+            <Alert
+              type="error"
+              showIcon
+              closable
+              message={pageError}
+              onClose={() => setPageError(null)}
+            />
+          )}
 
           <Card
             size="small"
@@ -422,9 +468,18 @@ export function TtsSettingsPage() {
             }
             extra={
               <Space>
-                {saveMessage && <Typography.Text type="success">{saveMessage}</Typography.Text>}
+                {saveMessage && (
+                  <Typography.Text type="success">
+                    {saveMessage}
+                  </Typography.Text>
+                )}
                 {(credStatus.hasApiKey || credStatus.hasLegacyApp) && (
-                  <Button size="small" danger disabled={saving} onClick={() => void persistSettings(true)}>
+                  <Button
+                    size="small"
+                    danger
+                    disabled={saving}
+                    onClick={() => void persistSettings(true)}
+                  >
                     清除已存密钥
                   </Button>
                 )}
@@ -446,9 +501,16 @@ export function TtsSettingsPage() {
                     <Select
                       aria-label="语音服务商"
                       value={draft.activeProviderId}
-                      options={view.catalog.map((p) => ({ value: p.id, label: p.name }))}
+                      options={view.catalog.map((p) => ({
+                        value: p.id,
+                        label: p.name,
+                      }))}
                       onChange={(providerId: TtsProviderId) => {
-                        setDraft((prev) => (prev ? { ...prev, activeProviderId: providerId } : prev));
+                        setDraft((prev) =>
+                          prev
+                            ? { ...prev, activeProviderId: providerId }
+                            : prev,
+                        );
                         setDirty(true);
                       }}
                     />
@@ -462,7 +524,10 @@ export function TtsSettingsPage() {
                     <Select
                       aria-label="语音合成模型"
                       value={volc.modelId}
-                      options={activeProvider.models.map((m) => ({ value: m.id, label: m.name }))}
+                      options={activeProvider.models.map((m) => ({
+                        value: m.id,
+                        label: m.name,
+                      }))}
                       onChange={(modelId) => updateVolc({ modelId })}
                     />
                   </Form.Item>
@@ -477,9 +542,15 @@ export function TtsSettingsPage() {
                       <Button
                         key={preset.id}
                         size="small"
-                        type={volc.endpoint === preset.endpoint ? "primary" : "default"}
+                        type={
+                          volc.endpoint === preset.endpoint
+                            ? "primary"
+                            : "default"
+                        }
                         ghost={volc.endpoint === preset.endpoint}
-                        onClick={() => updateVolc({ endpoint: preset.endpoint })}
+                        onClick={() =>
+                          updateVolc({ endpoint: preset.endpoint })
+                        }
                       >
                         {preset.label}
                       </Button>
@@ -500,10 +571,18 @@ export function TtsSettingsPage() {
                   <Segmented
                     value={volc.authMode}
                     options={[
-                      { label: "单密钥 API Key（方舟 / 新版推荐）", value: "api_key" },
-                      { label: "AppID + Access Token（旧版控制台）", value: "legacy_app" },
+                      {
+                        label: "单密钥 API Key（方舟 / 新版推荐）",
+                        value: "api_key",
+                      },
+                      {
+                        label: "AppID + Access Token（旧版控制台）",
+                        value: "legacy_app",
+                      },
                     ]}
-                    onChange={(val) => updateVolc({ authMode: val as TtsVolcAuthMode })}
+                    onChange={(val) =>
+                      updateVolc({ authMode: val as TtsVolcAuthMode })
+                    }
                   />
                   {volc.authMode === "api_key" ? (
                     <Input.Password
@@ -547,8 +626,8 @@ export function TtsSettingsPage() {
               </Form.Item>
 
               <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="发音人音色（可下拉选择预设或直接粘贴音色 ID）">
+                <Col xs={24} sm={13}>
+                  <Form.Item label="发音人音色（可下拉选预设或直接粘贴音色 ID）">
                     <AutoComplete
                       aria-label="发音人音色"
                       value={volc.speaker}
@@ -561,13 +640,51 @@ export function TtsSettingsPage() {
                     />
                   </Form.Item>
                 </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item label="默认语气指令（可选，2.0 音色生效且不计费）">
+                <Col xs={24} sm={11}>
+                  <Form.Item label="指定方言朗读（explicit_dialect，支持方言的 2.0 音色生效）">
+                    <Select
+                      aria-label="指定方言朗读"
+                      value={volc.dialect}
+                      options={activeProvider.dialects.map((d) => ({
+                        value: d.id,
+                        label: d.label,
+                      }))}
+                      onChange={(dialect: TtsVolcDialect | "") =>
+                        updateVolc({ dialect })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={16} align="middle">
+                <Col xs={24} sm={16}>
+                  <Form.Item label="默认语气指令（context_texts，请用对话请求句式，2.0 音色生效且不计费）">
                     <Input
                       aria-label="默认语气指令"
                       value={volc.defaultContextText}
-                      placeholder="例如：请用温和清晰的语气回答"
-                      onChange={(e) => updateVolc({ defaultContextText: e.target.value })}
+                      placeholder="例如：你可以用温和亲切、慢一点的语气说话吗？"
+                      onChange={(e) =>
+                        updateVolc({ defaultContextText: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    label="服务端缓存 (cache_config)"
+                    extra={
+                      volc.enableCache
+                        ? "相同文本1h内复用缓存（改语气可能不生效）"
+                        : "已关闭：每次实时推理合成"
+                    }
+                  >
+                    <Switch
+                      aria-label="服务端缓存"
+                      checked={volc.enableCache}
+                      checkedChildren="开启"
+                      unCheckedChildren="关闭"
+                      onChange={(enableCache) => updateVolc({ enableCache })}
                     />
                   </Form.Item>
                 </Col>
@@ -628,11 +745,7 @@ export function TtsSettingsPage() {
                     模拟流式逐块输入
                   </Typography.Text>
                 </Space>
-                <Button
-                  danger
-                  disabled={!isRunning}
-                  onClick={handleStop}
-                >
+                <Button danger disabled={!isRunning} onClick={handleStop}>
                   Stop
                 </Button>
                 <Button
@@ -657,7 +770,7 @@ export function TtsSettingsPage() {
               <Input
                 aria-label="单次语气指令"
                 value={testTone}
-                placeholder="单次语气指令覆盖（可选，留空使用上方默认语气指令，例如：用轻松愉快的语气朗读）"
+                placeholder="单次语气指令覆盖（建议对话祈使句，例如：你可以用特别欢快激动的语气说话吗？）"
                 onChange={(e) => setTestTone(e.target.value)}
               />
 
@@ -671,7 +784,9 @@ export function TtsSettingsPage() {
                     首包音频延迟 (TTFA)
                   </Typography.Text>
                   <div style={{ fontWeight: 600 }}>
-                    {telemetry.ttfaMs !== undefined ? `${telemetry.ttfaMs} ms` : "—"}
+                    {telemetry.ttfaMs !== undefined
+                      ? `${telemetry.ttfaMs} ms`
+                      : "—"}
                   </div>
                 </Col>
                 <Col xs={12} sm={6}>
@@ -679,7 +794,8 @@ export function TtsSettingsPage() {
                     接收音频时长 / 大小
                   </Typography.Text>
                   <div style={{ fontWeight: 600 }}>
-                    {audioSeconds}s ({(telemetry.audioBytes / 1024).toFixed(1)} KB)
+                    {audioSeconds}s ({(telemetry.audioBytes / 1024).toFixed(1)}{" "}
+                    KB)
                   </div>
                 </Col>
                 <Col xs={12} sm={4}>
@@ -687,7 +803,9 @@ export function TtsSettingsPage() {
                     计费字数
                   </Typography.Text>
                   <div style={{ fontWeight: 600 }}>
-                    {telemetry.textWords !== undefined ? telemetry.textWords : "—"}
+                    {telemetry.textWords !== undefined
+                      ? telemetry.textWords
+                      : "—"}
                   </div>
                 </Col>
                 <Col xs={12} sm={8}>
@@ -706,7 +824,11 @@ export function TtsSettingsPage() {
               {(telemetry.logId || telemetry.lastSentence) && (
                 <Space size={16} wrap>
                   {telemetry.logId && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }} copyable={{ text: telemetry.logId }}>
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 12 }}
+                      copyable={{ text: telemetry.logId }}
+                    >
                       LogID: {telemetry.logId}
                     </Typography.Text>
                   )}

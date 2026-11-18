@@ -34,12 +34,18 @@ export const MAX_BUFFERED_TEXT_CHARS = 100_000;
 
 /** `additions` 内置默认值，可被 `VolcengineTtsConfig.additions` 覆盖。 */
 const DEFAULT_ADDITIONS: Readonly<Record<string, unknown>> = {
-  // 注意官方参数语义反转：true 表示开启服务端 Markdown 过滤；false 会把 `**` 念成“星星”
+  // 注意官方参数语义反转：true 表示开启服务端 Markdown / Emoji 过滤；false 会把 `**` 念成“星星”
   disable_markdown_filter: true,
+  disable_emoji_filter: true,
+  enable_auto_language_recognition: true,
   enable_language_detector: true,
-  // 开启分句级服务端缓存（1 小时有效），降低重复短语与历史消息重听的首包延迟
-  cache_config: { text_type: 1, use_cache: true, use_segment_cache: true },
 };
+
+const VOLC_SEGMENT_CACHE_CONFIG = {
+  text_type: 1,
+  use_cache: true,
+  use_segment_cache: true,
+} as const;
 
 /** 一次合成会话的已解析参数：音频规格 + 发给服务端的请求模板。 */
 export interface SessionParams {
@@ -141,6 +147,8 @@ export function buildSessionParams(
   const emotionScale = options.emotionScale ?? config.emotionScale;
   const pitch = options.pitch ?? config.pitch;
   const contextText = (options.contextText ?? config.defaultContextText)?.trim();
+  const dialect = options.dialect === "" ? undefined : (options.dialect ?? config.dialect);
+  const enableCache = options.enableCache ?? config.enableCache;
 
   const audioParams: Record<string, unknown> = {
     format,
@@ -159,9 +167,15 @@ export function buildSessionParams(
 
   // 优先级：内置默认 < 全局 config.additions < 本次合成计算出的字段
   const additions: Record<string, unknown> = { ...DEFAULT_ADDITIONS, ...config.additions };
+  if (enableCache === true) {
+    additions.cache_config = VOLC_SEGMENT_CACHE_CONFIG;
+  } else if (enableCache === false) {
+    delete additions.cache_config;
+  }
   if (pitch !== undefined && Number.isFinite(pitch) && pitch !== 0) {
     additions.post_process = { pitch: clamp(pitch, -12, 12, 0) };
   }
+  if (dialect) additions.explicit_dialect = dialect;
   if (contextText) additions.context_texts = [contextText];
   if (sectionId) additions.section_id = sectionId;
 

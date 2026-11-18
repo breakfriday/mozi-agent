@@ -446,3 +446,84 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.ttsHeaderGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.ttsToggleBtn,
+.ttsStopBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--app-muted-color);
+}
+.ttsToggleBtn[data-active="true"] {
+  color: var(--app-link-color);
+}
+.ttsStopBtn {
+  color: #e5534b;
+}
+.ttsToggleBtn:hover,
+.ttsStopBtn:hover {
+  background: var(--app-hover-background);
+}
+
+.messageFooterActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.speakAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted-color);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.speakAction:hover,
+.speakAction[data-speaking="true"] {
+  color: var(--app-link-color);
+}
+
+.ttsErrorBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--app-border-color);
+  background: var(--app-elevated-background);
+  color: var(--app-muted-color);
+  font-size: 12px;
+}
+.ttsErrorActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.ttsErrorActions button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-link-color);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ttsErrorActions button:hover {
+  text-decoration: underline;
+}

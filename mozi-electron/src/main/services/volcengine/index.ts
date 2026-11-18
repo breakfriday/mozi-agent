@@ -3,6 +3,7 @@ export {
   DEFAULT_TTS_TIMEOUTS,
   VolcengineTtsError,
   type VolcengineAudioFormat,
+  type VolcengineDialect,
   type VolcengineSampleRate,
   type VolcengineTtsConfig,
   type VolcengineTtsDependencies,

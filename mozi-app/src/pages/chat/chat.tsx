@@ -9,7 +9,9 @@ import { MarkdownText } from "@/components/assistant-ui/elements/markdown-text";
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
+  AudioMutedOutlined,
   PaperClipOutlined,
+  SoundOutlined,
   StopOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -27,6 +29,8 @@ import { RunUsageSummary, TokenMonitorButton } from "../angetTokenMonitor/UsageB
 import { bridgeApi } from "@/runtime/bridge";
 import { createPageUrl } from "@/runtime/pageUrl";
 import { ariaKeymap, formatKeymap, getAction, useAction } from "@/config/action-config";
+import { messageKey as resolveMessageKey } from "@/agent/submissionState";
+import { useTtsStore } from "@/store/useTtsStore";
 
 const suggestions = [
   "检查播放器是否异常",
@@ -83,6 +87,72 @@ function UserMessage({ messageKey, onUsage }: { messageKey: string; onUsage: (ru
   );
 }
 
+function AssistantSpeakButton({ messageKey }: { messageKey: string }) {
+  const sessionId = useAgentStore((state) => state.sessionId ?? undefined);
+  const text = useAgentStore((state) => {
+    const matched = state.messages.find((m) => resolveMessageKey(m) === messageKey);
+    if (!matched || matched.role !== "assistant") return "";
+    return matched.content
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("\n")
+      .trim();
+  });
+  const speaking = useTtsStore((state) => state.speakingKey === messageKey);
+  const speakMessage = useTtsStore((state) => state.speakMessage);
+
+  if (!bridgeApi.available || !text) return null;
+
+  return (
+    <button
+      type="button"
+      className={styles.speakAction}
+      data-speaking={speaking}
+      onClick={() => speakMessage(messageKey, text, sessionId)}
+      aria-label={speaking ? "停止朗读此条回复" : "朗读此条回复"}
+    >
+      {speaking ? <StopOutlined /> : <SoundOutlined />}
+      <span>{speaking ? "停止朗读" : "朗读"}</span>
+    </button>
+  );
+}
+
+function TtsHeaderControls() {
+  const autoSpeak = useTtsStore((state) => state.autoSpeak);
+  const speaking = useTtsStore((state) => state.speakingKey !== null);
+  const toggleAutoSpeak = useTtsStore((state) => state.toggleAutoSpeak);
+  const stop = useTtsStore((state) => state.stop);
+
+  if (!bridgeApi.available) return null;
+
+  return (
+    <div className={styles.ttsHeaderGroup}>
+      {speaking && (
+        <button
+          type="button"
+          className={styles.ttsStopBtn}
+          onClick={stop}
+          aria-label="停止语音播报"
+        >
+          <StopOutlined /> 停止播报
+        </button>
+      )}
+      <button
+        type="button"
+        className={styles.ttsToggleBtn}
+        data-active={autoSpeak}
+        onClick={toggleAutoSpeak}
+        aria-pressed={autoSpeak}
+        aria-label="自动语音播报开关"
+        title={autoSpeak ? "已开启回复自动语音播报（点击关闭）" : "点击开启回复自动语音播报"}
+      >
+        {autoSpeak ? <SoundOutlined /> : <AudioMutedOutlined />}
+        <span>{autoSpeak ? "自动播报" : "静音"}</span>
+      </button>
+    </div>
+  );
+}
+
 function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseModelId?: string; messageKey: string; onUsage: (runId: string) => void }) {
   return (
     <MessagePrimitive.Root className={styles.assistantMessage}>
@@ -129,7 +199,10 @@ function AssistantMessage({ responseModelId, messageKey, onUsage }: { responseMo
         >
           <span className={styles.messageStatus}>已停止生成</span>
         </AuiIf>
-        <RunUsageSummary messageId={messageKey} onOpen={onUsage} />
+        <div className={styles.messageFooterActions}>
+          <AssistantSpeakButton messageKey={messageKey} />
+          <RunUsageSummary messageId={messageKey} onOpen={onUsage} />
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
@@ -462,6 +535,9 @@ export function ChatPage() {
   const title = useAgentStore((state) => state.sessions.find((session) => session.sessionId === state.sessionId)?.title ?? "新会话");
   const syncing = useAgentStore((state) => state.syncStatus === "syncing");
   const syncFailed = useAgentStore((state) => state.syncStatus === "error");
+  const ttsError = useTtsStore((state) => state.errorMessage);
+  const clearTtsError = useTtsStore((state) => state.clearError);
+
   return (
     <section ref={pageRef} tabIndex={-1} className={styles.page} aria-label="智能对话">
       <div className={styles.conversation}>
@@ -471,8 +547,22 @@ export function ChatPage() {
           {syncing && <span role="status">正在加载会话…</span>}
           {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
           <TokenMonitorButton onOpen={() => openUsage()} />
+          <TtsHeaderControls />
         </header>
         {monitorError && <p role="alert">{monitorError}</p>}
+        {ttsError && (
+          <div className={styles.ttsErrorBanner} role="alert">
+            <span>语音播报：{ttsError}</span>
+            <div className={styles.ttsErrorActions}>
+              <button type="button" onClick={() => void bridgeApi.tts?.openSettings()}>
+                语音设置 →
+              </button>
+              <button type="button" onClick={clearTtsError} aria-label="关闭语音提示">
+                知道了
+              </button>
+            </div>
+          </div>
+        )}
         <ModelControls />
         <DerivedContextBar />
         <ChatThread key={sessionId} onUsage={openUsage} />

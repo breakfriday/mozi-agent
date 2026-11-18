@@ -12,6 +12,17 @@ export type VolcengineAudioFormat = "pcm" | "mp3" | "ogg_opus";
 /** 输出音频采样率（Hz）：`seed-tts-2.0` 默认最佳人声采样率为 `24000`（注：`ogg_opus` 格式服务端仅支持 `48000`）。 */
 export type VolcengineSampleRate = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
 
+/** 火山豆包语音合成 2.0 支持的指定方言标识（写入 `additions.explicit_dialect`，需搭配支持方言的 2.0 音色）。 */
+export type VolcengineDialect =
+  | "beijing"
+  | "dongbei"
+  | "henan"
+  | "shaanxi"
+  | "shanghai"
+  | "sichuan"
+  | "tianjin"
+  | "yue";
+
 /** 语音合成结构化错误码，供上层 UI 区分“引导配密钥 / 停自动播报 / 网络瞬断重试”。 */
 export type VolcengineTtsErrorCode =
   | "UNCONFIGURED"
@@ -73,6 +84,8 @@ export interface VolcengineTtsConfig {
   loudnessRate?: number;
   /** 后处理音调微调：`[-12, 12]`，默认 `0` 不调整。 */
   pitch?: number;
+  /** 默认指定方言（如 `"yue"` 粤语、`"sichuan"` 四川话；不传则按标准普通话或自动识别语种朗读）。 */
+  dialect?: VolcengineDialect;
   /** 多情感音色的情绪标识（如 `"happy"`、`"sad"`、`"angry"`，仅支持情感的音色生效）。 */
   emotion?: string;
   /** 情绪强度等级：`[1, 5]`，配合 `emotion` 使用，默认 `4`。 */
@@ -80,9 +93,14 @@ export interface VolcengineTtsConfig {
   /** 默认自然语言语气指令（写入 `additions.context_texts`，仅 2.0 音色生效且该文本不计费）。 */
   defaultContextText?: string;
   /**
+   * 是否启用火山服务端分句文本缓存（`additions.cache_config`，默认 `false` 关闭）。
+   * 注意：开启后相同文本在 1 小时内会直接返回缓存音频，可能导致修改 `context_texts` 语气指令不重新推理。
+   */
+  enableCache?: boolean;
+  /**
    * 覆盖或追加 `req_params.additions` 字段。模块内置默认值为：
-   * `disable_markdown_filter: true`、`enable_language_detector: true`、开启分句缓存 `cache_config`。
-   * 每次合成计算出的 `context_texts` / `section_id` / `post_process` 优先级高于此处。
+   * `disable_markdown_filter: true`、`disable_emoji_filter: true`、`enable_auto_language_recognition: true`。
+   * 每次合成计算出的 `context_texts` / `section_id` / `post_process` / `cache_config` 优先级高于此处。
    */
   additions?: Record<string, unknown>;
   /** 请求体 `user.uid` 标识，默认 `"volcengine-tts-client"`。 */
@@ -104,12 +122,16 @@ export interface VolcengineTtsStreamOptions {
   loudnessRate?: number;
   /** 单次覆盖音调 `[-12, 12]`。 */
   pitch?: number;
+  /** 单次覆盖方言标识（传 `""` 可显式临时关闭全局默认方言）。 */
+  dialect?: VolcengineDialect | "";
   /** 单次覆盖情绪类型。 */
   emotion?: string;
   /** 单次覆盖情绪强度 `[1, 5]`。 */
   emotionScale?: number;
-  /** 单次自然语言语气指令（如 `"请用温和清晰的语气回答"`），覆盖 `defaultContextText`。 */
+  /** 单次自然语言语气指令（如 `"你可以用特别欢快的语气说话吗？"`），覆盖 `defaultContextText`。 */
   contextText?: string;
+  /** 单次覆盖是否启用服务端文本缓存（`additions.cache_config`）。 */
+  enableCache?: boolean;
   /** 仅当 `speaker` 为声音复刻 2.0 音色时指定：`expressive` 支持 `context_texts` 指令，`standard` 时延更低。 */
   model?: "seed-tts-2.0-standard" | "seed-tts-2.0-expressive";
 }

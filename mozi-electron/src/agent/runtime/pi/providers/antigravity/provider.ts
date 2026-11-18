@@ -1,14 +1,26 @@
 import { createHash } from "node:crypto";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { loginAntigravity, refreshAntigravityToken, getApiKey } from "pi-antigravity/src/auth/oauth.js";
-import { DEFAULT_ENDPOINT, fetchAvailableModelsCatalog, parseApiKey } from "pi-antigravity/src/client/client.js";
+import {
+  loginAntigravity,
+  refreshAntigravityToken,
+  getApiKey,
+} from "pi-antigravity/src/auth/oauth.js";
+import {
+  DEFAULT_ENDPOINT,
+  fetchAvailableModelsCatalog,
+  parseApiKey,
+} from "pi-antigravity/src/client/client.js";
 import {
   ANTIGRAVITY_PERSIST_KEY,
   CATALOG_SCHEMA_VERSION,
   getCatalogRefreshIntervalMs,
   hydrateAntigravityCatalog,
 } from "pi-antigravity/src/models/discovery.js";
-import { buildAntigravityCatalog, resolvedCatalog, type AntigravityCatalog } from "pi-antigravity/src/models/grouping.js";
+import {
+  buildAntigravityCatalog,
+  resolvedCatalog,
+  type AntigravityCatalog,
+} from "pi-antigravity/src/models/grouping.js";
 import {
   ANTIGRAVITY_MODELS,
   ANTIGRAVITY_ROUTING,
@@ -38,6 +50,9 @@ export const ANTIGRAVITY_ALLOWED_MODEL_IDS = [
   "claude-opus-5-5-low",
   "claude-opus-5-5-medium",
   "claude-opus-5-5-high",
+  "gemini-4-hydrogen-low",
+  "gemini-4-hydrogen-medium",
+  "gemini-4-hydrogen-high",
   "claude-sonnet-5-5-low",
   "claude-sonnet-5-5-medium",
   "claude-sonnet-5-5-high",
@@ -52,10 +67,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function apiKeyFromCredential(credential: RefreshContext["credential"]): string | undefined {
+function apiKeyFromCredential(
+  credential: RefreshContext["credential"],
+): string | undefined {
   if (!credential) return undefined;
   if (credential.type === "api_key") {
-    return typeof credential.key === "string" && credential.key ? credential.key : undefined;
+    return typeof credential.key === "string" && credential.key
+      ? credential.key
+      : undefined;
   }
   if (credential.type === "oauth" && typeof credential.access === "string") {
     return getApiKey(credential);
@@ -68,10 +87,16 @@ async function discoverAntigravityModels(
   signal?: AbortSignal,
 ): Promise<AntigravityCatalog> {
   const creds = parseApiKey(apiKey);
-  const available = await fetchAvailableModelsCatalog(creds.token, creds.projectId, signal);
+  const available = await fetchAvailableModelsCatalog(
+    creds.token,
+    creds.projectId,
+    signal,
+  );
   const models = available.data.models;
   if (!models || Object.keys(models).length === 0) {
-    throw new Error("Antigravity returned an empty or unrecognized model catalog");
+    throw new Error(
+      "Antigravity returned an empty or unrecognized model catalog",
+    );
   }
   registerDiscoveredModelEnums(models);
   return buildAntigravityCatalog(
@@ -94,13 +119,17 @@ export const refreshAntigravityModels: RefreshModels = async (
   const credentialKey = createHash("sha256")
     .update(
       JSON.stringify([
-        context.credential?.type === "oauth" ? context.credential.refresh : apiKey,
+        context.credential?.type === "oauth"
+          ? context.credential.refresh
+          : apiKey,
         parseApiKey(apiKey).projectId,
       ]),
     )
     .digest("hex");
   const stored: unknown = context.stored;
-  const persisted = isRecord(stored) ? stored[ANTIGRAVITY_PERSIST_KEY] : undefined;
+  const persisted = isRecord(stored)
+    ? stored[ANTIGRAVITY_PERSIST_KEY]
+    : undefined;
   const sameSource =
     isRecord(persisted) &&
     persisted.schemaVersion === CATALOG_SCHEMA_VERSION &&
@@ -150,7 +179,9 @@ export const refreshAntigravityModels: RefreshModels = async (
 };
 
 /** Intentionally bypass the CLI entrypoint and its account-pool persistence. */
-export function getAntigravityProviderConfig(onInvalidGrant: () => void = () => {}): ProviderConfig {
+export function getAntigravityProviderConfig(
+  onInvalidGrant: () => void = () => {},
+): ProviderConfig {
   return {
     name: "Antigravity",
     api: "antigravity-api",
@@ -158,16 +189,24 @@ export function getAntigravityProviderConfig(onInvalidGrant: () => void = () => 
     models: getCurrentAntigravityModels(),
     streamSimple: streamAntigravity,
     refreshModels: refreshAntigravityModels,
-    oauth: { name: "Google Antigravity", isSubscription: true,
+    oauth: {
+      name: "Google Antigravity",
+      isSubscription: true,
       login: loginAntigravity,
       refreshToken: async (credential, signal) => {
-        try { return await refreshAntigravityToken(credential, signal); }
-        catch (error) {
-          if (error instanceof Error && /invalid_grant/.test(error.message)) onInvalidGrant();
+        try {
+          return await refreshAntigravityToken(credential, signal);
+        } catch (error) {
+          if (error instanceof Error && /invalid_grant/.test(error.message))
+            onInvalidGrant();
           // Provider error bodies must not escape through SDK errors or diagnostics.
           // eslint-disable-next-line preserve-caught-error
-          throw new Error("Antigravity 凭据刷新失败，请检查网络；授权失效时请重新登录。");
+          throw new Error(
+            "Antigravity 凭据刷新失败，请检查网络；授权失效时请重新登录。",
+          );
         }
-      }, getApiKey },
+      },
+      getApiKey,
+    },
   };
 }

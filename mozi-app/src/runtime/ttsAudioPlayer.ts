@@ -108,6 +108,7 @@ export class TtsAudioPlayer {
   private workletUrl: string | null = null;
   private initPromise: Promise<void> | null = null;
   private currentSampleRate = 24000;
+  private volumeGain = 1;
 
   private activeUtteranceId: string | null = null;
   private carryByte: number | null = null;
@@ -199,10 +200,15 @@ export class TtsAudioPlayer {
     this.workletNode?.port.postMessage({ type: "clear" });
   }
 
-  /** 设置本地播放增益（`0.0 ~ 2.0`，默认 `1.0`）。 */
+  /** 设置本地播放增益（`0.0 ~ 2.0`，默认 `1.0`），播放途中实时平滑生效。 */
   setVolume(gain: number): void {
-    if (this.gainNode && Number.isFinite(gain)) {
-      this.gainNode.gain.value = Math.max(0, Math.min(2, gain));
+    if (!Number.isFinite(gain)) return;
+    const clamped = Math.max(0, Math.min(2, gain));
+    this.volumeGain = clamped;
+    if (this.gainNode && this.audioCtx) {
+      this.gainNode.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.015);
+    } else if (this.gainNode) {
+      this.gainNode.gain.value = clamped;
     }
   }
 
@@ -273,6 +279,7 @@ export class TtsAudioPlayer {
         outputChannelCount: [1],
       });
       const gain = ctx.createGain();
+      gain.gain.value = this.volumeGain;
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
 
