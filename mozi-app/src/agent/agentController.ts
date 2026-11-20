@@ -13,11 +13,14 @@ import {
   initialAgentState,
   installAgentSnapshot,
   isTerminalRun,
-} from "./agentState";
+} from "./agentReducer";
+import { rememberAgentSession, useAgentStore } from "./agentStore";
+import { createParticleProjection, type ChatProjection } from "./particleProjection";
+import { composeProjections, createSpeechProjection } from "./speechProjection";
 import { interruptSubmissions, putSubmission } from "./submissionState";
 import type { AgentState, PendingSubmission } from "./types";
-
-import type { ChatProjection } from "./particleProjection";
+import { bridgeApi } from "../runtime/bridge";
+import { useTtsStore } from "../store/useTtsStore";
 
 interface AgentStore {
   getState(): AgentState;
@@ -43,8 +46,8 @@ function appError(error: unknown): AppError {
   };
 }
 
-/** App-wide async actions for one selected session; no mock transport or Agent loop. */
-export function createAgentActions(
+/** App-wide controller for one selected session; no mock transport or Agent loop. */
+export function createAgentController(
   api: AgentApi,
   store: AgentStore,
   rememberSession: (id: string | null) => void = () => {},
@@ -797,3 +800,24 @@ export function createAgentActions(
     },
   };
 }
+
+const particleProjection = createParticleProjection((content) =>
+  bridgeApi.projectParticles(content),
+);
+const speechProjection = createSpeechProjection({
+  isAutoSpeakEnabled: () => useTtsStore.getState().autoSpeak,
+  startRunStream: (streamKey, sessionId) =>
+    useTtsStore.getState().startRunStream(streamKey, sessionId),
+  appendDelta: (streamKey, text) =>
+    useTtsStore.getState().appendDelta(streamKey, text),
+  finishRunStream: (streamKey) =>
+    useTtsStore.getState().finishRunStream(streamKey),
+  stop: () => useTtsStore.getState().stop(),
+});
+
+export const agentController = createAgentController(
+  bridgeApi.agent,
+  useAgentStore,
+  rememberAgentSession,
+  composeProjections(particleProjection, speechProjection),
+);

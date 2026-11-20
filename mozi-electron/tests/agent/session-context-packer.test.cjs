@@ -14,8 +14,8 @@ const {
 const { SqliteMetadataRepository } = load(path.resolve(__dirname, "../../src/agent/storage/sqlite/metadata-repository.ts"));
 const { AgentApplication } = load(path.resolve(__dirname, "../../src/agent/agent.ts"));
 const { AgentController } = load(path.resolve(__dirname, "../../src/agent/transport/agent-controller.ts"));
-const { initialAgentState } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentState.ts"));
-const { createAgentActions } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/createAgentActions.ts"));
+const { initialAgentState } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentReducer.ts"));
+const { createAgentController } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentController.ts"));
 
 function msg(overrides) {
   return {
@@ -430,7 +430,7 @@ test("SessionService supports previewContext, derived session creation outside c
   assert.equal(ctx.derivation.sources[0].title, "源会话 A");
 });
 
-test("frontend createAgentActions creates derived session, installs derivedFrom snapshot, and updates source status on rename/delete", async () => {
+test("frontend createAgentController creates derived session, installs derivedFrom snapshot, and updates source status on rename/delete", async () => {
   let state = { ...initialAgentState("s1"), runtime: { state: "ready" } };
   const store = {
     getState: () => state,
@@ -488,7 +488,7 @@ test("frontend createAgentActions creates derived session, installs derivedFrom 
     onProviderModelsChanged: () => () => {},
   };
 
-  const actions = createAgentActions(api, store);
+  const actions = createAgentController(api, store);
   const preview = await actions.previewSessionContext({ sourceSessionIds: ["s1"] });
   assert.equal(preview.estimatedTokens, 80);
 

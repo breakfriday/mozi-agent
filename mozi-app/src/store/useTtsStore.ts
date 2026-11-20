@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { stripCodeBlocks } from "@/agent/speechProjection";
-import { bridgeApi } from "@/runtime/bridge";
-import { TtsAudioPlayer } from "@/runtime/ttsAudioPlayer";
+import { stripCodeBlocks } from "../agent/speechProjection";
+import { bridgeApi } from "../runtime/bridge";
+import { TtsAudioPlayer } from "../runtime/ttsAudioPlayer";
 
 const AUTO_SPEAK_STORAGE_KEY = "mozi:tts-auto-speak";
 

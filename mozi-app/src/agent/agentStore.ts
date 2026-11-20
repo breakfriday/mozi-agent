@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AgentState } from "./types";
-import { initialAgentState } from "./agentState";
+import { initialAgentState } from "./agentReducer";
 
 export function rememberAgentSession(sessionId: string | null): void {
   try {
@@ -12,6 +12,7 @@ export function rememberAgentSession(sessionId: string | null): void {
 }
 
 function savedSession(): string | null {
+  if (typeof window === "undefined") return null;
   // Each monitor renderer owns its subscription; never inherit another window's selected chat.
   const url = new URL(window.location.href);
   const route =

@@ -5,7 +5,7 @@ const load = require('../helpers/load-ts.cjs')();
 const { normalizeUsage } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/usage-collector.ts'));
 const { observeModelCalls } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/observer.ts'));
 const { buildUsageMonitor, isAgentEvent, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent'));
-const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
+const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentReducer.ts'));
 const { SessionProjection } = load(path.resolve(__dirname, '../../src/agent/sessions/session-projection.ts'));
 const { ServerStepsCollector } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/model-call/server-steps-collector.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));

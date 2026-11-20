@@ -3,7 +3,7 @@ import { ThreadListPrimitive, ThreadListItemPrimitive, useAui, useAuiState } fro
 import { DeleteOutlined, EditOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { Button, Input, Modal } from "antd";
 import { useAgentStore } from "@/agent/agentStore";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import styles from "./session-list.module.css";
 
 function SessionItem() {
@@ -74,7 +74,7 @@ export function SessionList() {
         <div className={styles.header}>
           <h2>会话</h2>
           <Button type="text" size="small" icon={<ReloadOutlined spin={loading} />} aria-label="刷新会话列表"
-            disabled={loading || busy || !connected} onClick={() => void agentActions.listSessions()} />
+            disabled={loading || busy || !connected} onClick={() => void agentController.listSessions()} />
         </div>
         <ThreadListPrimitive.New className={styles.newButton} disabled={busy || !connected}>
           <PlusOutlined /> 新建会话

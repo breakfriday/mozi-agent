@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getRouteApi } from "@tanstack/react-router";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import { useAgentStore } from "@/agent/agentStore";
 import { bridgeApi } from "@/runtime/bridge";
 import { AgentTokenMonitor } from "./AgentTokenMonitor";
@@ -19,7 +19,7 @@ export function TokenMonitorPage() {
   const runtime = useAgentStore(state => state.runtime.state);
   const error = useAgentStore(state => state.error);
   const [viewerError, setViewerError] = useState<string | null>(null);
-  useEffect(() => { void agentActions.activateSession(sessionId || null); }, [sessionId]);
+  useEffect(() => { void agentController.activateSession(sessionId || null); }, [sessionId]);
   useEffect(() => { document.title = `${title || "会话用量"} · Agent Token Monitor`; }, [title]);
   const openJsonlViewer = async () => {
     if (!sessionId) return;
@@ -41,7 +41,7 @@ export function TokenMonitorPage() {
         {sessionId && <button type="button" onClick={() => void openJsonlViewer()} aria-label="查看会话 JSONL">
           <FileTextOutlined /> 查看 JSONL
         </button>}
-        <button type="button" onClick={() => void agentActions.refresh()}>刷新</button>
+        <button type="button" onClick={() => void agentController.refresh()}>刷新</button>
       </div>
     </header>
     {error && <p role="alert" className={styles.notice} data-tone="red">{error.message}</p>}

@@ -1,6 +1,6 @@
 import { BarChartOutlined } from "@ant-design/icons";
 import { useAgentStore } from "@/agent/agentStore";
-import { isTerminalRun } from "@/agent/agentState";
+import { isTerminalRun } from "@/agent/agentReducer";
 import { messageKey } from "@/agent/submissionState";
 import { useElapsed, compact, seconds } from "./format";
 import styles from "./token-monitor.module.css";

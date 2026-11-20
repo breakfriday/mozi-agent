@@ -136,6 +136,8 @@ test("TTS host persists 0600 credentials without leaking secrets, enforces main-
           ...initialView.settings.providers.volcengine,
           modelId: "seed-icl-2.0-expressive",
           speaker: "S_custom_clone_1",
+          dialect: "sichuan",
+          loudnessRate: 25,
         },
       },
     },
@@ -144,6 +146,8 @@ test("TTS host persists 0600 credentials without leaking secrets, enforces main-
     },
   });
 
+  assert.equal(updatedView.settings.providers.volcengine.dialect, "sichuan");
+  assert.equal(updatedView.settings.providers.volcengine.loudnessRate, 25);
   assert.equal(updatedView.credentials.volcengine.configured, true);
   assert.equal(updatedView.credentials.volcengine.hasApiKey, true);
   assert.equal("apiKey" in updatedView.credentials.volcengine, false);
@@ -197,6 +201,12 @@ test("TTS host persists 0600 credentials without leaking secrets, enforces main-
   const startPayload = protocol.decodeJsonPayload(sentStartSession);
   assert.equal(startPayload.req_params.speaker, "S_custom_clone_1");
   assert.equal(startPayload.req_params.model, "seed-tts-2.0-expressive");
+  assert.equal(startPayload.req_params.audio_params.loudness_rate, 25);
+  const startAdditions = JSON.parse(startPayload.req_params.additions);
+  assert.equal(startAdditions.explicit_dialect, "sichuan");
+  assert.equal(startAdditions.disable_emoji_filter, true);
+  assert.equal(startAdditions.enable_auto_language_recognition, true);
+  assert.equal("cache_config" in startAdditions, false);
 
   const sessionStarted = protocol.createMessage(
     protocol.MsgType.FullServerResponse,

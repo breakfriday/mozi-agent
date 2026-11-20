@@ -6,7 +6,7 @@ import {
 } from "@assistant-ui/react";
 import { useEffect, useMemo, type PropsWithChildren } from "react";
 import { modelActions } from "@/agent/modelActions";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import { useAgentStore } from "@/agent/agentStore";
 import { convertAssistantMessage } from "@/agent/assistantMessage";
 import { selectChatMessages } from "@/agent/submissionState";
@@ -18,13 +18,13 @@ async function onNew(message: AppendMessage) {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
-  await agentActions.submit(text);
+  await agentController.submit(text);
 }
 
 // The assistant-ui adapter lives for the entire app, across route changes.
-// Other Agent views may use the domain store/actions directly.
+// Other Agent views may use the domain store/controller directly.
 export function AssistantUiProvider({ children }: PropsWithChildren) {
-  useEffect(() => agentActions.initialize(), []);
+  useEffect(() => agentController.initialize(), []);
   useEffect(() => modelActions.initialize(), []);
   const sessionId = useAgentStore((state) => state.sessionId);
   const localSessionId = useAgentStore((state) => state.localSessionId);
@@ -57,14 +57,14 @@ export function AssistantUiProvider({ children }: PropsWithChildren) {
         threadId: sessionId ?? localSessionId,
         threads,
         isLoading: sessionsLoading,
-        onSwitchToNewThread: agentActions.newSession,
-        onSwitchToThread: agentActions.activateSession,
-        onRename: agentActions.renameSession,
-        onDelete: agentActions.deleteSession,
+        onSwitchToNewThread: agentController.newSession,
+        onSwitchToThread: agentController.activateSession,
+        onRename: agentController.renameSession,
+        onDelete: agentController.deleteSession,
       },
     },
     onNew,
-    onCancel: agentActions.cancel,
+    onCancel: agentController.cancel,
   });
 
   return (

@@ -36,7 +36,7 @@ import {
 } from "../../../../../shared/agent";
 import { selectAgentBusy, useAgentStore } from "@/agent/agentStore";
 import { useModelStore } from "@/agent/modelStore";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import { modelActions } from "@/agent/modelActions";
 import {
   showsAllProviders,
@@ -747,7 +747,7 @@ export function ModelControls() {
   async function select(model: ModelSelection) {
     setError(null);
     try {
-      await agentActions.setModel(model);
+      await agentController.setModel(model);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "模型切换失败。");
     }

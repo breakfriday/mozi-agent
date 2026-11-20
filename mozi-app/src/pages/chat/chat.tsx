@@ -18,7 +18,7 @@ import {
 import { Modal } from "antd";
 import { MoziIcon } from "@/components/MoziIcon";
 import { useAgentStore } from "@/agent/agentStore";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import { ModelControls } from "./models/ModelControls";
 import { SessionSwitcher } from "./sessions/SessionSwitcher";
 import { ToolCallCard } from "./tools/ToolCallCard";
@@ -76,7 +76,7 @@ function UserMessage({ messageKey, onUsage }: { messageKey: string; onUsage: (ru
         </div>
         {statusText && <div className={styles.submissionStatus} role={canRetry ? "alert" : "status"}>
           <span>{statusText}</span>
-          {canRetry && <button type="button" disabled={busy} onClick={() => void agentActions.retry(submission.clientMessageId)}>重试原提交</button>}
+          {canRetry && <button type="button" disabled={busy} onClick={() => void agentController.retry(submission.clientMessageId)}>重试原提交</button>}
         </div>}
         <RunUsageSummary messageId={messageKey} onOpen={onUsage} />
       </div>
@@ -237,7 +237,7 @@ function DerivedContextBar() {
     setContextLoading(true);
     setContextError(null);
     try {
-      const res = await agentActions.getSessionContext(sessionId);
+      const res = await agentController.getSessionContext(sessionId);
       setContextText(res.derivation?.text || "暂无前置会话上下文内容。");
     } catch (err) {
       setContextError(err instanceof Error ? err.message : "加载前置上下文失败。");
@@ -251,7 +251,7 @@ function DerivedContextBar() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      await agentActions.deleteSession(sessionId);
+      await agentController.deleteSession(sessionId);
       setDeleteOpen(false);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "删除会话失败，请重试。");
@@ -280,7 +280,7 @@ function DerivedContextBar() {
               }
               onClick={() => {
                 if (!source.deleted && !disabled) {
-                  void agentActions.activateSession(source.sessionId);
+                  void agentController.activateSession(source.sessionId);
                 }
               }}
             >
@@ -509,7 +509,7 @@ function ChatThread({ onUsage }: { onUsage: (runId: string) => void }) {
         </ComposerPrimitive.Root>
         <p className={styles.disclaimer}>
           {busy ? "正在连接或同步会话…" : runtime.state === "ready" ? "已连接 Agent" : "Agent 尚未连接"}
-          {runtime.state !== "ready" && <button type="button" onClick={() => void agentActions.refresh()}>检查连接</button>}
+          {runtime.state !== "ready" && <button type="button" onClick={() => void agentController.refresh()}>检查连接</button>}
         </p>
       </div>
     </ThreadPrimitive.Root>
@@ -545,7 +545,7 @@ export function ChatPage() {
           <h1 title={title}>{title}</h1>
           <SessionSwitcher getContainer={() => pageRef.current ?? document.body} />
           {syncing && <span role="status">正在加载会话…</span>}
-          {syncFailed && <button type="button" onClick={() => void agentActions.refresh()}>重新同步</button>}
+          {syncFailed && <button type="button" onClick={() => void agentController.refresh()}>重新同步</button>}
           <TokenMonitorButton onOpen={() => openUsage()} />
           <TtsHeaderControls />
         </header>

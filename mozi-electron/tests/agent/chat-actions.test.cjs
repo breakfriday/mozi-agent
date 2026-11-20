@@ -7,9 +7,9 @@ const timestamp = "2026-10-05T00:00:00.000Z";
 
 function setup(t, options = {}) {
   const load = createLoader();
-  const { createAgentActions } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/createAgentActions.ts"));
+  const { createAgentController } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentController.ts"));
   const { selectChatMessages } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/submissionState.ts"));
-  const { initialAgentState } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentState.ts"));
+  const { initialAgentState } = load(path.resolve(__dirname, "../../../mozi-app/src/agent/agentReducer.ts"));
   let state = initialAgentState(options.sessionId ?? null);
   const store = { getState: () => state, setState: (update) => { state = { ...state, ...(typeof update === "function" ? update(state) : update) }; } };
   const calls = []; const eventListeners = new Set(); const runtimeListeners = new Set(); const sessionsListeners = new Set();
@@ -28,7 +28,7 @@ function setup(t, options = {}) {
     cancelRun: async (input) => { calls.push(["cancel", input]); return { ...input, disposition: "requested" }; },
     ...options.api,
   };
-  const actions = createAgentActions(api, store, undefined, options.projection);
+  const actions = createAgentController(api, store, undefined, options.projection);
   t.after(() => actions.dispose());
   let seq = 0;
   const emit = (type, data, sequence = ++seq) => {

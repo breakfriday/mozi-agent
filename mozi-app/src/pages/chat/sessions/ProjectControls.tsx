@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button, Input, Modal, Select, Space } from "antd";
 import type { ProjectSummary } from "../../../../../shared/agent";
 import { bridgeApi } from "@/runtime/bridge";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 
 export function ProjectControls({ project, disabled, onChanged, onNew }: {
   project?: ProjectSummary; disabled: boolean; onChanged: () => void; onNew?: () => void;
@@ -21,7 +21,7 @@ export function ProjectControls({ project, disabled, onChanged, onNew }: {
       else if (project) await bridgeApi.agent.renameProject({ projectId: project.id, name: name.trim() });
       else await bridgeApi.agent.createProject({ projectId: id, name: name.trim() });
       setMode(null); onChanged();
-      await agentActions.listSessions();
+      await agentController.listSessions();
     } catch (e) { setError(e instanceof Error ? e.message : "项目操作失败，请重试。"); }
     finally { setBusy(false); }
   }
@@ -56,7 +56,7 @@ export function MoveSessionButton({ sessionId, projectId, projects, disabled, on
     setBusy(true); setError("");
     try {
       await bridgeApi.agent.moveSession({ sessionId, projectId: target });
-      await agentActions.listSessions(); onChanged(); setOpen(false);
+      await agentController.listSessions(); onChanged(); setOpen(false);
     } catch (e) { setError(e instanceof Error ? e.message : "移动失败，请重试。"); }
     finally { setBusy(false); }
   }

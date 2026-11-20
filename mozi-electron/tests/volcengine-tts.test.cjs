@@ -443,6 +443,14 @@ test("SessionMachine drives state transitions purely without network or timers",
   const parsedAdditions = JSON.parse(params.template.req_params.additions);
   assert.equal(parsedAdditions.custom_flag, 42);
   assert.equal(parsedAdditions.disable_markdown_filter, true);
+  assert.equal("cache_config" in parsedAdditions, false);
+
+  const cachedParams = buildSessionParams({ apiKey: "k", enableCache: true }, {});
+  assert.deepEqual(structuredClone(JSON.parse(cachedParams.template.req_params.additions).cache_config), {
+    text_type: 1,
+    use_cache: true,
+    use_segment_cache: true,
+  });
 
   // 1. Starting a stream from disconnected state emits connection.open
   let effects = machine.handle({

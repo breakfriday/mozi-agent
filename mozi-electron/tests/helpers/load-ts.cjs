@@ -1,4 +1,5 @@
 const { readFileSync, existsSync } = require("node:fs");
+const { createRequire } = require("node:module");
 const path = require("node:path");
 const vm = require("node:vm");
 const ts = require("typescript");
@@ -22,10 +23,11 @@ module.exports = function createLoader(overrides = {}) {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
     });
     const execute = vm.runInContext(`(function(require, module, exports) {\n${outputText}\n})`, context, { filename: resolved });
+    const localRequire = createRequire(resolved);
     execute((name) => {
       if (Object.hasOwn(overrides, name)) return overrides[name];
       if (name.startsWith(".")) return load(path.resolve(path.dirname(resolved), name));
-      return require(name);
+      return localRequire(name);
     }, module, module.exports);
     // Tests opt into tracing with a capture sink; keep routine suites quiet.
     if (resolved.endsWith(`${path.sep}shared${path.sep}agent${path.sep}logging.ts`)) {

@@ -7,7 +7,7 @@ const createLoader = require('../helpers/load-ts.cjs');
 const load = createLoader();
 const { titleFromFirstMessage } = load(path.resolve(__dirname, '../../src/agent/sessions/session-title.ts'));
 const { isAgentEvent } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
-const { initialAgentState, applyAgentEvent } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
+const { initialAgentState, applyAgentEvent } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentReducer.ts'));
 
 test('automatic title normalization is bounded and does not split Unicode characters', () => {
   assert.equal(titleFromFirstMessage('  第一行\n\t第二行  '), '第一行 第二行');

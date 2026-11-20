@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isTerminalRun } from "@/agent/agentState";
+import { isTerminalRun } from "@/agent/agentReducer";
 import type { RunView } from "../../../../shared/agent";
 export const compact = (value: number) => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 export const seconds = (ms?: number) => ms === undefined ? "—" : `${(ms / 1000).toFixed(1)}s`;

@@ -5,7 +5,7 @@ const load = require('../helpers/load-ts.cjs')();
 const { PiEventMapper } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/event-mapper.ts'));
 const { displayParts } = load(path.resolve(__dirname, '../../src/agent/runtime/pi/sessions/content-mapper.ts'));
 const { isAgentEvent, isParamsFor, isApiResultFor } = load(path.resolve(__dirname, '../../../shared/agent/index.ts'));
-const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentState.ts'));
+const { applyAgentEvent, initialAgentState, installAgentSnapshot } = load(path.resolve(__dirname, '../../../mozi-app/src/agent/agentReducer.ts'));
 const { SessionProjection } = load(path.resolve(__dirname, '../../src/agent/sessions/session-projection.ts'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const event = (type, data, seq = 1) => ({ protocolVersion: 1, kind: 'event', sessionId: 's', runId: 'r', seq, type, data });

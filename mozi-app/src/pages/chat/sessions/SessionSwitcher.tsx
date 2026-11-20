@@ -12,7 +12,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Modal, Input, type InputRef } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { useAgentStore } from "@/agent/agentStore";
-import { agentActions } from "@/agent/agentActions";
+import { agentController } from "@/agent/agentController";
 import { bridgeApi } from "@/runtime/bridge";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import {
@@ -166,7 +166,7 @@ export function SessionSwitcher({
       return;
     creating.current = true;
     try {
-      await agentActions.newSession({ sourceSessionIds: selectedIds });
+      await agentController.newSession({ sourceSessionIds: selectedIds });
       if (!useAgentStore.getState().sessionsError) {
         focusComposer.current = true;
         setSelectedIds([]);
@@ -186,7 +186,7 @@ export function SessionSwitcher({
     if (disabled || action || creating.current) return;
     creating.current = true;
     try {
-      await agentActions.newSession();
+      await agentController.newSession();
       if (!useAgentStore.getState().sessionsError) {
         focusComposer.current = true;
         setOpen(false);
@@ -275,7 +275,7 @@ export function SessionSwitcher({
     if (!selectionKey || selectedIds.length === 0) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      void agentActions
+      void agentController
         .previewSessionContext({
           sourceSessionIds: selectedIds,
           ...(modelSelection ? { model: modelSelection } : {}),
@@ -301,7 +301,7 @@ export function SessionSwitcher({
   const switchTo = (id: string) => {
     if (action || disabled) return;
     setOpen(false);
-    void agentActions.activateSession(id);
+    void agentController.activateSession(id);
   };
 
   const deletingRunning =
@@ -332,9 +332,9 @@ export function SessionSwitcher({
     setActionError(null);
     try {
       if (action.kind === "rename")
-        await agentActions.renameSession(action.id, name.trim());
+        await agentController.renameSession(action.id, name.trim());
       else {
-        await agentActions.deleteSession(action.id);
+        await agentController.deleteSession(action.id);
         setSelectedIds((prev) => prev.filter((id) => id !== action.id));
       }
       setAction(null);
@@ -441,7 +441,7 @@ export function SessionSwitcher({
           activeProjectKey={activeProjectKey}
           onSelectProject={setProjectKey}
           onNewProjectSession={async id => {
-            await agentActions.newSession(id ? { projectId: id } : undefined);
+            await agentController.newSession(id ? { projectId: id } : undefined);
             if (!useAgentStore.getState().sessionsError) {
               setOpen(false); focusComposer.current = true;
             }
