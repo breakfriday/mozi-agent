@@ -21,6 +21,7 @@ import {
   BROWSER_WEB_GUIDELINES,
   PROVIDER_WEB_GUIDELINES,
   MOZI_SYSTEM_PROMPT_1,
+  sys_3,
 } from "./prompt/mozi-guidelines";
 import { parseRunEntry } from "./session-entries";
 
@@ -79,7 +80,7 @@ export class PiSessionFactory {
             }),
         },
       ],
-      systemPrompt: MOZI_SYSTEM_PROMPT,
+      systemPrompt: MOZI_SYSTEM_PROMPT_1,
       appendSystemPrompt: [
         browser ? BROWSER_WEB_GUIDELINES : PROVIDER_WEB_GUIDELINES,
         ...collectToolGuidelines(customTools),

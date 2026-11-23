@@ -4,6 +4,18 @@ export type TtsProviderId = (typeof TTS_PROVIDER_IDS)[number];
 export const TTS_VOLC_AUTH_MODES = ["api_key", "legacy_app"] as const;
 export type TtsVolcAuthMode = (typeof TTS_VOLC_AUTH_MODES)[number];
 
+export const TTS_VOLC_DIALECT_IDS = [
+  "yue",
+  "sichuan",
+  "dongbei",
+  "shanghai",
+  "beijing",
+  "tianjin",
+  "shaanxi",
+  "henan",
+] as const;
+export type TtsVolcDialect = (typeof TTS_VOLC_DIALECT_IDS)[number];
+
 export type TtsErrorCode =
   | "UNCONFIGURED"
   | "INVALID_ARGUMENT"
@@ -33,6 +45,11 @@ export interface TtsSpeakerPreset {
   tag: string;
 }
 
+export interface TtsDialectOption {
+  id: TtsVolcDialect | "";
+  label: string;
+}
+
 export interface TtsProviderDescriptor {
   id: TtsProviderId;
   name: string;
@@ -40,6 +57,7 @@ export interface TtsProviderDescriptor {
   endpointPresets: readonly TtsEndpointPreset[];
   models: readonly TtsModelOption[];
   presetSpeakers: readonly TtsSpeakerPreset[];
+  dialects: readonly TtsDialectOption[];
 }
 
 export const DEFAULT_VOLC_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/plan/tts/bidirection";
@@ -87,10 +105,21 @@ export const TTS_PROVIDER_CATALOG: readonly TtsProviderDescriptor[] = [
       },
     ],
     presetSpeakers: [
-      { id: "zh_female_vv_uranus_bigtts", label: "Vivi 2.0", tag: "通用温暖女声 · 多语种" },
+      { id: "zh_female_vv_uranus_bigtts", label: "Vivi 2.0", tag: "通用温暖女声 · 多语种/方言" },
       { id: "zh_female_xiaohe_uranus_bigtts", label: "小何 2.0", tag: "自然亲切女声" },
       { id: "zh_male_m191_uranus_bigtts", label: "云舟 2.0", tag: "沉稳磁性男声" },
       { id: "zh_male_taocheng_uranus_bigtts", label: "小天 2.0", tag: "阳光青年男声" },
+    ],
+    dialects: [
+      { id: "", label: "默认（标准普通话 / 自动识别语种）" },
+      { id: "yue", label: "粤语 (yue)" },
+      { id: "sichuan", label: "四川话 (sichuan)" },
+      { id: "dongbei", label: "东北话 (dongbei)" },
+      { id: "shanghai", label: "上海话 (shanghai)" },
+      { id: "beijing", label: "北京话 (beijing)" },
+      { id: "tianjin", label: "天津话 (tianjin)" },
+      { id: "shaanxi", label: "陕西话 (shaanxi)" },
+      { id: "henan", label: "河南话 (henan)" },
     ],
   },
 ] as const;
@@ -100,10 +129,12 @@ export interface TtsVolcengineProviderSettings {
   endpoint: string;
   modelId: string;
   speaker: string;
+  dialect: TtsVolcDialect | "";
   speechRate: number;
   loudnessRate: number;
   pitch: number;
   defaultContextText: string;
+  enableCache: boolean;
 }
 
 export interface TtsSettings {
@@ -121,10 +152,12 @@ export const DEFAULT_TTS_SETTINGS: TtsSettings = {
       endpoint: DEFAULT_VOLC_ENDPOINT,
       modelId: DEFAULT_VOLC_MODEL_ID,
       speaker: DEFAULT_VOLC_SPEAKER,
+      dialect: "",
       speechRate: 0,
       loudnessRate: 0,
       pitch: 0,
       defaultContextText: "",
+      enableCache: false,
     },
   },
 };
@@ -229,7 +262,12 @@ export function parseTtsSettings(value: unknown): TtsSettings {
   const endpoint = expectBoundedString(v.endpoint, "endpoint", 1, 1024).trim();
   const modelId = expectBoundedString(v.modelId, "modelId", 1, 128).trim();
   const speaker = expectBoundedString(v.speaker, "speaker", 1, 256).trim();
+  const rawDialect = v.dialect === undefined ? "" : v.dialect;
+  if (rawDialect !== "" && !TTS_VOLC_DIALECT_IDS.includes(rawDialect as TtsVolcDialect)) {
+    throw new Error("Invalid Volcengine dialect");
+  }
   const defaultContextText = expectBoundedString(v.defaultContextText ?? "", "defaultContextText", 0, 500).trim();
+  const enableCache = v.enableCache === undefined ? false : expectBoolean(v.enableCache, "enableCache");
   const speechRate = expectRangeInt(v.speechRate, "speechRate", -50, 100);
   const loudnessRate = expectRangeInt(v.loudnessRate, "loudnessRate", -50, 100);
   const pitch = expectRangeInt(v.pitch, "pitch", -12, 12);
@@ -242,10 +280,12 @@ export function parseTtsSettings(value: unknown): TtsSettings {
         endpoint,
         modelId,
         speaker,
+        dialect: rawDialect as TtsVolcDialect | "",
         speechRate,
         loudnessRate,
         pitch,
         defaultContextText,
+        enableCache,
       },
     },
   };
@@ -364,6 +404,13 @@ function expectRangeInt(value: unknown, field: string, min: number, max: number)
     throw new Error(`Out of range ${field}`);
   }
   return rounded;
+}
+
+function expectBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Invalid ${field}`);
+  }
+  return value;
 }
 
 function optionalSecret(value: unknown, field: string): string | undefined {
