@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { ElectronApi, WindowState, TokenMonitorTarget, SessionViewerTarget, WindowCreatePayload } from "../../shared/electron-api";
 import type { MoziApi } from "../../shared/mozi-api";
 import { TTS_CHANNELS, type TtsCommand, type TtsEvent, type TtsSettingsSaveInput, type TtsSettingsView } from "../../shared/tts";
+import {
+  DEVICE_LINK_CHANNELS,
+  type DeviceLinkEvent,
+  type DeviceLinkSettingsSaveInput,
+  type DeviceLinkStateView,
+} from "../../shared/device-link";
 import { createAgentPreloadApi } from "./preload/agent";
 import { createAgentLogger } from "../../shared/agent/logging";
 
@@ -19,6 +25,12 @@ function isTtsEvent(value: unknown): value is TtsEvent {
     ["started", "sentenceStart", "sentenceEnd", "finished", "cancelled"].includes(e.type) &&
     typeof e.utteranceId === "string"
   );
+}
+
+function isDeviceLinkEvent(value: unknown): value is DeviceLinkEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const e = value as Record<string, unknown>;
+  return e.type === "stateChanged" && typeof e.state === "object" && e.state !== null;
 }
 
 const electronApi = {
@@ -39,6 +51,26 @@ const electronApi = {
       };
       ipcRenderer.on(TTS_CHANNELS.event, handler);
       return () => ipcRenderer.removeListener(TTS_CHANNELS.event, handler);
+    },
+  },
+  deviceLink: {
+    getState: () => ipcRenderer.invoke(DEVICE_LINK_CHANNELS.getState) as Promise<DeviceLinkStateView>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(DEVICE_LINK_CHANNELS.setEnabled, enabled) as Promise<DeviceLinkStateView>,
+    saveSettings: (input: DeviceLinkSettingsSaveInput) =>
+      ipcRenderer.invoke(DEVICE_LINK_CHANNELS.saveSettings, input) as Promise<DeviceLinkStateView>,
+    openSettings: () => ipcRenderer.invoke(DEVICE_LINK_CHANNELS.openSettings) as Promise<boolean>,
+    sendText: (text: string) =>
+      ipcRenderer.invoke(DEVICE_LINK_CHANNELS.sendText, text) as Promise<{
+        deliveredCount: number;
+        state: DeviceLinkStateView;
+      }>,
+    clearHistory: () => ipcRenderer.invoke(DEVICE_LINK_CHANNELS.clearHistory) as Promise<DeviceLinkStateView>,
+    onEvent(listener: (event: DeviceLinkEvent) => void) {
+      const handler = (_event: IpcRendererEvent, payload: unknown) => {
+        if (isDeviceLinkEvent(payload)) listener(payload);
+      };
+      ipcRenderer.on(DEVICE_LINK_CHANNELS.event, handler);
+      return () => ipcRenderer.removeListener(DEVICE_LINK_CHANNELS.event, handler);
     },
   },
   app: { quit: () => ipcRenderer.send("app:quit") },

@@ -1,4 +1,5 @@
 import {
+  ApiOutlined,
   DesktopOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -43,6 +44,14 @@ const menuItems: MenuItem[] = [
     },
   },
   {
+    key: "device-link-settings",
+    icon: <ApiOutlined />,
+    label: "互联服务",
+    onHandle: async () => {
+      await bridgeApi.deviceLink?.openSettings();
+    },
+  },
+  {
     key: "dsh",
     icon: <DesktopOutlined />,
     label: "dsh",
@@ -67,8 +76,9 @@ export function AppLayout() {
   const selectedPath = location.pathname.replace(/\/+$/, "") || "/";
   const particleSettings = selectedPath === "/particleSettings";
   const ttsSettings = selectedPath === "/ttsSettings";
+  const deviceLinkSettings = selectedPath === "/deviceLinkSettings";
   const monitor = selectedPath === "/angetTokenMonitor";
-  const standaloneWindow = monitor || particleSettings || ttsSettings;
+  const standaloneWindow = monitor || particleSettings || ttsSettings || deviceLinkSettings;
 
   return (
     <div
@@ -102,7 +112,9 @@ export function AppLayout() {
                 ? "粒子场设置"
                 : ttsSettings
                   ? "语音合成配置与测试"
-                  : "Mozi"}
+                  : deviceLinkSettings
+                    ? "互联服务配置"
+                    : "Mozi"}
           </span>
         </div>
         <div className={styles.headerActions}>

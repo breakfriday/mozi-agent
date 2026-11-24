@@ -193,7 +193,10 @@ pub struct Gpu {
 impl Gpu {
     pub async fn new(window: Arc<Window>, want_transparent: bool) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends: wgpu::Backends::VULKAN
+                | wgpu::Backends::METAL
+                | wgpu::Backends::DX12
+                | wgpu::Backends::GL,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).map_err(|e| format!("create_surface: {e}"))?;

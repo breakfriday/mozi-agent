@@ -157,6 +157,7 @@ function setup(platform = "linux", packaged = false) {
     "./main/particles/settings": { installParticleSettings: () => ({ open() { particleLifecycle.settings++; }, dispose() {} }) },
     "./main/particles": { installParticleSidecar: () => ({ open() { particleLifecycle.opens++; }, clear() { particleLifecycle.clears = (particleLifecycle.clears ?? 0) + 1; }, close() { particleLifecycle.closes++; }, dispose() {} }) },
     "./main/tts": { installTtsService: () => ({ openSettings() { ttsLifecycle.settings++; }, stop() { ttsLifecycle.stops++; }, dispose() { ttsLifecycle.disposed++; } }) },
+    "./main/device-link": { installDeviceLinkService: () => ({ openSettings() {}, start: () => Promise.resolve(), stop: () => Promise.resolve(), dispose: () => Promise.resolve() }) },
     "../dual-electron.config.cjs": { rendererDevUrl: entry.url },
     "../devDeug/config.json": require("../devDeug/config.json"),
     "./main/services/window.service": windowModule,

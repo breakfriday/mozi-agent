@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AngetTokenMonitorRouteImport } from './routes/angetTokenMonitor'
 import { Route as ChatRouteImport } from './routes/chat'
+import { Route as DeviceLinkSettingsRouteImport } from './routes/deviceLinkSettings'
 import { Route as ParticleSettingsRouteImport } from './routes/particleSettings'
 import { Route as TtsSettingsRouteImport } from './routes/ttsSettings'
 
@@ -30,6 +31,11 @@ const ChatRoute = ChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeviceLinkSettingsRoute = DeviceLinkSettingsRouteImport.update({
+  id: '/deviceLinkSettings',
+  path: '/deviceLinkSettings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ParticleSettingsRoute = ParticleSettingsRouteImport.update({
   id: '/particleSettings',
   path: '/particleSettings',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/deviceLinkSettings': typeof DeviceLinkSettingsRoute
   '/particleSettings': typeof ParticleSettingsRoute
   '/ttsSettings': typeof TtsSettingsRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/deviceLinkSettings': typeof DeviceLinkSettingsRoute
   '/particleSettings': typeof ParticleSettingsRoute
   '/ttsSettings': typeof TtsSettingsRoute
 }
@@ -60,21 +68,33 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/angetTokenMonitor': typeof AngetTokenMonitorRoute
   '/chat': typeof ChatRoute
+  '/deviceLinkSettings': typeof DeviceLinkSettingsRoute
   '/particleSettings': typeof ParticleSettingsRoute
   '/ttsSettings': typeof TtsSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings' | '/ttsSettings'
+    | '/'
+    | '/angetTokenMonitor'
+    | '/chat'
+    | '/deviceLinkSettings'
+    | '/particleSettings'
+    | '/ttsSettings'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/angetTokenMonitor' | '/chat' | '/particleSettings' | '/ttsSettings'
+    | '/'
+    | '/angetTokenMonitor'
+    | '/chat'
+    | '/deviceLinkSettings'
+    | '/particleSettings'
+    | '/ttsSettings'
   id:
     | '__root__'
     | '/'
     | '/angetTokenMonitor'
     | '/chat'
+    | '/deviceLinkSettings'
     | '/particleSettings'
     | '/ttsSettings'
   fileRoutesById: FileRoutesById
@@ -83,6 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AngetTokenMonitorRoute: typeof AngetTokenMonitorRoute
   ChatRoute: typeof ChatRoute
+  DeviceLinkSettingsRoute: typeof DeviceLinkSettingsRoute
   ParticleSettingsRoute: typeof ParticleSettingsRoute
   TtsSettingsRoute: typeof TtsSettingsRoute
 }
@@ -110,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/deviceLinkSettings': {
+      id: '/deviceLinkSettings'
+      path: '/deviceLinkSettings'
+      fullPath: '/deviceLinkSettings'
+      preLoaderRoute: typeof DeviceLinkSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/particleSettings': {
       id: '/particleSettings'
       path: '/particleSettings'
@@ -131,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AngetTokenMonitorRoute: AngetTokenMonitorRoute,
   ChatRoute: ChatRoute,
+  DeviceLinkSettingsRoute: DeviceLinkSettingsRoute,
   ParticleSettingsRoute: ParticleSettingsRoute,
   TtsSettingsRoute: TtsSettingsRoute,
 }

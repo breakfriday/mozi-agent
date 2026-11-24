@@ -39,6 +39,7 @@ export interface ElectronApi {
   projectParticles(content: import("./particles").ParticleProjection | null): void;
   particleSettings: import("./particles").ParticleSettingsApi;
   tts: import("./tts").TtsBridgeApi;
+  deviceLink: import("./device-link").DeviceLinkBridgeApi;
   app: { quit(): void };
   window: {
     openWindow(payload: WindowCreatePayload): Promise<boolean>;

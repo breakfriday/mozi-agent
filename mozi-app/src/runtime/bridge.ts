@@ -11,6 +11,7 @@ export const bridgeApi = {
   projectParticles: (content: import("../../../shared/particles").ParticleProjection | null) => getElectronApi()?.projectParticles?.(content),
   get particleSettings() { return getElectronApi()?.particleSettings; },
   get tts() { return getElectronApi()?.tts; },
+  get deviceLink() { return getElectronApi()?.deviceLink; },
   get available() {
     return Boolean(getElectronApi());
   },
